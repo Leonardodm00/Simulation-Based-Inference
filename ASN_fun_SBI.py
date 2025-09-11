@@ -1,3 +1,8 @@
+"""
+Created on Tue Aug 12 17:52:56 2025
+
+@author: Admin
+"""
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -262,10 +267,10 @@ def get_Neuronparam(**kwargs):
     'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
     'g_AHP': 0.003, # maximal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
-    'sigma': 0 * mV,      #4.1               # standard deviation of the noisy voltage fluctuations #!!!
+    'sigma': 4 * mV,      #4.1               # standard deviation of the noisy voltage fluctuations #!!!
     'Tau_max': 608 * ms,                # Decay factor of AHP 
     
-    'I_inj': 0*pA, # Injected current # 18
+    'I_inj': 18*pA, # Injected current # 18
  
      # Synaptic contribution
      'delta' : 0.6, # changes NMDAR/AMPAR ratio, should be between -1 and 1
@@ -372,7 +377,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
     
        # Asynchronous Release parameters (uncommented and added to dictionary)
  
-       'Omega_f_ar': 1/ (700 * ms),
+       'Omega_f_ar': 1/ (0.7 * second),
        'Uar': 0.001, #0.003
        'Umax': 0.5/ms,
        'x0': 5, # x0 seems to be unitless here
@@ -442,7 +447,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
 def Neuronal_Network(Nn,Connection_var,
                     add_delay= False,delay_mode= 'random',
                      Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
-                     Decay_type = 'Double_exp',synapse_type = 'neutral'):
+                     Decay_type = 'Double_exp',synapse_type = 'neutral',sed=None):
     
 # std_pers = persentage of mean value used as standard deviation for introducing some
 #   variability
@@ -467,7 +472,7 @@ def Neuronal_Network(Nn,Connection_var,
     
     noise = sigma*(2*gl/Cm)**.5*randn()/sqrt(dt) : volt/second (constant over dt)
     I : amp
-    # I_cell = -gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)-g_AHP*p*(V-EK) : amp
+    I_cell = -gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)-g_AHP*p*(V-EK) : amp
     # I_syn : amp
     # I_AHP = g_AHP*p*(V-EK) : volt * siemens 
     x : meter
@@ -697,7 +702,7 @@ def Neuronal_Network(Nn,Connection_var,
     
     # Initialize neuron parameters
     N.V = -39 * mV                          # approximately resting membrane potential
-    N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
+    
     
     
     
@@ -1340,11 +1345,7 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
             else:
                 
                 
-                # alpha_,beta_ = TF_params(NN_dist[neu])
-                
-                
-                alpha_ = 1
-                beta_ = 1
+
                 
                 # Monopole
                 V = (Rho_s*State_Monitor[NN_idx[neu]].I_cell/mA)/(4*np.pi*NN_dist[neu])
@@ -1561,7 +1562,7 @@ def get2D_rnd_coordinates(N,c_min,c_max,sed):
         coordinates.append((x, y))
     return np.array(coordinates)
 
-def get_Raster(Traces,dt,low_f=100,Visible=True):
+def get_Raster(Traces,fs,low_f=100,Visible=True):
     from scipy import signal
 
     from scipy.signal import find_peaks
@@ -1572,10 +1573,12 @@ def get_Raster(Traces,dt,low_f=100,Visible=True):
     However, this superior performance comes at the cost of ripples in both the passband and the stopband.
     
     
+    Spike timings are defined in seconds
+    
     '''
     
         # set up a filter to filter the voltage signal
-    fs = 1 / (dt / second)
+
     fc = low_f                                          # Cut-off frequency of the filter
     w = fc / (fs / 2)                                   # Normalize the frequency
     b, a = signal.butter(2, w, 'high')
@@ -1593,7 +1596,10 @@ def get_Raster(Traces,dt,low_f=100,Visible=True):
         threshold = 4 * np.std(Voltagefilt)      #threshold to detect APs
         APstemp, _ = find_peaks(abs(Voltagefilt), height=threshold)
         for j in range(len(APstemp)):
-            APs_time = np.append(APs_time, APstemp[j])
+            
+            
+            
+            APs_time = np.append(APs_time, APstemp[j]/fs)
             APs_unit = np.append(APs_unit,k)
         # voltagetraces[k, :] = Voltagefilt
 
@@ -1611,7 +1617,7 @@ def get_Raster(Traces,dt,low_f=100,Visible=True):
         plt.figure()
         
         # Plot the unit indices (y-axis) against the spike times (x-axis)
-        plt.scatter(APs_time/fs, APs_unit, s=5, marker='|')
+        plt.scatter(APs_time, APs_unit, s=5, marker='|')
         
         # Customize the plot
         plt.title('Spiking Activity (Raster Plot)')
@@ -1622,13 +1628,13 @@ def get_Raster(Traces,dt,low_f=100,Visible=True):
         plt.show()
         
     
-        # Use zip to pair the elements from the two lists
-        combined_list = list(zip(APs_unit, APs_time))
-        
-        
-        # Convert the list of tuples to a numpy array
-        Raster_array = np.array(combined_list)
-                
+    # Use zip to pair the elements from the two lists
+    combined_list = list(zip(APs_unit, APs_time))
+    
+    
+    # Convert the list of tuples to a numpy array
+    Raster_array = np.array(combined_list)
+            
                 
     
     return Raster,Raster_array
@@ -1698,7 +1704,7 @@ def Plot_CultureDevice(Grid,Neuron_group,Nn):
     plt.show()  
     
     
-def Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius):
+def Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius,Visible = False):
     
     '''
     MEA_dict = dictionary with electrodes info: position and recordin sites
@@ -1715,47 +1721,48 @@ def Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron
     
     # --- Plot Device + Neurons
     
-    
-    Plot_CultureDevice(Grid,N,Nn)
+    if Visible:
+        
+        Plot_CultureDevice(Grid,N,Nn)
     
     Traces = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
     
-    
-    t_vec = np.linspace(0,len(Traces[0]),len(Traces[0]))
-    
-    plt.figure()
-    tertiary_color_palette = [
-        # Warm Tones
-        (1.0, 0.647, 0.0),    # Orange (RGB 255, 165, 0)
-        (1.0, 0.498, 0.314),  # Coral (RGB 255, 127, 80)
-        (0.8, 0.0, 0.0),      # Dark Red / Maroon-ish (RGB 204, 0, 0) - Not pure Red (1,0,0)
-        (0.627, 0.322, 0.176),# Sienna (RGB 160, 82, 45) - Earthy Brown
-        (1.0, 0.753, 0.796),  # Pink (RGB 255, 192, 203)
-    
-        # Cool Tones
-        (0.294, 0.0, 0.510),  # Indigo (RGB 75, 0, 130) - Deep Blue-Purple
-        (0.502, 0.0, 0.502),  # Purple (RGB 128, 0, 128) - More vibrant Purple
-        (0.251, 0.878, 0.816),# Turquoise (RGB 64, 224, 208) - Blue-Green
-        (0.0, 0.502, 0.502),  # Teal (RGB 0, 128, 128)
-    
-        # Earthy/Muted Tones
-        (0.502, 0.502, 0.0),  # Olive (RGB 128, 128, 0) - Muted Yellow-Green
-        (0.439, 0.502, 0.565),# Slate Gray (RGB 112, 128, 144) - Muted Blue-Gray
-        (0.753, 0.753, 0.0)   # Chartreuse (RGB 192, 192, 0) - Muted Yellow-Green
-    ]
-    
-    col = 0
-    for ch in range(12):
+    if Visible:
+        t_vec = np.linspace(0,len(Traces[0]),len(Traces[0]))
         
-        # if ch == 9:
-        #     plt.plot(t_vec,Traces[ch]*0.1-np.mean(Traces[el])+ch*0.1,color = tertiary_color_palette[col])
-        #     col = col+1
-            
-        # else:
-            plt.plot(t_vec,Traces[ch]-np.mean(Traces[ch])+ch*0.1,color = tertiary_color_palette[col])
-            col = col+1
-    plt.show()
+        plt.figure()
+        tertiary_color_palette = [
+            # Warm Tones
+            (1.0, 0.647, 0.0),    # Orange (RGB 255, 165, 0)
+            (1.0, 0.498, 0.314),  # Coral (RGB 255, 127, 80)
+            (0.8, 0.0, 0.0),      # Dark Red / Maroon-ish (RGB 204, 0, 0) - Not pure Red (1,0,0)
+            (0.627, 0.322, 0.176),# Sienna (RGB 160, 82, 45) - Earthy Brown
+            (1.0, 0.753, 0.796),  # Pink (RGB 255, 192, 203)
+        
+            # Cool Tones
+            (0.294, 0.0, 0.510),  # Indigo (RGB 75, 0, 130) - Deep Blue-Purple
+            (0.502, 0.0, 0.502),  # Purple (RGB 128, 0, 128) - More vibrant Purple
+            (0.251, 0.878, 0.816),# Turquoise (RGB 64, 224, 208) - Blue-Green
+            (0.0, 0.502, 0.502),  # Teal (RGB 0, 128, 128)
+        
+            # Earthy/Muted Tones
+            (0.502, 0.502, 0.0),  # Olive (RGB 128, 128, 0) - Muted Yellow-Green
+            (0.439, 0.502, 0.565),# Slate Gray (RGB 112, 128, 144) - Muted Blue-Gray
+            (0.753, 0.753, 0.0)   # Chartreuse (RGB 192, 192, 0) - Muted Yellow-Green
+        ]
     
+        col = 0
+        for ch in range(12):
+            
+            # if ch == 9:
+            #     plt.plot(t_vec,Traces[ch]*0.1-np.mean(Traces[el])+ch*0.1,color = tertiary_color_palette[col])
+            #     col = col+1
+                
+            # else:
+                plt.plot(t_vec,Traces[ch]-np.mean(Traces[ch])+ch*0.1,color = tertiary_color_palette[col])
+                col = col+1
+        plt.show()
+        
     
     return Traces,MEA_dict
 
@@ -2290,9 +2297,9 @@ def calculate_mean_burst_duration(time_series_data, fs,scal_factor = 0.5, Visibl
     return np.mean(burst_durations)  
 def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs = 10000, w_size = 0.02, overlap = 0.06, 
                     bin_size_s = 0.05, Isolate_NB = False, Gaussian_window = 0.1,
-                     Visible = False,NB_statistics = True):
+                     Visible = True,NB_statistics = False):
     
-    # Raster_array = nx2, 1st column the channel's idx, 2nd column the timing of spike
+    # Raster_array = nx2, 1st column the channel's idx, 2nd column the timing of spike in seconds
     # Type = PCA or Cumulative. PCA = Usual neuronal dynamics, Cumulative= Cumulative IFR on all the electrodes.
     # t_rec = 600  # [s] Recording time
     # fs = 10000
@@ -2443,3 +2450,7 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
         
         return smoothed_cumulative,fs_downsampled
         
+
+
+        
+    
