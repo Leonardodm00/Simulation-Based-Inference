@@ -1,8 +1,10 @@
+# -*- coding: utf-8 -*-
 """
-Created on Tue Aug 12 17:52:56 2025
+Created on Sat Sep 13 11:11:27 2025
 
-@author: Admin
+@author: leona
 """
+
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -268,7 +270,7 @@ def get_Neuronparam(**kwargs):
     'g_AHP': 0.003, # maximal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
     'sigma': 4 * mV,      #4.1               # standard deviation of the noisy voltage fluctuations #!!!
-    'Tau_max': 608 * ms,                # Decay factor of AHP 
+    'Tau_AHP': 608 * ms,                # Decay factor of AHP 
     
     'I_inj': 18*pA, # Injected current # 18
  
@@ -468,7 +470,7 @@ def Neuronal_Network(Nn,Connection_var,
     alpha_n = 0.032*(mV**-1)*5*mV/exprel((15*mV-V+VT)/(5*mV))/ms : Hz
     beta_n = .5*exp((10*mV-V+VT)/(40*mV))/ms : Hz
     p_ss = (1./(exp(-(V + 35*mV)/(10*mV))+1)) : 1
-    tau_p = Tau_max / (3.3*exp( (V + 35*mV)/(20*mV) ) + exp( -( V + 35*mV )/(20*mV) )) : second
+    tau_p = Tau_AHP / (3.3*exp( (V + 35*mV)/(20*mV) ) + exp( -( V + 35*mV )/(20*mV) )) : second
     
     noise = sigma*(2*gl/Cm)**.5*randn()/sqrt(dt) : volt/second (constant over dt)
     I : amp
@@ -2438,7 +2440,7 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
         if Visible == True:
             
             plt.figure()
-            plt.plot(t_vec*fs_downsampled,smoothed_cumulative)
+            plt.plot(t_vec,smoothed_cumulative)
             plt.xlabel('Time [s]')
             plt.ylabel('IFR')
             plt.show()
@@ -2448,8 +2450,10 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
             
         
         
-        return smoothed_cumulative,fs_downsampled
+        return smoothed_cumulative,fs_downsampled,t_vec
         
+
+# -------------------- SBI UTILITY --------------------
 
 
         
