@@ -164,6 +164,27 @@ TODO:
     Control ho to deal with averaged posterior probabilities.
     
     
+    GENERALIZE THE SEARCHING SPACE ACROSS MORE PARAMETERS SUCH AS:
+        # Neuron
+        0: Sigma [mV]   [1.5-7]
+        1: g_AHP  (*msiemens*cm**-2) * Neuron_area [0 - 0.01]
+        2: delta [-0.5;0.5]
+        # 3: I_inj [pA] # DIffernet way to change the variable because it is internally initialized NO 
+        
+        # Synapse
+        3: Xi_ampa [1/mmole] [0.01 - 3]
+        4: Xi_nmda [1/mmole] [0.01 - 3]
+        5: Y_T  [mmole]   [200 - 700]
+        6: conn_prob     [0.1 - 0.6]
+        # 7: Omega_d [1/second] [1.5 - 4]
+        # 8: Omega_f_sr [1/second] [1.5 - 4]
+        # 9: Omega_f_ar [1/second] [1 - 2.5]
+        7 : SYn_type: 1-2-3
+        8: U_0_sr [0.005,0.5]
+        9: Uar [0 - 0.005]
+        
+    
+    
     
     
     
@@ -275,21 +296,8 @@ def Network_wrapper(params):
         0: Sigma [mV]
         1: g_AHP  (*msiemens*cm**-2) * Neuron_area
         2: delta 
-        # 3: I_inj [pA] # DIffernet way to change the variable because it is internally initialized
-        
-        # Synapse
-        3: Xi_ampa [1/mmole] 
-        4: Xi_nmda [1/mmole] 
-        5: Y_T  [mmole]  
-        6: conn_prob
-        # 7: Omega_d [1/second]
-        # 8: Omega_f_sr [1/second]
-        # 9: Omega_f_ar [1/second]
-        7: Syn_type: 1 = depressing, 2 = facilitating, 3 = neutral
-        8: U_0_sr
-        9: Uar
-        10: Tau_AHP
-            
+        3: conn_prob
+        4: Syn_type
 
     
     '''
@@ -299,21 +307,9 @@ def Network_wrapper(params):
     sigma_ = params[0]
     g_AHP_ = params[1]
     delta_ = params[2]
-    # I_inj_ = params[3]  NT USED
-    
-    # Unpack Synapse parameters
-    Xi_ampa_ =   params[3]
-    Xi_nmda_ = params[4]
-    Y_T_ = params[5]
-    conn_prob_ = params[6]
-    # Omega_d_ = params[7]
-    # Omega_f_sr_ = params[8]
-    # Omega_f_ar_ = params[9]
-    Syn_type = params[7]
-    U_0_sr_ = params[8]
-    Uar_ = params[9]
-    Tau_AHP = params[10]
-    
+    conn_prob_ = params[3]
+    Syn_type = params[4]
+
     
     
     
@@ -372,19 +368,9 @@ def Network_wrapper(params):
     N.namespace['sigma'] = sigma_*mV
     N.namespace['g_AHP'] = (g_AHP_*msiemens*cm**-2) * N.namespace['area']
     N.namespace['delta'] = delta_
-    N.namespace['Tau_AHP'] = Tau_AHP_*ms
-    # N.namespace['I_inj'] = I_inj_ * pA # WE EILL USE THE DEFAULT PARAM
-    
-    S.namespace['Xi_ampa'] = Xi_ampa_ / mmole
-    S.namespace['Xi_nmda'] = Xi_nmda_ / mmole
-    S.namespace['Y_T'] = Y_T_ * mmole
     S.namespace['conn_prob_'] = conn_prob_
-    # S.namespace['Omega_d'] = Omega_d_ / second
-    # S.namespace['Omega_f_sr'] = Omega_f_sr_ / second
-    # S.namespace['Omega_f_ar'] = Omega_f_ar_ / second
-    S.namespace['U_0_sr'] = U_0_sr_
-    S.namespace['Uar'] = Uar_
-    
+
+
     
     
     # Update the externally injected current
@@ -392,6 +378,8 @@ def Network_wrapper(params):
     
         
     MonitorN = StateMonitor(N, ['V','I_cell'], record=True)
+    Spk_montor =  SpikeMonitor(N)
+    
     net_ = Network(collect())  # automatically include all the stated groups
     net_.run(simtime)
 
@@ -408,7 +396,7 @@ def Network_wrapper(params):
         
    
  
-    return   MonitorN  ,N,S
+    return   MonitorN ,Spk_montor ,N,S
     
 neuron_radius = 9 #[um]
 #
@@ -444,27 +432,23 @@ params = [0.0] * 10
 params[0] = 4.1  # Sigma [mV]
 params[1] = 0.005  # g_AHP
 params[2] = 0.6  # delta
-# params[3] = 10.0  # I_inj [pA] # NOT USED
+params[3] = 0.12 # Connection_probability
+params[4] = 2
 
-# Synapse
-params[3] = 0.5  # Xi_ampa [1/mmole]
-params[4] = 0.3  # Xi_nmda [1/mmole]
-params[5] = 500.0  # Y_T [mmole]
-params[6] = 0.10  # conn_prob
-# params[7] = 3  # Omega_d [1/second]
-# params[8] = 3  # Omega_f_sr [1/second]
-# params[9] = 1.1428  # Omega_f_ar [1/second]
-params[7] = 1
-params[8] = 0.6  # U_0_sr
-params[9] = 0.001 # Uar    
-params[10]= 608 # Tau_AHP
 
     
 
     
-MonitorN  ,N,S = Network_wrapper(params)
+MonitorN,Spk_montor  ,N,S = Network_wrapper(params)
 
-# --------------- RUN NETWORK ---------------
+
+# ------------ Visualize the spiking activity ------------
+plt.figure
+plt.plot(Spk_montor.t/ms, Spk_montor.i, '.k')
+plt.xlabel('Time (ms)')
+plt.ylabel('Neuron index')
+plt.title('Raster Plot')
+plt.show()
 
 
 
@@ -513,25 +497,19 @@ Then from that posterior on, sequetial NPE is performed to refine the posterior
 estimation.
 
 
+ NOW WE EILL FOCUS ON ONLY 4 PARAMETERS
+
+
 Params:
     
     # Neuron
     0: Sigma [mV]   [1.5-7]
     1: g_AHP  (*msiemens*cm**-2) * Neuron_area [0 - 0.01]
     2: delta [-0.5;0.5]
-    # 3: I_inj [pA] # DIffernet way to change the variable because it is internally initialized NO 
+    3: conn_prob   [0.1 - 0.6]
+    4: Syn_type [1,2,3] 1: depressing, 2: facilitating, 3: neutral
     
-    # Synapse
-    3: Xi_ampa [1/mmole] [0.01 - 3]
-    4: Xi_nmda [1/mmole] [0.01 - 3]
-    5: Y_T  [mmole]   [200 - 700]
-    6: conn_prob     [0.1 - 0.6]
-    # 7: Omega_d [1/second] [1.5 - 4]
-    # 8: Omega_f_sr [1/second] [1.5 - 4]
-    # 9: Omega_f_ar [1/second] [1 - 2.5]
-    7 : SYn_type: 1-2-3
-    8: U_0_sr [0.005,0.5]
-    9: Uar [0 - 0.005]
+
         
 
 '''
@@ -571,19 +549,24 @@ if __name__ == "__main__":
     Sigma_arr = np.arange(1.5, 6, 0.5)
     g_AHP_arr = np.arange(0.001, 0.007, 0.001)
     delta_arr = np.arange(-0.5, 0.5, 0.1)
-    Xi_ampa_arr = np.arange(0.2, 1, 0.1)
-    Xi_nmda_arr = np.arange(0.2, 1, 0.1)
-    Y_T_arr = np.arange(300, 700, 100)
-    conn_prob_arr = np.arange(0.1, 0.6, 0.02)
-    Syn_type = np.arange(1, 3, 1)
-    U_0_sr_arr = np.arange(0.05, 0.5, 0.05)
-    Uar_arr = np.arange(0, 0.005, 0.001)
-    Tau_AHP_arr = np.arange(400, 800, 50)
+    conn_prob_arr = np.arange(0.1, 0.6, 0.01)
+    Syn_type = np.arange(1, 4, 1)
+    
+    
+    
+    
+    # Xi_ampa_arr = np.arange(0.2, 1, 0.1)
+    # Xi_nmda_arr = np.arange(0.2, 1, 0.1)
+    # Y_T_arr = np.arange(300, 700, 100)
+    
+    # Syn_type = np.arange(1, 3, 1)
+    # U_0_sr_arr = np.arange(0.05, 0.5, 0.05)
+    # Uar_arr = np.arange(0, 0.005, 0.001)
+    # Tau_AHP_arr = np.arange(400, 800, 50)
     
     # Create a single list of all the arrays
     all_arrays = [
-        Sigma_arr, g_AHP_arr, delta_arr, Xi_ampa_arr, Xi_nmda_arr,
-        Y_T_arr, conn_prob_arr, U_0_sr_arr, Uar_arr, Syn_type, Tau_AHP_arr
+        Sigma_arr, g_AHP_arr, delta_arr, conn_prob_arr,Syn_type
     ]
     
     # Generate the combinations using itertools.product
@@ -602,6 +585,7 @@ if __name__ == "__main__":
     np.save("Embeddings.npy", np.float16(Embeddings))
     np.save("theta_0.npy", np.float16(tuple_list0))
     
+
 
 
 
