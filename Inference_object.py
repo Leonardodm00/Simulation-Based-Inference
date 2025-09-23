@@ -1,4 +1,4 @@
-'''
+''''''
 
 #############----------- SBI -----------#############
 
@@ -279,10 +279,7 @@ import ASN_fun
 def Network_wrapper(params):
     # Clear the cache for the 'cython' code generation target
     # clear_cache('cython') 
-    BrianLogger.suppress_hierarchy('brian2.devices')
-    BrianLogger.suppress_hierarchy('brian2.parsing')
-
-    start_scope()
+    
     '''
     This wrapper simulates the neuronal and astrocytic network based on the parameters given 
     in the Params vector.
@@ -293,11 +290,11 @@ def Network_wrapper(params):
     Params:
         
         # Neuron
-        0: Sigma [mV]
-        1: g_AHP  (*msiemens*cm**-2) * Neuron_area
-        2: delta 
-        3: conn_prob
-        4: Syn_type
+        # 0: Sigma [mV]
+        # 1: g_AHP  (*msiemens*cm**-2) * Neuron_area
+        # 2: delta 
+        # 3: conn_prob
+        # 4: Syn_type
 
     
     '''
@@ -306,9 +303,10 @@ def Network_wrapper(params):
     # Unpack Neuron parameters
     sigma_ = params[0]
     g_AHP_ = params[1]
-    delta_ = params[2]
-    conn_prob_ = params[3]
-    Syn_type = params[4]
+    conn_prob_ = params[2]
+    Xi_ampa_ = params[3]
+    Xi_nmda_ = params[4]
+    Syn_type = params[5]
 
     
     
@@ -318,7 +316,7 @@ def Network_wrapper(params):
     # ------------------------- PARAMETERS -------------------------
 
     # --------- SIMULATION -----------
-    simtime = 10 * second               # simulation time must be coherent with the 1D_CNN training one.
+    simtime = 30 * second               # simulation time must be coherent with the 1D_CNN training one.
     # transient = 3 * second              # time omitted as transient
     sed = 39                             # random number seed
     devices.device.seed(sed)            # set the seed for all the random number realisations
@@ -357,18 +355,21 @@ def Network_wrapper(params):
 
 
     # --------- NEURON and SYNAPSE -----------
+    # Here synapes type and delta are added
     N,S = Neuronal_Network(Nn,Connection_var = 'Random', 
                         add_delay= False,delay_mode= 'random',
                          Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
-                         Decay_type = 'Double_exp',synapse_type = synapse_type,sed=sed)
+                         Decay_type = 'Double_exp',synapse_type = synapse_type,
+                         conn_prob_ = conn_prob_, sed=sed)
     
     
     
     # ------------- UPDATE PARAMETERS -------------
     N.namespace['sigma'] = sigma_*mV
+    S.namespace['Xi_ampa'] = Xi_ampa_/mmole
+    S.namespace['Xi_ampa'] = Xi_nmda_/mmole
     N.namespace['g_AHP'] = (g_AHP_*msiemens*cm**-2) * N.namespace['area']
-    N.namespace['delta'] = delta_
-    S.namespace['conn_prob_'] = conn_prob_
+
 
 
     
@@ -396,8 +397,15 @@ def Network_wrapper(params):
         
    
  
-    return   MonitorN ,Spk_montor ,N,S
-    
+    return   MonitorN ,Spk_montor ,N,S,Raster_array
+
+#
+BrianLogger.suppress_hierarchy('brian2.devices')
+BrianLogger.suppress_hierarchy('brian2.parsing')
+
+start_scope()
+
+   
 neuron_radius = 9 #[um]
 #
 
@@ -425,23 +433,24 @@ c_max = 1100 #[um]
     
 # Initialize a list with placeholder values.
 # The number of elements corresponds to the total number of parameters.
-params = [0.0] * 10
+params = [0.0] * 6
        
 # Update the values at the specific indices
 # Neuron
 params[0] = 4.1  # Sigma [mV]
-params[1] = 0.005  # g_AHP
-params[2] = 0.6  # delta
-params[3] = 0.12 # Connection_probability
-params[4] = 2
+params[1] = 0.003  # g_AHP
+params[2] = 0.107  # conn prob
+params[3] = 0.5 # Xi_ampa
+params[4] = 0.3 # Xi_nmda
+params[5] = 2
+
+
 
 
     
+MonitorN,Spk_montor  ,N,S,Raster_array = Network_wrapper(params)
 
-    
-MonitorN,Spk_montor  ,N,S = Network_wrapper(params)
-
-
+#%%
 # ------------ Visualize the spiking activity ------------
 plt.figure
 plt.plot(Spk_montor.t/ms, Spk_montor.i, '.k')
@@ -455,7 +464,14 @@ plt.show()
 #%%
 # !!!: FINISH TO IMPLEMENT
 # ----- CUMULATIVE TRACES ------
-smoothed_cumulative,fs_downsampled = Neuronal_traces_simulation(Raster_array,fs = fs,Visible = True,w_size=0.02,Gaussian_window=0.04)
+ # --------------- ELECTRODE RECORDINGS ---------------
+
+
+
+
+# clock_dt = defaultclock.dt 
+# fs = 1/(clock_dt/second)
+smoothed_cumulative,fs_downsampled,t_vec = Neuronal_traces_simulation(Raster_array,fs = fs,Visible = True,w_size=0.02,Gaussian_window=0.04)
 
 
 # cumulative_stdz = Standardization(smoothed_cumulative)
@@ -497,7 +513,7 @@ Then from that posterior on, sequetial NPE is performed to refine the posterior
 estimation.
 
 
- NOW WE EILL FOCUS ON ONLY 4 PARAMETERS
+ NOW WE EILL FOCUS ON ONLY 5 PARAMETERS
 
 
 Params:
@@ -505,17 +521,19 @@ Params:
     # Neuron
     0: Sigma [mV]   [1.5-7]
     1: g_AHP  (*msiemens*cm**-2) * Neuron_area [0 - 0.01]
-    2: delta [-0.5;0.5]
     3: conn_prob   [0.1 - 0.6]
-    4: Syn_type [1,2,3] 1: depressing, 2: facilitating, 3: neutral
+    4: Xi_ampa
+    5: Xi_nmda
+
     
 
         
 
 '''
+#%%
 
 
-
+#%%
 if __name__ == "__main__":
     os.chdir(r"C:\Users\Admin\Desktop\Leonardo\SBI\Izh prova") 
     
@@ -546,11 +564,12 @@ if __name__ == "__main__":
 
     
  
-    Sigma_arr = np.arange(1.5, 6, 0.5)
-    g_AHP_arr = np.arange(0.001, 0.007, 0.001)
-    delta_arr = np.arange(-0.5, 0.5, 0.1)
-    conn_prob_arr = np.arange(0.1, 0.6, 0.01)
-    Syn_type = np.arange(1, 4, 1)
+    Sigma_arr = np.arange(3, 6, 0.5)
+    g_AHP_arr = np.arange(0.001, 0.1, 0.005)
+    conn_prob_arr = np.arange(0.1, 0.3, 0.01)
+    Xi_ampa_arr = np.arange(0.2, 1, 0.1)
+    Xi_nmda_arr = np.arange(0.2, 1, 0.1)
+
     
     
     
@@ -566,7 +585,7 @@ if __name__ == "__main__":
     
     # Create a single list of all the arrays
     all_arrays = [
-        Sigma_arr, g_AHP_arr, delta_arr, conn_prob_arr,Syn_type
+        Sigma_arr, g_AHP_arr, conn_prob_arr,Syn_type
     ]
     
     # Generate the combinations using itertools.product
@@ -585,8 +604,6 @@ if __name__ == "__main__":
     np.save("Embeddings.npy", np.float16(Embeddings))
     np.save("theta_0.npy", np.float16(tuple_list0))
     
-
-
 
 
 
