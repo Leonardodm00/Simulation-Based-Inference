@@ -1,9 +1,11 @@
 
+
+
 import torch
 from joblib import Parallel, delayed
 from sbi.examples.minimal import simple
 from sbi.utils import BoxUniform
-
+from sbi.inference.posteriors.ensemble_posterior import EnsemblePosterior
 from sbi.inference import NPE
 from sbi.utils import RestrictedPrior, get_density_thresholder
 import torch
@@ -45,8 +47,8 @@ def check_posterior_diversity(posteriors, x_o, num_samples=1000):
     
     # Iterate through all unique pairs of posterior indices
     for i, j in itertools.combinations(range(num_posteriors), 2):
-        posterior_a = posteriors[i]
-        posterior_b = posteriors[j]
+        posterior_a = posteriors[i].build_posterior()
+        posterior_b = posteriors[j].build_posterior()
 
         # Draw samples from the first posterior (p_a)
         # We wrap x_o in an extra dimension to match the expected batch shape.
@@ -89,11 +91,11 @@ def train_single_network(inference_object,train_params,train_data):
     '''
     
     
-    inference_trained = inference_object.append_simulations(train_params, train_data).train(force_first_round_loss=True)
-    posterior = inference_trained.build_posterior()
+    _ = inference_object.append_simulations(train_params, train_data).train(force_first_round_loss=True,max_num_epochs= 300)
+    posterior = inference_object.build_posterior()
     
     
-    return [inference_trained,posterior]
+    return [inference_object,posterior]
     
     
     
@@ -110,12 +112,12 @@ def construct_ensemble_network(n_ensembles,prior):
     
     for i in range(n_ensembles):
 
-        density_estimator_build_fun = posterior_nn(
-            model="zuko_nsf", hidden_features=60, num_transforms=10
-        )
+        # density_estimator_build_fun = posterior_nn(
+        #     model="zuko_nsf", hidden_features=60, num_transforms=10
+        # )
         
     
-        inference = NPE(prior=prior, density_estimator=density_estimator_build_fun)
+        inference = NPE(prior=prior, density_estimator='zuko_nsf')
          
         ensemble_list.append(inference)
         
@@ -156,6 +158,13 @@ def ensemble_posterior(ensemble_list,train_params,train_data,x_0):
             delayed(train_single_network)(ensemble_list[i], train_params, train_data) for i in range(n_ensembles))
     
     
+    # Output = []
+    # for i in range(n_ensembles):
+        
+    #     Output.append(train_single_network(ensemble_list[i], train_params, train_data))
+    
+    
+    # Output= np.vstack(Output)
     # Extract the trained ensemble list
     trained_ensemble_list = Output[:,0]
         
@@ -171,15 +180,15 @@ def ensemble_posterior(ensemble_list,train_params,train_data,x_0):
 
 
 
-
+#%%
 
 
 
 
 # Define the prior
 num_dims = 2
-num_sims = 10
-num_rounds = 2
+num_sims = 1000
+num_rounds = 3
 prior = BoxUniform(low=torch.zeros(num_dims), high=torch.ones(num_dims))
 simulator = lambda theta: theta + torch.randn_like(theta) * 0.1
 x_o = torch.tensor([0.5, 0.5])
@@ -193,7 +202,7 @@ n_ensembles = 5
 # Contruct ensemble network
 ensemble_list = construct_ensemble_network(n_ensembles,prior)
 proposal = prior # Same for all the models
-
+#%
 
 for _ in range(num_rounds):
     theta = proposal.sample((num_sims,))
@@ -201,14 +210,14 @@ for _ in range(num_rounds):
     
     ensemble_list, ensemble_post = ensemble_posterior(ensemble_list,theta,x,x_o)
 
-    accept_reject_fn = get_density_thresholder(ensemble_post, quantile=1e-4)
+    accept_reject_fn = get_density_thresholder(ensemble_post, quantile=1e-4,num_samples_to_estimate_support=10000)
     proposal = RestrictedPrior(prior, accept_reject_fn, sample_with="rejection")
     
-    
+#%%    
 
 # Evaluate the KL divergence to be sure of intrinsic variability wihtin the ensemble.
 
-KL_div = check_posterior_diversity(ensemble_list, x_o, num_samples=1000)
+KL_div = check_posterior_diversity(ensemble_list, x_o, num_samples=10000)
 
 # Plot
 
@@ -227,7 +236,7 @@ plt.title("Kullback-Leibler Divergence Between Posteriors", fontsize=16)
 plt.xlabel("Posterior Index", fontsize=12)
 plt.ylabel("Posterior Index", fontsize=12)
 plt.tight_layout()
-    
+plt.show()
     
 
 
