@@ -1,4 +1,4 @@
-''''''
+'''
 
 #############----------- SBI -----------#############
 
@@ -88,7 +88,11 @@ The embedding network is based on the ResNet architecture made up of 1DCNN block
 have been optimized to enhance its performance on the given data type. It's recommended to retrain the network on the specific target 
 phenotype. The optimization paradigm might not be neccessary to repeat. 
 
+Remember that you must call model.eval() to set dropout and batch normalization layers to evaluation mode before running inference. 
+Failing to do this will yield inconsistent inference results.
 
+The network's hyperparameters have already been initialized by default after HP tuning on the data. IF WE CHANGE DATA TYPE or anything that 
+might impact the tuning of architecture's HP the optimization must be REDONE and the default HP values RESTATED.
 
 #############----------- SIMULATOR -----------#############
 Brian2 backed simulator of a coupled neruonal and astrocytic network. 
@@ -219,6 +223,7 @@ import os
 
 os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
 import ASN_fun
+
 # # Define the prior
 # num_dims = 2
 # num_sims = 3000
@@ -316,7 +321,7 @@ def Network_wrapper(params):
     # ------------------------- PARAMETERS -------------------------
 
     # --------- SIMULATION -----------
-    simtime = 30 * second               # simulation time must be coherent with the 1D_CNN training one.
+    simtime = 200 * second               # simulation time must be coherent with the 1D_CNN training one.
     # transient = 3 * second              # time omitted as transient
     sed = 39                             # random number seed
     devices.device.seed(sed)            # set the seed for all the random number realisations
@@ -356,11 +361,20 @@ def Network_wrapper(params):
 
     # --------- NEURON and SYNAPSE -----------
     # Here synapes type and delta are added
-    N,S = Neuronal_Network(Nn,Connection_var = 'Random', 
+    # N,S = Neuronal_Network(Nn,Connection_var = 'Random', 
+    #                     add_delay= False,delay_mode= 'random',
+    #                      Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
+    #                      Decay_type = 'Double_exp',synapse_type = synapse_type,
+    #                      conn_prob_ = conn_prob_, sed=sed)
+    
+    # --------- NEURON and SYNAPSE -----------
+    N,S = Neuronal_Network(Nn,Connection_var = 'Random',
                         add_delay= False,delay_mode= 'random',
                          Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
-                         Decay_type = 'Double_exp',synapse_type = synapse_type,
-                         conn_prob_ = conn_prob_, sed=sed)
+                         Decay_type = 'Double_exp',synapse_type = synapse_type, sed=sed)
+    # N.namespace['sigma']=4.1*mV
+    # N.namespace['I_inj']=0*pA
+    N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
     
     
     
@@ -391,7 +405,7 @@ def Network_wrapper(params):
     
     clock_dt = defaultclock.dt 
     fs = 1/(clock_dt/second)
-    Raster,Raster_array = get_Raster(Traces,fs)
+    Raster,Raster_array = get_Raster(Traces,fs) # Raster_array: 1st column channel 2nd column spk timings in SAMPLES
     
         
         
@@ -437,9 +451,9 @@ params = [0.0] * 6
        
 # Update the values at the specific indices
 # Neuron
-params[0] = 4.1  # Sigma [mV]
-params[1] = 0.003  # g_AHP
-params[2] = 0.107  # conn prob
+params[0] = 4  # Sigma [mV]
+params[1] = 0.5 # g_AHP
+params[2] = 0.1 # conn prob
 params[3] = 0.5 # Xi_ampa
 params[4] = 0.3 # Xi_nmda
 params[5] = 2
@@ -451,9 +465,10 @@ params[5] = 2
 MonitorN,Spk_montor  ,N,S,Raster_array = Network_wrapper(params)
 
 #%%
+%matplotlib
 # ------------ Visualize the spiking activity ------------
 plt.figure
-plt.plot(Spk_montor.t/ms, Spk_montor.i, '.k')
+plt.plot(Spk_montor.t/ms, Spk_montor.i, '.k',ms=0.7)
 plt.xlabel('Time (ms)')
 plt.ylabel('Neuron index')
 plt.title('Raster Plot')
@@ -462,42 +477,65 @@ plt.show()
 
 
 #%%
-# !!!: FINISH TO IMPLEMENT
-# ----- CUMULATIVE TRACES ------
- # --------------- ELECTRODE RECORDINGS ---------------
+# # !!!: FINISH TO IMPLEMENT
+# # ----- CUMULATIVE TRACES ------
+#  # --------------- ELECTRODE RECORDINGS ---------------
 
 
 
 
 # clock_dt = defaultclock.dt 
 # fs = 1/(clock_dt/second)
-smoothed_cumulative,fs_downsampled,t_vec = Neuronal_traces_simulation(Raster_array,fs = fs,Visible = True,w_size=0.02,Gaussian_window=0.04)
 
+# Traces,MEA_dict = Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
 
-# cumulative_stdz = Standardization(smoothed_cumulative)
-
-# data_array =  torch.unsqueeze(torch.from_numpy(cumulative_stdz),0).float32()
-
+# clock_dt = defaultclock.dt 
+# fs = 1/(clock_dt/second)
+# Raster,Raster_array = get_Raster(Traces,fs) # Raster_array: 1st column channel 2nd column spk timings in SAMPLES
 
     
-    # # ----- EMBEDDING NETWORK ------
-    # device = torch.device("cpu") # for multiprocessing 
-    
-    # # Load data to device 
-    # data_array = data_array.to(device)
-    
-    # # Load the model
-    # embedding_network = torch.load("C:\Users\Admin\Desktop\Leonardo\Summary Networks\Saved networks\250825\Main_Model_.pt")
-    # embedding_network = embedding_network.to(device)
+    #%
+smoothed_cumulative,fs_downsampled,t_vec = Neuronal_traces_simulation(Raster_array,fs = fs,Visible = True,w_size=0.02,Gaussian_window=0.04,t_rec = simtime/second )
 
-    # embedding_network.eval() # Always set the model to evaluation mode for inference
-    # with torch.no_grad():
-        
-    #     # In embedding mode the network expects the input data to be (1,length)
-    #     Emb = embedding_network(data_array,fs_downsampled,State='Embedding')
-        
-        
-    # return Emb
+
+cumulative_stdz = Standardization(smoothed_cumulative)
+
+data_array =  torch.unsqueeze(torch.from_numpy(cumulative_stdz),0).float()
+
+#%
+    
+os.chdir(r'C:\Users\Admin\Desktop\Leonardo\SBI\SBI_ANS')
+import OneD_CNN_functions
+# Retrieve informations for the initialization of the network
+Simulation_window_size_s = 200#simtime/second
+
+# Set the length of trianing data to correctly initialize the network
+window_size_temp = Simulation_window_size_s*fs_downsampled # in samples
+
+# Find the window size closest to a power of two
+Simulation_data_length = closest_power_of_2(window_size_temp)
+
+# ----- EMBEDDING NETWORK ------
+device = torch.device("cpu") # for multiprocessing 
+
+# Load data to device 
+data_array = torch.tensor(data_array).to(device)
+#%
+# Load the model
+state_dict = torch.load(r"C:\Users\Admin\Desktop\Leonardo\Summary Networks\Saved networks\250825\Main_Model_.pt", map_location=torch.device('cpu'),weights_only =True)
+network = OneD_CNN(input_fs = fs_downsampled,input_size = Simulation_data_length,device = device)
+network.load_state_dict(state_dict)
+
+
+#%
+embedding_network.eval() # Always set the model to evaluation mode for inference
+with torch.no_grad():
+
+    # In embedding mode the network expects the input data to be (1,length)
+    Emb = embedding_network(data_array,fs_downsampled,State='Embedding')
+    
+            
+   
     
 #%%
 
@@ -565,7 +603,7 @@ if __name__ == "__main__":
     
  
     Sigma_arr = np.arange(3, 6, 0.5)
-    g_AHP_arr = np.arange(0.001, 0.1, 0.005)
+    g_AHP_arr = np.arange(0.5, 5, 0.5)
     conn_prob_arr = np.arange(0.1, 0.3, 0.01)
     Xi_ampa_arr = np.arange(0.2, 1, 0.1)
     Xi_nmda_arr = np.arange(0.2, 1, 0.1)
@@ -604,6 +642,7 @@ if __name__ == "__main__":
     np.save("Embeddings.npy", np.float16(Embeddings))
     np.save("theta_0.npy", np.float16(tuple_list0))
     
+
 
 
 
