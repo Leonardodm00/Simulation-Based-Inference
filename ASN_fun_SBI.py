@@ -1,4 +1,5 @@
 
+
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
@@ -263,8 +264,12 @@ def get_Neuronparam(**kwargs):
     'g_AHP': 0.003, # maximal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
     'sigma': 4 * mV,      #4.1               # standard deviation of the noisy voltage fluctuations #!!!
-    'Tau_max': 608 * ms,                # Decay factor of AHP 
     
+    # AHP current
+    'g_AHP' : 5 * nS,                      # Maximum conductance of sAHP channels
+    'tau_Ca' : 8000 * ms ,                 # recovery time constant sAHP channels
+    'alpha_Ca' : 0.00035,                  # strength of the spike-frequency adaptation
+
     'I_inj': 15*pA, # Injected current # 18
  
      # Synaptic contribution
@@ -282,12 +287,10 @@ def get_Neuronparam(**kwargs):
     
     params.update(kwargs)
     
-    
-    gAHP =  (params['g_AHP']*msiemens*cm**-2) * Neuron_area
+
     
     params.update({
-        
-     'g_AHP': gAHP, # Strength of neuronal adaptation
+
      'g_ampa': (1 + params['delta']) * nS, # maximal conductance of AMPA channels
      'g_nmda': (1 - params['delta']) * nS, # maximal conductance of NMDA channels
         
@@ -391,7 +394,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         })
     elif synapse_type == 'facilitating':
         params.update({
-            'Omega_d': 2./second,
+            'Omega_d': 2./second, #2
             'Omega_f_sr': 2./second,
             'U_0_sr': 0.15,
             'alpha': 1.,
@@ -450,26 +453,25 @@ def Neuronal_Network(Nn,Connection_var,
      # neuron model
     eqs_NN = Equations('''
     
-    dV/dt = noise + (-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)-g_AHP*p*(V-EK)+I-I_syn)/Cm  : volt
+    dV/dt = noise + (-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+ I_AHP +I-I_syn)/Cm  : volt
     dm/dt = alpha_m*(1-m)-beta_m*m : 1
     dh/dt = alpha_h*(1-h)-beta_h*h : 1
     dn/dt = (alpha_n*(1-n)-beta_n*n) : 1
-    dp/dt = (p_ss - p)/tau_p : 1
-    # dhp/dt = 0.128*exp((17.*mV-V+VT)/(18.*mV))/ms*(1.-hp)-4./(1+exp((30.*mV-V+VT)/(5.*mV)))/ms*h : 1
+
     alpha_m = 0.32*(mV**-1)*4*mV/exprel((13*mV-V+VT)/(4*mV))/ms : Hz
     beta_m = 0.28*(mV**-1)*5*mV/exprel((V-VT-40*mV)/(5*mV))/ms : Hz
     alpha_h = 0.128*exp((17*mV-V+VT)/(18*mV))/ms : Hz
     beta_h = 4./(1+exp((40*mV-V+VT)/(5*mV)))/ms : Hz
     alpha_n = 0.032*(mV**-1)*5*mV/exprel((15*mV-V+VT)/(5*mV))/ms : Hz
     beta_n = .5*exp((10*mV-V+VT)/(40*mV))/ms : Hz
-    p_ss = (1./(exp(-(V + 35*mV)/(10*mV))+1)) : 1
-    tau_p = Tau_max / (3.3*exp( (V + 35*mV)/(20*mV) ) + exp( -( V + 35*mV )/(20*mV) )) : second
+
+    I_AHP = -g_AHP*Ca*(V-EK) : amp
+    dCa/dt = - Ca / tau_Ca : 1 
+
     
     noise = sigma*(2*gl/Cm)**.5*randn()/sqrt(dt) : volt/second (constant over dt)
     I : amp
-    I_cell = -gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)-g_AHP*p*(V-EK) : amp
-    # I_syn : amp
-    # I_AHP = g_AHP*p*(V-EK) : volt * siemens 
+    I_cell = -gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK): amp
     x : meter
     y : meter
     ''')
@@ -514,16 +516,16 @@ def Neuronal_Network(Nn,Connection_var,
         
    
             # Available neurotransmitter
-            dx_S/dt = Omega_d *(1 - x_S) -  r_Ar: 1 (event-driven)
+            dx_S/dt = Omega_d *(1 - x_S) -  r_Ar: 1 (clock-driven)
             
             # Usage of releasable neurotransmitter per single action potential (synchronous):
-            dusr/dt = -Omega_f_sr * usr : 1 (event-driven)
+            dusr/dt = -Omega_f_sr * usr : 1 (clock-driven)
             
             
             # Add the asyncronous release
             r_Ar = x0*nar : Hz
             nar = clip(randn()*sqrt(x_S/x0*uar*dt*(1-uar*dt))+uar*dt*x_S/x0, 0, 2*x_S/x0*uar*dt)/dt :Hz (constant over dt)
-            duar/dt = -uar*Omega_f_ar :Hz (event-driven)
+            duar/dt = -uar*Omega_f_ar :Hz (clock-driven)
             
             r_Sr : 1 
             
@@ -692,7 +694,7 @@ def Neuronal_Network(Nn,Connection_var,
     params_NN = get_Neuronparam(delta = delta)
     
     
-    N = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>20*mV', refractory=2 * ms,
+    N = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>20*mV',  reset='Ca += alpha_Ca',refractory=2 * ms,
                         method='exponential_euler')
     
     # Initialize neuron parameters
@@ -711,7 +713,7 @@ def Neuronal_Network(Nn,Connection_var,
     
     
     
-    S = Synapses(N, model=eqs_Syn,
+    S = Synapses(N,N, model=eqs_Syn,
                         on_pre=pre,
                         on_post=post,
                         name='Synapse*',
@@ -727,7 +729,7 @@ def Neuronal_Network(Nn,Connection_var,
         
         if Connection_var == 'Random':
             # --- Random ---
-            S.connect(p=params_Syn['conn_prob'])
+            S.connect(p=params_Syn['conn_prob'],condition='i != j')
             
         elif Connection_var == 'Distance':
             
@@ -1570,6 +1572,8 @@ def get_Raster(Traces,fs,low_f=200,high_f=2000,Visible=True):
     
     Spike timings are defined in seconds
     
+    Raster_array: 1st column channel 2nd column spk timings in SAMPLES
+    
     '''
     
         # set up a filter to filter the voltage signal
@@ -1596,7 +1600,7 @@ def get_Raster(Traces,fs,low_f=200,high_f=2000,Visible=True):
             
             
             
-            APs_time = np.append(APs_time, APstemp[j]/fs)
+            APs_time = np.append(APs_time, APstemp[j])
             APs_unit = np.append(APs_unit,k)
         # voltagetraces[k, :] = Voltagefilt
 
@@ -1644,7 +1648,7 @@ def get_Raster(Traces,fs,low_f=200,high_f=2000,Visible=True):
             indices = [i for i, x in enumerate(APs_unit) if x == ch]
         
             # Plot the unit indices (y-axis) against the spike times (x-axis)
-            plt.scatter(APs_time[indices], APs_unit[indices]+0.1, s=25, marker='|',color = tertiary_color_palette[ch])
+            plt.scatter(APs_time[indices]/fs, APs_unit[indices]+0.05, s=5, marker='|',color = tertiary_color_palette[ch])
             
         # Customize the plot
         plt.title('Spiking Activity on filtered signal(Raster Plot)')
@@ -1731,7 +1735,7 @@ def Plot_CultureDevice(Grid,Neuron_group,Nn):
     plt.show()  
     
     
-def Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius,Visible = True):
+def Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius,Visible = False):
     
     '''
     MEA_dict = dictionary with electrodes info: position and recordin sites
@@ -2376,7 +2380,7 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
         for i in range(n_channels):
             data_timings = data[i]
             data_plot = np.ones(len(data_timings)) * (i + 1)
-            plt.scatter(data_timings / fs, data_plot, s=15, marker='.')
+            plt.scatter(data_timings, data_plot, s=15, marker='.')
         plt.xlabel('Time [s]')
         plt.ylabel('Electrodes')
         plt.title('Spike Timings')
@@ -2468,8 +2472,8 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
         if Visible == True:
             
             plt.figure()
-            plt.plot(t_vec,smoothed_cumulative,color = 'r')
-            plt.plot(t_vec,Cumulative,color = 'b')
+            plt.plot(t_vec/fs,smoothed_cumulative,color = 'r')
+            # plt.plot(t_vec,Cumulative,color = 'b')
             plt.xlabel('Time [s]')
             plt.ylabel('Smoothed IFR')
             plt.show()
@@ -2483,6 +2487,7 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
         
 
 
+        
         
 
         
