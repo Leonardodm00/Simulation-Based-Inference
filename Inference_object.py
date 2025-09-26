@@ -120,6 +120,15 @@ NOTES:
         with the synaptic Omega rates). We can approach this hurdle in the following way: the embedding vector's entires are all set to zero.
         Indeed this condition is never met from any other simulation based emebdding. We can also implement an external network that learns to 
         predict combination of parameters that give rise to unsuccesfull (bad) simulations.
+        
+        
+    5) Neuronal_traces_simulation outputs are BY DEFAULT normalized by the peak amplitude (Per feature shuld be if neuronal dynamics is used)
+       The peak nomrlaization is preferable rather than the standardization because shapes of NB events are kept, relative scale of features
+       preserved and still computationally adequate for deep learning .                                                                                                        
+                                                                                                        
+    6) 
+                                                                                                        
+                                                                                        
        
         
     
@@ -321,7 +330,7 @@ def Network_wrapper(params):
     # ------------------------- PARAMETERS -------------------------
 
     # --------- SIMULATION -----------
-    simtime = 200 * second               # simulation time must be coherent with the 1D_CNN training one.
+    simtime = 50 * second               # simulation time must be coherent with the 1D_CNN training one.
     # transient = 3 * second              # time omitted as transient
     sed = 39                             # random number seed
     devices.device.seed(sed)            # set the seed for all the random number realisations
@@ -360,18 +369,11 @@ def Network_wrapper(params):
 
 
     # --------- NEURON and SYNAPSE -----------
-    # Here synapes type and delta are added
-    # N,S = Neuronal_Network(Nn,Connection_var = 'Random', 
-    #                     add_delay= False,delay_mode= 'random',
-    #                      Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
-    #                      Decay_type = 'Double_exp',synapse_type = synapse_type,
-    #                      conn_prob_ = conn_prob_, sed=sed)
-    
-    # --------- NEURON and SYNAPSE -----------
+
     N,S = Neuronal_Network(Nn,Connection_var = 'Random',
                         add_delay= False,delay_mode= 'random',
                          Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
-                         Decay_type = 'Double_exp',synapse_type = synapse_type, sed=sed)
+                         Decay_type = 'Double_exp',synapse_type = synapse_type, conn_prob_ = conn_prob_,sed=sed)
     # N.namespace['sigma']=4.1*mV
     # N.namespace['I_inj']=0*pA
     N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
@@ -381,8 +383,8 @@ def Network_wrapper(params):
     # ------------- UPDATE PARAMETERS -------------
     N.namespace['sigma'] = sigma_*mV
     S.namespace['Xi_ampa'] = Xi_ampa_/mmole
-    S.namespace['Xi_ampa'] = Xi_nmda_/mmole
-    N.namespace['g_AHP'] = (g_AHP_*msiemens*cm**-2) * N.namespace['area']
+    S.namespace['Xi_nmda'] = Xi_nmda_/mmole
+    N.namespace['g_AHP'] = g_AHP_ *nS
 
 
 
@@ -452,8 +454,8 @@ params = [0.0] * 6
 # Update the values at the specific indices
 # Neuron
 params[0] = 4  # Sigma [mV]
-params[1] = 0.5 # g_AHP
-params[2] = 0.1 # conn prob
+params[1] = 5 # g_AHP
+params[2] = 0.13 # conn prob
 params[3] = 0.5 # Xi_ampa
 params[4] = 0.3 # Xi_nmda
 params[5] = 2
@@ -466,15 +468,13 @@ MonitorN,Spk_montor  ,N,S,Raster_array = Network_wrapper(params)
 
 #%%
 %matplotlib
-# ------------ Visualize the spiking activity ------------
-plt.figure
-plt.plot(Spk_montor.t/ms, Spk_montor.i, '.k',ms=0.7)
-plt.xlabel('Time (ms)')
-plt.ylabel('Neuron index')
-plt.title('Raster Plot')
-plt.show()
 
+fig.show()
 
+plt.figure(dpi=200)
+plt.plot(Spk_montor.t / second, Spk_montor.i, '.k', ms=0.69)
+
+show()
 
 #%%
 # # !!!: FINISH TO IMPLEMENT
@@ -489,18 +489,18 @@ plt.show()
 
 # Traces,MEA_dict = Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
 
-# clock_dt = defaultclock.dt 
-# fs = 1/(clock_dt/second)
+clock_dt = defaultclock.dt 
+fs = 1/(clock_dt/second)
 # Raster,Raster_array = get_Raster(Traces,fs) # Raster_array: 1st column channel 2nd column spk timings in SAMPLES
 
     
     #%
 smoothed_cumulative,fs_downsampled,t_vec = Neuronal_traces_simulation(Raster_array,fs = fs,Visible = True,w_size=0.02,Gaussian_window=0.04,t_rec = simtime/second )
 
+#%%
 
-cumulative_stdz = Standardization(smoothed_cumulative)
 
-data_array =  torch.unsqueeze(torch.from_numpy(cumulative_stdz),0).float()
+data_array =  torch.unsqueeze(torch.from_numpy(smoothed_cumulative),0).float()
 
 #%
     
@@ -603,7 +603,7 @@ if __name__ == "__main__":
     
  
     Sigma_arr = np.arange(3, 6, 0.5)
-    g_AHP_arr = np.arange(0.5, 5, 0.5)
+    g_AHP_arr = np.arange(0.5, 8, 0.5)
     conn_prob_arr = np.arange(0.1, 0.3, 0.01)
     Xi_ampa_arr = np.arange(0.2, 1, 0.1)
     Xi_nmda_arr = np.arange(0.2, 1, 0.1)
@@ -642,7 +642,6 @@ if __name__ == "__main__":
     np.save("Embeddings.npy", np.float16(Embeddings))
     np.save("theta_0.npy", np.float16(tuple_list0))
     
-
 
 
 
