@@ -1,5 +1,6 @@
 
 
+
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
@@ -2515,7 +2516,6 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
         
     return smoothed_cumulative,fs_downsampled,t_vec
         
-
 
         
     
