@@ -449,21 +449,21 @@ def get_Synparam(synapse_type='depressing',**kwargs):
             'Omega_d': 2./second,
             'Omega_f_sr': 3.33/second,
             'U_0_sr': 0.6,
-            'alpha': 0.,
+            'alpha_syn': 0.,
         })
     elif synapse_type == 'facilitating':
         params.update({
             'Omega_d': 2./second, #2
             'Omega_f_sr': 2./second,
             'U_0_sr': 0.15,
-            'alpha': 1.,
+            'alpha_syn': 1.,
         })
     elif synapse_type == 'neutral':
         params.update({
             'Omega_d': 3./second,
             'Omega_f_sr': 3./second,
             'U_0_sr': 0.5,
-            'alpha': 1.,
+            'alpha_syn': 1.,
         })
     else:
         raise ValueError('synapse argument has to be "depressing", "facilitating" or "neutral"')
@@ -643,7 +643,7 @@ def Neuronal_Network(Nn,Connection_var,
             # Astrocyte ID for connection
             astro_index : integer
             # Per-synapse gliotransmitter-effect parameter
-            alpha  : 1
+            # alpha  : 1
             
             # Positions
             x_syn : metre
@@ -654,7 +654,7 @@ def Neuronal_Network(Nn,Connection_var,
     
         pre = '''
         
-            U_0 =  (1 - Gamma_S) * U_0_sr + alpha * Gamma_S
+            U_0 =  (1 - Gamma_S) * U_0_sr + alpha_syn * Gamma_S
             
             usr += U_0 * (1 - usr)
             r_Sr = usr * x_S # synchronously released synaptic neurotransmitter resources
@@ -2616,6 +2616,8 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
         
     return smoothed_cumulative,fs_downsampled,t_vec
         
+
+
     
     
         
