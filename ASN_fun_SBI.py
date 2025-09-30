@@ -1,4 +1,3 @@
-
 """
 Created on Tue Aug 12 17:52:56 2025
 
@@ -591,6 +590,10 @@ def Neuronal_Network(Nn,Connection_var,
             
             # Astrocyte ID for connection
             astro_index : integer
+            
+            # Positions
+            x_syn : metre
+            y_syn : metre
           
             ''')
         
@@ -616,24 +619,24 @@ def Neuronal_Network(Nn,Connection_var,
         
         eqs_Syn = Equations('''
             # Fraction of activated presynaptic receptors
-            dGamma_S/dt = O_G * G_A * (1 - Gamma_S) - Omega_G * Gamma_S : 1 (clock-driven)
+            dGamma_S/dt = O_G * G_A_syn * (1 - Gamma_S) - Omega_G * Gamma_S : 1 (clock-driven)
     
             
             # Available neurotransmitter
             dx_S/dt = Omega_d *(1 - x_S) -  r_Ar: 1 (event-driven)
             
             # Usage of releasable neurotransmitter per single action potential (synchronous):
-            dusr/dt = -Omega_f_sr * usr : 1 (event-driven)
+            dusr/dt = -Omega_f_sr * usr : 1 (clock-driven)
             
             
             # Add the asyncronous release
             r_Ar = x0*nar : Hz
             nar = clip(randn()*sqrt(x_S/x0*uar*dt*(1-uar*dt))+uar*dt*x_S/x0, 0, 2*x_S/x0*uar*dt)/dt :Hz (constant over dt)
-            duar/dt = -uar*Omega_f_ar :Hz (event-driven)
+            duar/dt = -uar*Omega_f_ar :Hz (clock-driven)
            
             
             # Define the variables of the model
-            G_A : mole  # gliotransmitter concentration in the extracellular space
+            G_A_syn : mole  # gliotransmitter concentration in the extracellular space
             r_Sr : 1 
             
          
@@ -648,7 +651,7 @@ def Neuronal_Network(Nn,Connection_var,
             ''')
         
         # -------------- Event based update --------------
-        
+    
         pre = '''
         
             U_0 =  (1 - Gamma_S) * U_0_sr + alpha * Gamma_S
@@ -1004,7 +1007,7 @@ def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed,ics =None):
     
     GJ = Synapses(Astro,Astro,
                   model=Gap_Eq,
-                  method='exponential_euler',
+                  method='rk4',
                   namespace= Params_astroGT,
                   name = 'Gap_junctions*',dtype=float32
                   )
@@ -1151,6 +1154,7 @@ def Synapse_to_astro(synapse,Astro,Connection_var):
                         Y_extra_post = Y_S_pre : mole (summed)
                         ''',
                         namespace=synapse.namespace,
+                        method = 'rk4',
              
                         
                         name="ecs_syn_to_astro*")
@@ -1198,8 +1202,9 @@ def Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn):
     Astro_Syn = Synapses(Glio_release,synapse,
                              model='''
                              # gliotransmitter concentration in the extracellular space
-                             G_A_post = G_A_pre : mole (summed)
+                             G_A_syn_post = G_A_pre : mole (summed)
                              ''',
+                             method = 'exponential_euler',
                   
                              name="ecs_astro_to_syn*",dtype=float32
                              )
@@ -2610,9 +2615,6 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
         
         
     return smoothed_cumulative,fs_downsampled,t_vec
-        
-
-
         
     
     
