@@ -2957,9 +2957,6 @@ def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15):
         synapse_coords.append(tuple(new_coord))
 
     return synapse_coords  
-    
-    
-        
 
         
     
