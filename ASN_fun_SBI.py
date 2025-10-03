@@ -613,7 +613,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
             'Omega_d': 2./second, #2
             'Omega_f_sr': 2./second,
             'U_0_sr': 0.15,
-            'alpha_syn': 0.       #1.,  
+            'alpha_syn': 1.       #1.,  
         })
     elif synapse_type == 'neutral':
         params.update({
