@@ -34,44 +34,220 @@ Version: cython friendly, connections and positions randomly placed
 
 # ---------------------- BINOMIAL FUNCTION ------------------------
 
-def Binomial_fun(n,p, _vectorisation_idx):
-    '''Generate a number from an exponential distribution using inverse
-       transform sampling'''
-    uniform = np.random.rand(n)
-    return sum(uniform < p)
+# def Binomial_fun(n,p, _vectorisation_idx):
+#     '''Generate a number from an exponential distribution using inverse
+#         transform sampling'''
+#     uniform = np.random.rand(n)
+#     return sum(uniform < p)
 
 
 
 
-Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
-                            stateless=False, auto_vectorise=True
-                            )
+# Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
+#                             stateless=False, auto_vectorise=True
+#                             )
 
-cython_code = '''
+# cython_code = '''
  
 
-cdef double Binomial_fun(int n,double p,_vectorisation_idx):
 
-    cdef int count = 0
-    cdef double uniform
-    cdef int i
+# cdef double Binomial_fun(int n,double p,_vectorisation_idx):
+
+#     cdef int count = 0
+#     cdef double uniform
+#     cdef int i
   
     
-    for i in range(n):
-        uniform=rand(_vectorisation_idx)
+#     for i in range(n):
+#         uniform=rand(_vectorisation_idx)
         
-        if uniform < p:
-            count = count+1
+#         if uniform < p:
+#             count = count+1
             
-    return count;
+#     return count;
 
-'''
-Binomial_fun.implementations.add_implementation('cython', cython_code,
-                                                    dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
+# '''
+
+# cpp_code = '''
+ 
+# #include <iostream>
+# #include <random>
+# #include <algorithm>
+# #include <cmath>
+
+# int Binomial_fun(int n, double p) {
+#     // Simple validation for input parameters
+#     if (n <= 0 || p <= 0.0) return 0;
+#     if (p >= 1.0) return n;
+
+#     // Use a thread_local Mersenne Twister engine seeded by random_device.
+#     // This provides a high-quality, efficient, and thread-safe way to generate
+#     // random numbers, effectively replacing the context-aware 'rand(_vectorisation_idx)'.
+#     static thread_local std::mt19937 generator(std::random_device{}());
+
+#     // Uniform distribution over the range [0.0, 1.0)
+#     std::uniform_real_distribution<double> distribution(0.0, 1.0);
+
+#     int count = 0;
+    
+#     // Simulate n independent Bernoulli trials
+#     for (int i = 0; i < n; ++i) {
+#         // Draw a uniform random number
+#         double uniform = distribution(generator);
+
+#         // Success if the random number falls below the probability threshold 'p'
+#         if (uniform < p) {
+#             count++;
+#         }
+#     }
+
+#     return count;
+# }
+
+# '''
+# Binomial_fun.implementations.add_implementation('cpp', cpp_code,
+#                                                     dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
 
 
 
+# ------------------ UTILITY FUNCTIONS ------------------
+def extract_synaptic_connections(input_folder):
+    """
+    Extracts and loads all saved connection and namespace files from a given folder.
 
+    The function loads:
+    - .npy files for synapse source/target indices (e.g., 'S_source_units.npy')
+    - .npz files for group state namespaces (e.g., 'Neuron_state_namespace.npz')
+
+    Args:
+        input_folder (str): The path to the directory containing the saved files.
+
+    Returns:
+        dict: A dictionary containing all loaded data. Connection arrays are stored
+              with keys like 'S_source', and namespace data is stored as an
+              NpzFile object with keys like 'Neuron_state'.
+    """
+    print(f"\n--- Starting to extract data from: {input_folder} ---")
+    loaded_data = {}
+
+    if not os.path.isdir(input_folder):
+        print(f"Error: Input folder not found at '{input_folder}'.")
+        return loaded_data
+
+    # 1. Load Synapse Connection Data (.npy files)
+    synapse_groups = ["S", "GJ", "StoA", "AtoS"]
+    for name in synapse_groups:
+        try:
+            source_path = os.path.join(input_folder, f'{name}_source_units.npy')
+            target_path = os.path.join(input_folder, f'{name}_target_units.npy')
+
+            # Use numpy.load to read the array data
+            loaded_data[f'{name}_source'] = np.load(source_path)
+            loaded_data[f'{name}_target'] = np.load(target_path)
+            print(f"Loaded connection data for group '{name}'.")
+
+        except FileNotFoundError:
+            print(f"Warning: Connection files not found for group '{name}' (expected: {source_path} and {target_path}). Skipping.")
+        except Exception as e:
+            print(f"Error loading connection data for group '{name}': {e}. Skipping.")
+
+
+    # 2. Load State Namespace Data (.npz files)
+    state_groups = ["Neuron", "Astrocyte"]
+    for name in state_groups:
+        try:
+            state_path = os.path.join(input_folder, f'{name}_state_namespace.npz')
+            # Use numpy.load to read the compressed dictionary data
+            loaded_data[f'{name}_state'] = np.load(state_path)
+            print(f"Loaded state namespace for group '{name}'.")
+
+        except FileNotFoundError:
+            print(f"Warning: State namespace file not found for group '{name}' (expected: {state_path}). Skipping.")
+        except Exception as e:
+            print(f"Error loading state namespace for group '{name}': {e}. Skipping.")
+
+    print("--- Data extraction complete ---")
+    return loaded_data
+def save_synaptic_connections(output_folder, S, GJ, StoA, AtoS, neuron_group, astrocyte_group):
+    """
+    Saves the source (i) and target (j) unit indices for four different
+    Brian2 Synapses objects, along with the state variables (namespace)
+    for the Neuron and Astrocyte groups.
+
+    The connection data is saved as .npy files, and the state data (namespace)
+    is saved as .npz files.
+
+    Args:
+        output_folder (str): The path to the directory where the files should be saved.
+        S (Synapses): The primary synapse group (e.g., neuron-to-neuron).
+        GJ (Synapses): The gap junction group (e.g., astrocyte-to-astrocyte).
+        StoA (Synapses): The synapse-to-astrocyte group (e.g., neuron-to-astrocyte).
+        AtoS (Synapses): The astrocyte-to-synapse group (e.g., astrocyte-to-neuron).
+        neuron_group (NeuronGroup): The main neuronal group.
+        astrocyte_group (NeuronGroup): The main astrocytic group.
+    """
+    print(f"--- Starting to save connections and namespaces to: {output_folder} ---")
+
+    # 1. Create the output folder if it doesn't exist
+    os.makedirs(output_folder, exist_ok=True)
+
+    # 2. Define the synapse groups and their filenames for connectivity data
+    synapse_groups = {
+        "S": S,
+        "GJ": GJ,
+        "StoA": StoA,
+        "AtoS": AtoS
+    }
+
+    # 3. Iterate over the synapse groups and save the connectivity
+    for name, syn_group in synapse_groups.items():
+        try:
+            # Brian2 Synapses.i and Synapses.j return the index arrays
+            source_indices = np.array(syn_group.i)
+            target_indices = np.array(syn_group.j)
+
+            # Define output paths
+            source_path = os.path.join(output_folder, f'{name}_source_units.npy')
+            target_path = os.path.join(output_folder, f'{name}_target_units.npy')
+
+            # Save the arrays
+            np.save(source_path, source_indices)
+            np.save(target_path, target_indices)
+
+            print(f"Successfully saved {len(source_indices)} connections for group '{name}'.")
+
+        except AttributeError:
+            # Handle cases where the input object might not be a valid Brian2 Synapses object
+            print(f"Error: Object for group '{name}' does not appear to have '.i' and '.j' attributes (Is it a Brian2 Synapses object?). Skipping.")
+
+    # 4. Save the state variables (the "namespace") for the neuronal and astrocytic groups
+    state_groups = {
+        "Neuron": neuron_group,
+        "Astrocyte": astrocyte_group
+    }
+
+    for name, group in state_groups.items():
+        try:
+            # Brian2's .get_states() returns a dictionary of all state variables and their values (as arrays)
+            state_data = group.get_states()
+            state_path = os.path.join(output_folder, f'{name}_state_namespace.npz')
+
+            # Use savez_compressed to save a dictionary into a single compressed file
+            np.savez_compressed(state_path, **state_data)
+
+            print(f"Successfully saved state namespace (variables) for group '{name}'.")
+            print(f"  State namespace saved to: {state_path}")
+            print(f"  Variables saved: {list(state_data.keys())}")
+
+        except Exception as e:
+            # Catch general exceptions during state saving
+            print(f"Error saving state namespace for group '{name}': {e}. Skipping.")
+
+
+    print("--- Connection and namespace saving complete ---")
+
+    
+    
 
 def plot_layered_connections_with_mea_planar(neurons, astrocytes, gj_synapses, neuron_synapses, Grid):
     """
@@ -79,7 +255,7 @@ def plot_layered_connections_with_mea_planar(neurons, astrocytes, gj_synapses, n
     in separate Z-layers and visualizes connections in 3D.
 
     Args:
-        neurons (NeuronGroup): The neuron population. Assumed to have .x_neuron, .y_neuron.
+        neurons (NeuronGroup): The neuron population. Assumed to have .x, .y.
         astrocytes (NeuronGroup): The astrocyte population. Assumed to have .x_astro, .y_astro.
         gj_synapses (Synapses): The astrocyte-to-astrocyte Gap Junction connections.
         neuron_synapses (Synapses): The neuron-to-neuron connections.
@@ -107,8 +283,8 @@ def plot_layered_connections_with_mea_planar(neurons, astrocytes, gj_synapses, n
     astro_z = np.full_like(astro_x, Z_ASTRO_LAYER)
 
     # Neuron coordinates
-    neuron_x = neurons.x_neuron / scale_factor
-    neuron_y = neurons.y_neuron / scale_factor
+    neuron_x = neurons.x / scale_factor
+    neuron_y = neurons.y / scale_factor
     neuron_z = np.full_like(neuron_x, Z_NEURON_LAYER)
     
     # MEA Grid coordinates (already in um)
@@ -427,7 +603,7 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'f_in': 1.*Hz,              # Input frequency (synapse)
         'f_c' : 1.*Hz,              # Input frequency (gliotransmission)
         # 't_on' : 0*second,         # Start of synaptic stimulation (used in STDP)
-        't_off' : Inf*second,      # End of astrocyte stimulation (used in standalone gliotransmission)
+        # 't_off' : Inf*second,      # End of astrocyte stimulation (used in standalone gliotransmission)
         # --- IP_3R kinectics
         'd_1': 0.13*umole,         # IP_3 binding affinity
         'O_2': 0.2/umole/second,   # Inactivating Ca^2+ binding rate
@@ -628,14 +804,14 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         
         # Connection to astrocyte rules
         'Conn_syn_astro_cutoff' :70 *um,
-        'sigma_A': 150*um,   #150*um,
+        'sigma_A': 200*um,   #150*um,
 
        
     
        # Asynchronous Release parameters (uncommented and added to dictionary)
  
        'Omega_f_ar': 1/ (0.7 * second),
-       'Uar': 0.001, #0.003
+       'Uar': 0.003, #0.003
        'Umax': 0.5/ms,
        'x0': 0.2, # x0 seems to be unitless here
     
@@ -702,11 +878,13 @@ def get_Synparam(synapse_type='depressing',**kwargs):
 
 
 def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuronal',
-                     Decay_type = 'Double_exp',synapse_type = 'neutral',conn_prob_ = None, seed_neu=None,seed_syn = None):
+                     Decay_type = 'Double_exp',synapse_type = 'neutral',conn_prob_ = None, seed_neu=None,seed_syn = None, connections = None):
     
 
 # Syn_pdist: stores statistical informations used to spatially reallocate the synapses. [0] probability of a connection to 
 #   be set at the distance in [1]   
+# connections = List,True   Whether to set the conenctivity map or not. If a list is provided it must be in the following format.
+#  connections[0] Source , connections[1] = Target
     
 # ---------------------- NEURONAL GROUP ----------------------
      # neuron model
@@ -731,8 +909,8 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
     noise = sigma*(2*gl/Cm)**.5*randn()/sqrt(dt) : volt/second (constant over dt)
     I : amp
     I_cell = -gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK): amp
-    x_neuron : meter
-    y_neuron : meter
+    x : meter
+    y : meter
     ''')
     
     
@@ -976,8 +1154,8 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
     # Position neurons on a grid
 
     Coordinates = get2D_rnd_coordinates(N.N,params_NN['c_min'],params_NN['c_max'],seed_neu)
-    N.x_neuron = Coordinates[:,0]*um
-    N.y_neuron = Coordinates[:,1]*um
+    N.x = Coordinates[:,0]*um
+    N.y = Coordinates[:,1]*um
     
     
     
@@ -990,33 +1168,47 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
                         method='exponential_euler',dtype=float32,
                         )
     
-    S.namespace['Binomial_fun'] = Binomial_fun
+    # S.namespace['Binomial_fun'] = Binomial_fun
     
     # -------------- Connections --------------
     
-    # --- Random ---
-    S.connect(p=params_Syn['conn_prob'],condition='i != j',)
     
-       
-    
-    
-    
-    # Set synapse position coincident with the post-synaptic neuron plus a stochastic shift (See notes)
-
-    
-    
-    Syn_coordinates =  get_synapse_coordinates(S,N,
-                                               Syn_pdist['Syn_prob'].to_numpy(),
-                                               Syn_pdist['Radius_val'].to_numpy()
-                                               )
-    Syn_coordinates = np.vstack(Syn_coordinates)
-
-    # Print the shape (number of rows, number of columns)
-
-    
-    S.x_syn = Syn_coordinates[:, 0] * um
-    S.y_syn = Syn_coordinates[:, 1] * um
-    
+    try:
+        if connections == True:
+            # --- Random ---
+            S.connect(p=params_Syn['conn_prob'],condition='i != j',)
+            
+               
+            
+            
+            
+            # Set synapse position coincident with the post-synaptic neuron plus a stochastic shift (See notes)
+        
+            
+            
+            Syn_coordinates =  get_synapse_coordinates(S,N,
+                                                       Syn_pdist['Syn_prob'].to_numpy(),
+                                                       Syn_pdist['Radius_val'].to_numpy()
+                                                       )
+            Syn_coordinates = np.vstack(Syn_coordinates)
+        
+            # Print the shape (number of rows, number of columns)
+        
+            
+            S.x_syn = Syn_coordinates[:, 0] * um
+            S.y_syn = Syn_coordinates[:, 1] * um
+        
+        elif isinstance(connections, list):
+            Source = connections[0]
+            Target = connections[1]
+            S.connect(i = Source, j = Target)
+        
+    except Exception as e:
+        # This block executes if any error occurs in the 'try' block above.
+        # 'e' contains the error information.
+        print(f"ERROR: Failed to establish connections for S group.")
+        print(f"Reason: {e}")  
+        
    
         
     # S Initialization --------------
@@ -1087,7 +1279,10 @@ def astrocyte_connections(Astrocyte_group,Connection_dist):
     
     
 
-def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None):
+def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None, connections = None):
+    # Connections: True / list. Whether to set conenctiosn between astrocytes or are already provided.
+    #              in case it is a list: connections[0] = Source, connections[1] = Target
+    
 # ------ Astrocyte core equations ------
 
     eqs_A = Equations('''
@@ -1133,7 +1328,7 @@ def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None):
     Astro = NeuronGroup(N_astro, eqs_A,
                         threshold='C>C_osc',
                         refractory='C>C_osc',
-                        method='gsl_rkf45',
+                        method='rk4',
                         namespace=Params_astroGT,
                         name='astrocyte*',dtype=float32)
     
@@ -1184,8 +1379,23 @@ def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None):
     '''
 
     # --------- RANDOM -----------
-    Source,Target = astrocyte_connections(Astro,Params_astroGT['conn_dist'])
-    GJ.connect(i=Source , j= Target)
+    try:
+        if connections == True:
+        
+            Source,Target = astrocyte_connections(Astro,Params_astroGT['conn_dist'])
+            GJ.connect(i=Source , j= Target)
+        
+        elif isinstance(connections, list):
+            Source = connections[0]
+            Target = connections[1]
+            GJ.connect(i = Source, j = Target)
+            
+            
+    except Exception as e:
+        # This block executes if any error occurs in the 'try' block above.
+        # 'e' contains the error information.
+        print(f"ERROR: Failed to establish connections for GJ group.")
+        print(f"Reason: {e}")
 
    
     
@@ -1275,7 +1485,7 @@ def Gliotransmission(N_astro,Astro,ics = None):
                             # considered a "reset"
                           
                             reset=gliot_release,
-                            method='gsl',
+                            method='rk4',
                             name='gliot_release*',
                             namespace=Params_astroGT,dtype=float32)
     
@@ -1296,7 +1506,9 @@ def Gliotransmission(N_astro,Astro,ics = None):
 
 
     
-def Synapse_to_astro(synapse,Astro):
+def Synapse_to_astro(synapse,Astro,connections):
+    # Connections: True / list. Whether to set conenctiosn between synapses and astro or are already provided.
+    #              in case it is a list: connections[0] = Source, connections[1] = Target
     # ---- Syn-astro ----
 
     Syn_Astro = Synapses(synapse,Astro,
@@ -1305,7 +1517,7 @@ def Synapse_to_astro(synapse,Astro):
                         Y_extra_post = Y_S_pre : mole (summed)
                         ''',
                         namespace=synapse.namespace,
-                        method = 'gsl ',
+                        method = 'rk4',
              
                         
                         name="ecs_syn_to_astro*")
@@ -1313,22 +1525,42 @@ def Synapse_to_astro(synapse,Astro):
     
         
         # --------- RANDOM -----------
+        
+    try:
+        if connections == True:
+        
+            p_conn = 'exp(- ((sqrt((x_syn_pre - x_astro_post)**2 + (y_syn_pre - y_astro_post)**2))**2) / (2 * sigma_A**2))'
+            Syn_Astro.connect(
+            condition='sqrt((x_syn_pre - x_astro_post)**2 + (y_syn_pre - y_astro_post)**2) < Conn_syn_astro_cutoff' ,
+            p=p_conn
+            )
+            
+            Source = list(Syn_Astro.i) # Synapse as pre unit
+            Target = list(Syn_Astro.j) # Astro as target unit
+            
+            Connections_list = [Target,Source] # It will be delivered to the AtoS... Opposite sources and targets.
+        
+        elif isinstance(connections, list):
+            Source = connections[0]
+            Target = connections[1]
+            Syn_Astro.connect(i = Source, j = Target)
+            
+            Connections_list = [Target,Source] # It will be delivered to the AtoS... Opposite sources and targets.
+            
+            
+    except Exception as e:
+        # This block executes if any error occurs in the 'try' block above.
+        # 'e' contains the error information.
+        print(f"ERROR: Failed to establish connections for StoA group.")
+        print(f"Reason: {e}")
 
-    p_conn = 'exp(- ((sqrt((x_syn_pre - x_astro_post)**2 + (y_syn_pre - y_astro_post)**2))**2) / (2 * sigma_A**2))'
-    Syn_Astro.connect(
-    condition='sqrt((x_syn_pre - x_astro_post)**2 + (y_syn_pre - y_astro_post)**2) < Conn_syn_astro_cutoff' ,
-    p=p_conn
-    )
+    return Syn_Astro,Connections_list # To be loaded in Astro_to_syn swapped.
+
+
+
+def Astro_to_Syn(Glio_release,synapse,connections):
     
-    Source = list(Syn_Astro.i) # Synapse as pre unit
-    Target = list(Syn_Astro.j) # Astro as target unit
-    
-
-    return Syn_Astro,Source,Target # To be loaded in Astro_to_syn swapped.
-
-
-
-def Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn):
+    # connections: [0] = Source Astro, [1] Target Syn
     
     '''
     The connectivity is bidirectional thus the same as for the function 'Synapse_to_astro'
@@ -1351,9 +1583,11 @@ def Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn):
                              )
     
     # ---- Connections ----
-
     
-    Astro_Syn.connect(i = Source_astro, j = Target_syn)
+    Source = connections[0]
+    Target = connections[1]
+    
+    Astro_Syn.connect(i = Source, j = Target)
     
     return Astro_Syn
 
@@ -3008,8 +3242,8 @@ def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15):
         post_idx = Synapse.j[i]
 
         # Get the coordinates of the pre- and postsynaptic neurons
-        pre_pos = np.array([Neuron.x_neuron[pre_idx]/um, Neuron.y_neuron[pre_idx]/um])
-        post_pos = np.array([Neuron.x_neuron[post_idx]/um, Neuron.y_neuron[post_idx]/um])
+        pre_pos = np.array([Neuron.x[pre_idx]/um, Neuron.y[pre_idx]/um])
+        post_pos = np.array([Neuron.x[post_idx]/um, Neuron.y[post_idx]/um])
 
         # Calculate the vector from the postsynaptic to the presynaptic neuron
         vector = post_pos - pre_pos
