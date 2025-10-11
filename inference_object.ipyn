@@ -297,7 +297,7 @@ elif Simulated_network == 'Astrocytic':
 # -----------------------------------------------------------------------------
 
 
-
+alpha_array = [0,0.5,1]
 
 net_ = Network(collect())  # automatically include all the stated groups
 net_.run(simtime)
@@ -306,21 +306,21 @@ print('Building the network...')
 device.build(run=False, clean=True)
 
 
-alpha_array = [0,0.5,1]
+
 
 results = []
 print('Running the network...')
 for idx, alpha_act in enumerate(alpha_array):
-    S.namespace['alpha_syn']: alpha_act
-    device.run(run_args={})
+    
+    device.run(run_args={S.alpha_syn : alpha_act})
     
 
     # --------------- ELECTRODE RECORDINGS ---------------
-    Traces,MEA_dict = Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius) # Visible by default is false
+    #Traces,MEA_dict = Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius) # Visible by default is false
     
-    clock_dt = defaultclock.dt 
-    fs = 1/(clock_dt/second)
-    Raster,Raster_array = get_Raster(Traces,fs,Visible = False) # Raster_array: 1st column channel 2nd column spk timings in SAMPLES
+    #clock_dt = defaultclock.dt 
+    #fs = 1/(clock_dt/second)
+    #Raster,Raster_array = get_Raster(Traces,fs,Visible = False) # Raster_array: 1st column channel 2nd column spk timings in SAMPLES
 
-    results.append(Traces)
+    #results.append(Traces)
     print(f'Finished Iteration {idx+1}')
