@@ -640,7 +640,7 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'zeta': 2.,                # Maximal reduction of receptor affinity by PKC
         'n': 1.,                   # Cooperativity of agonist binding reaction
         # --- Gliotransmitter release and time course        
-        'C_Theta': 0.3*umole,      # Ca^2+ threshold for exocytosis
+        'C_Theta': 0.5*umole,      # Ca^2+ threshold for exocytosis
         'Omega_A': 0.6/second,     # Gliotransmitter recycling rate
         'U_A': 0.6,                # Gliotransmitter release probability
         'G_T': 200.*mmole,         # Total vesicular gliotransmitter
@@ -691,15 +691,15 @@ def get_Neuronparam(**kwargs):
     'El': -39.2 * mV,                    # Nernst potential of leaky ions
     'EK': -80 * mV,                      # Nernst potential of potassium
     'ENa': 70 * mV,                      # Nernst potential of sodium
-    'g_na': 1.6 * 50 * msiemens * cm**-2 * Neuron_area, # maximal conductance of sodium channels (calculated with area)
-    'g_kd': 1.3 * 5 * msiemens * cm**-2 * Neuron_area,  # maximal conductance of potassium (calculated with area)
+    # 'g_na': 1.6 * 50 * msiemens * cm**-2 * Neuron_area, # maximal conductance of sodium channels (calculated with area)
+    # 'g_kd': 1.3 * 5 * msiemens * cm**-2 * Neuron_area,  # maximal conductance of potassium (calculated with area)
     'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
     'VT': -30.4*mV,                      # alters firing threshold of neurons
     'sigma': 4 * mV,      #4.1               # standard deviation of the noisy voltage fluctuations #!!!
     
     # AHP current
-    'g_AHP' : 5 * nS,                      # Maximum conductance of sAHP channels
-    'tau_Ca' : 8000 * ms ,                 # recovery time constant sAHP channels
+    # 'g_AHP' : 5 * nS,                      # Maximum conductance of sAHP channels
+    # 'tau_Ca' : 8000 * ms ,                 # recovery time constant sAHP channels
     'alpha_Ca' : 0.00035,                  # strength of the spike-frequency adaptation
 
     'I_inj': 15*pA, # Injected current # 18
@@ -753,7 +753,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         # --- Presynaptic receptors
         'O_G': 1.5/umole/second,   # Agonist binding rate (activating)
         'Omega_G': 0.5/(60*second),# Agonist release rate (inactivating)
-        # alpha (see below)        # Gliotransmitter effect on synaptic release
+        # alpha_syn (see below)        # Gliotransmitter effect on synaptic release
         # --- SIC/SOC
         'G_sic'     : 4.5*mV,      # Max SIC/SOC depolarization
         'tau_sic_r' : 30.*ms,      # SIC/SOC rise time constant
@@ -792,8 +792,8 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'tau_decay_nmda': 100*ms,
         
         # Synaptic efficacy (function of the [GLU] in the cleft)
-        'Xi_ampa':  0.5/mmole,
-        'Xi_nmda': 0.3/mmole,
+        # 'Xi_ampa':  0.5/mmole,
+        # 'Xi_nmda': 0.3/mmole,
         
         # Connection probability
         'conn_prob' : 0.107, # Random 
@@ -810,9 +810,9 @@ def get_Synparam(synapse_type='depressing',**kwargs):
     
        # Asynchronous Release parameters (uncommented and added to dictionary)
  
-       'Omega_f_ar': 1/ (0.7 * second),
-       'Uar': 0.003, #0.003
-       'Umax': 0.5/ms,
+       # 'Omega_f_ar': 1/ (0.7 * second),
+       # 'U_0_ar': 0.003, #0.003
+       # 'Umax': 0.5/ms,
        'x0': 0.2, # x0 seems to be unitless here
     
     }
@@ -822,24 +822,24 @@ def get_Synparam(synapse_type='depressing',**kwargs):
     # ------------------ SYNAPSES ------------------
     if synapse_type == 'depressing':
         params.update({
-            'Omega_d': 2./second,
-            'Omega_f_sr': 3.33/second,
-            'U_0_sr': 0.6,
-            'alpha_syn': 0.,
+            # 'Omega_d': 2./second,
+            # 'Omega_f_sr': 3.33/second,
+            # 'U_0_sr': 0.6,
+            # 'alpha_syn': 0.,
         })
     elif synapse_type == 'facilitating':
         params.update({
-            'Omega_d': 2./second, #2
-            'Omega_f_sr': 2./second,
-            'U_0_sr': 0.15,
-            'alpha_syn': 1.       #1.,  
+            # 'Omega_d': 2./second, #2
+            # 'Omega_f_sr': 2./second,
+            # 'U_0_sr': 0.15,
+            # 'alpha_syn': 1.       #1.,  
         })
     elif synapse_type == 'neutral':
         params.update({
-            'Omega_d': 3./second,
-            'Omega_f_sr': 3./second,
-            'U_0_sr': 0.5,
-            'alpha_syn': 1.,
+            # 'Omega_d': 3./second,
+            # 'Omega_f_sr': 3./second,
+            # 'U_0_sr': 0.5,
+            # 'alpha_syn': 1.,
         })
     else:
         raise ValueError('synapse argument has to be "depressing", "facilitating" or "neutral"')
@@ -852,7 +852,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
     # STDP parameters
     # Graupner and Brunel (PNAS 2012) / DP curve
     params.update({
-        'tau_ca': 20.0*ms, # Intrasynaptic Ca2+ decay constant
+        # 'tau_ca': 20.0*ms, # Intrasynaptic Ca2+ decay constant
         'Cpre'  : 1.0,     # Presynaptic Ca2+ increase per spk
         'Cpost' : 2.0,     # Postynaptic Ca2+ increase per spk
         'Theta_d' : 1.0,   # LTD threshold
@@ -911,6 +911,18 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
     I_cell = -gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK): amp
     x : meter
     y : meter
+    
+    
+    # State Variables
+    sigma : V
+    tau_Ca : second
+    g_AHP : siemens
+    g_na : siemens
+    g_kd : siemens
+    
+    
+    
+    
     ''')
     
     
@@ -974,6 +986,27 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             # Positions
             x_syn : metre
             y_syn : metre
+            
+            
+            # State Variables
+            Omega_d : 1/second
+            Omega_f_sr : 1/second
+            Omega_f_ar : 1/second
+            U_0_sr : 1
+            U_0_ar : 1
+            Umax : 1
+            Xi_ampa : 1/mole
+            Xi_nmda : 1/mmole
+            alpha_syn : 1
+            
+  
+            
+            
+            
+            
+            
+       
+        
           
             ''')
         
@@ -986,7 +1019,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             usr += U_0 * (1 - usr)
             r_Sr = usr * x_S # synchronously released synaptic neurotransmitter resources
             x_S -= r_Sr     
-            uar += Uar*(Umax-uar)
+            uar += U_0_ar*(Umax-uar)
             '''
         post = None
         
@@ -1028,6 +1061,20 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             # Positions
             x_syn : metre
             y_syn : metre
+            
+            # State Variables
+            Omega_d : 1/second
+            Omega_f_sr : 1/second
+            Omega_f_ar : 1/second
+            U_0_sr : 1
+            U_0_ar : 1
+            Umax : 1
+            Xi_ampa : 1/mmole
+            Xi_nmda : 1/mmole
+            alpha_syn : 1
+            
+            
+            
             ''')
         
         # -------------- Event based update --------------
@@ -1039,7 +1086,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             usr += U_0 * (1 - usr)
             r_Sr = usr * x_S # synchronously released synaptic neurotransmitter resources
             x_S -= r_Sr     
-            uar += Uar*(Umax-uar)
+            uar += U_0_ar*(Umax-uar)
             
         '''
         post = None
@@ -1141,7 +1188,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
     params_NN = get_Neuronparam()
     
     
-    N = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>20*mV',  reset='Ca += alpha_Ca',refractory=2 * ms,
+    N = NeuronGroup(Nn, model=eqs_NN, name='Neuron',namespace= params_NN, threshold='V>20*mV',  reset='Ca += alpha_Ca',refractory=2 * ms,
                         method='exponential_euler',dtype=float32)
     
     # Initialize neuron parameters
@@ -1163,7 +1210,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
     S = Synapses(N,N, model=eqs_Syn,
                         on_pre=pre,
                         on_post=post,
-                        name='Synapse*',
+                        name='Synapse',
                         namespace=params_Syn,
                         method='exponential_euler',dtype=float32,
                         )
@@ -1330,7 +1377,7 @@ def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None, conne
                         refractory='C>C_osc',
                         method='rk4',
                         namespace=Params_astroGT,
-                        name='astrocyte*',dtype=float32)
+                        name='Astrocyte',dtype=float32)
     
     # Random initialization of initial conditions
     if ics=='rand':
@@ -1363,7 +1410,7 @@ def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None, conne
                   model=Gap_Eq,
                   method='rk4',
                   namespace= Params_astroGT,
-                  name = 'Gap_junctions*',dtype=float32
+                  name = 'Gap_junctions',dtype=float32
                   )
     
     
@@ -1486,7 +1533,7 @@ def Gliotransmission(N_astro,Astro,ics = None):
                           
                             reset=gliot_release,
                             method='rk4',
-                            name='gliot_release*',
+                            name='Gliot_release',
                             namespace=Params_astroGT,dtype=float32)
     
     # Assign initial conditions
@@ -1520,7 +1567,7 @@ def Synapse_to_astro(synapse,Astro,connections):
                         method = 'rk4',
              
                         
-                        name="ecs_syn_to_astro*")
+                        name="ecs_syn_to_astro")
     
     
         
@@ -1579,7 +1626,7 @@ def Astro_to_Syn(Glio_release,synapse,connections):
                              ''',
                              method = 'gsl ',
                   
-                             name="ecs_astro_to_syn*",dtype=float32
+                             name="ecs_astro_to_syn",dtype=float32
                              )
     
     # ---- Connections ----
