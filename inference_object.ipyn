@@ -28,7 +28,7 @@ BrianLogger.suppress_hierarchy('brian2.parsing')
 # Clear the cache for the 'cython' code generation target
 start_scope()
 
-
+start_time = time.time()
 
 # -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
@@ -49,7 +49,7 @@ class SimWrapper:
 
 
 
-    connections_path = r'/content/drive/MyDrive/Output connectivity'
+    connections_path = r'Connectivity/Connectivity_data_0.150000'
 
     set_connections = False
 
@@ -57,7 +57,7 @@ class SimWrapper:
     # ------------------------- PARAMETERS -------------------------
 
     # --------- SIMULATION -----------
-    simtime =   30 * second               # simulation time
+    simtime =   200 * second               # simulation time
     # transient = 3 * second
     seed_device = 50            # time omitted as transient
     seed_neuron = 39                             # random number seed
@@ -241,7 +241,7 @@ class SimWrapper:
 
     # ------------------------- CONSTRUCT THE NETWORK --------------------------
 
-
+    print('Building the network...')
     self.net = Network()  # automatically include all the stated group
     self.net.add([N,S,Astro,GJ,GT,StoA,AtoS,SpikesN,MonitorN,SpikesA])
     self.net.run(simtime)
@@ -288,7 +288,7 @@ class SimWrapper:
 
 
     # ----------------------- Run the network -----------------------
-
+    print('Running the network...')
     self.device.run(run_args={
                               # Synaptic variables
 
@@ -330,22 +330,22 @@ class SimWrapper:
     else:
 
       # ----------- Device's info -----------
-
-      # pitch = 300 #[um] 
-      # electrode_radius = 15 #[um]
-      # neuron_radius = 9 #[um]
-      # pitch_recsites = 7.5 # [um]  
-      # shift = 11.25 # [um]
-      # electrode_dist = 300 # [um]
-      # c_min = 0 #[um]
-      # c_max = 1100 #[um]
+      print('Running Virtual Electrodes...')
+      pitch = 300 #[um] 
+      electrode_radius = 15 #[um]
+      neuron_radius = 9 #[um]
+      pitch_recsites = 7.5 # [um]
+      shift = 11.25 # [um]
+      electrode_dist = 300 # [um]
+      c_min = 0 #[um]
+      c_max = 1100 #[um]
 
       # ---------- Compute traces ----------
 
-      # Traces,_ = Electrode_traces(pitch,pitch_recsites,shift, self.net['Neuron'], self.net['StVar_monitor_N'],electrode_dist,neuron_radius,electrode_radius) # Visible by default is false
+      Traces,_ = Electrode_traces(pitch,pitch_recsites,shift, self.net['Neuron'], self.net['StVar_monitor_N'],electrode_dist,neuron_radius,electrode_radius) # Visible by default is false
 
-      # fs = 1/(defaultclock.dt/second)
-      # _,Raster_array = get_Raster(Traces,fs,Visible = False) # Raster_array: 1st column channel 2nd column spk timings in SAMPLES
+      fs = 1/(defaultclock.dt/second)
+      _,Raster_array = get_Raster(Traces,fs,Visible = False) # Raster_array: 1st column channel 2nd column spk timings in SAMPLES
 
       print(f"Finished the {params[14]}-th simulation: Good")
 
@@ -496,6 +496,7 @@ if __name__ == "__main__":
   Raster_array = sim.do_run(initial_param_vector_numerical)
 
   # SAVE ????????????????????????????????
+  print(f'Elapsed {(time.time()-start):.2f} seconds')
 
 
 
