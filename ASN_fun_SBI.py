@@ -2038,24 +2038,116 @@ def Get_12grid(pitch):
 
 
     
-def Recording_sites(pitch_recsites,shift,Grid):
+def Recording_sites(pitch_recsites,shift,Grid,n_rec=3,Visible= False,electrode_radius= 15):
     MEA_dict = {}
     
     el = 0
-    for point in Grid:  
+    for point in Grid: 
         
-        # The x0 and y0 are the bottom left coordinates of the first rec site.
-        # the 'point' coordinate is the center. A shift in coordinates is needed.
-        # The 'point' coordinates are shifted along the diagonal about half the diameter.
-        # Both x and y of the 'point' are shifted about sqrt(2)*radius
+        if n_rec == 3:
         
-        x0 = point[0]-shift
-        y0 = point[1]-shift
-        rec_points = generate_grid_points(4, 4, pitch_recsites,x0,y0)
-        MEA_dict[el] = np.array(rec_points)
+            # The x0 and y0 are the bottom left coordinates of the first rec site.
+            # the 'point' coordinate is the center. A shift in coordinates is needed.
+            # The 'point' coordinates are shifted along the diagonal about half the diameter.
+            # Both x and y of the 'point' are shifted about sqrt(2)*radius
+            
+            # x0 = point[0]-shift
+            # y0 = point[1]-shift
+            x0 = point[0]-pitch_recsites
+            y0 = point[1]-pitch_recsites
+            rec_points = generate_grid_points(n_rec, n_rec, pitch_recsites,x0,y0)
+            MEA_dict[el] = np.array(rec_points)
+            
+           
+            el = el+1
+            
+        elif n_rec == 4:
         
-       
-        el = el+1
+            # The x0 and y0 are the bottom left coordinates of the first rec site.
+            # the 'point' coordinate is the center. A shift in coordinates is needed.
+            # The 'point' coordinates are shifted along the diagonal about half the diameter.
+            # Both x and y of the 'point' are shifted about sqrt(2)*radius
+            
+            x0 = point[0]-shift
+            y0 = point[1]-shift
+
+            rec_points = generate_grid_points(n_rec, n_rec, pitch_recsites,x0,y0)
+            MEA_dict[el] = np.array(rec_points)
+            
+           
+            el = el+1
+        
+    if Visible == True:
+        # 2. Setup the plot
+        fig, ax = plt.subplots()
+
+        # Ensure the plot scales correctly to show the circles
+        ax.set_aspect('equal', adjustable='box') 
+        ax.autoscale_view()
+
+        radius = electrode_radius
+        # 3. Plot the circles
+        for cn in range(len(Grid[:,0])):
+            # Create a Circle patch
+            circle = Circle(
+                (Grid[cn,0], Grid[cn,1]),  # Center (x, y)
+                radius,                # Radius
+                color='blue',          # Color of the circle
+                alpha=0.3,             # Transparency (makes overlapping easier to see)
+                fill=True,             # Fill the circle
+                edgecolor='black',     # Color of the outline
+                linewidth=1            # Thickness of the outline
+            )
+            
+            # Add the circle to the Axes
+            ax.add_patch(circle)
+            
+            # Optional: Plot the center point as a dot
+            ax.plot(Grid[cn,0], Grid[cn,1], 'ro', markersize=5)
+            
+            
+           
+        for j in range(len(Grid[:,0])):
+            
+            rec_s = MEA_dict[j]
+            
+            for cn in range(len(rec_s[:,0])):
+                # Create a Circle patch
+                circle = Circle(
+                    (rec_s[cn,0], rec_s[cn,1]),  # Center (x, y)
+                    1.5,                # Radius
+                    color='blue',          # Color of the circle
+                    alpha=0.3,             # Transparency (makes overlapping easier to see)
+                    fill=True,             # Fill the circle
+                    edgecolor='black',     # Color of the outline
+                    linewidth=1            # Thickness of the outline
+                )
+                
+                # Add the circle to the Axes
+                ax.add_patch(circle)
+                
+                # Optional: Plot the center point as a dot
+                ax.plot(rec_s[cn,0], rec_s[cn,1], 'ro', markersize=5) 
+                
+        # 4. Set plot limits (important for seeing all circles)
+        # Find the min/max coordinates and add a buffer equal to the radius
+        min_x = np.min(Grid[:,0]) - radius * 1.5
+        max_x = np.max(Grid[:,0]) + radius * 1.5
+        min_y = np.min(Grid[:,1]) - radius * 1.5
+        max_y = np.max(Grid[:,1]) + radius * 1.5
+
+        ax.set_xlim(min_x, max_x)
+        ax.set_ylim(min_y, max_y)
+
+        # 5. Add labels and title
+        ax.set_xlabel("X Coordinate")
+        ax.set_ylabel("Y Coordinate")
+        ax.set_title(f"Circles with Radius = {radius}")
+        ax.grid(True)
+
+        # 6. Show the plot
+        plt.show()
+    
         
         
     return MEA_dict
