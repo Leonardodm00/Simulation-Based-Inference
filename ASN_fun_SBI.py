@@ -695,7 +695,7 @@ def get_Neuronparam(**kwargs):
     # 'g_kd': 1.3 * 5 * msiemens * cm**-2 * Neuron_area,  # maximal conductance of potassium (calculated with area)
     'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
     'VT': -30.4*mV,                      # alters firing threshold of neurons
-    'sigma': 4 * mV,      #4.1               # standard deviation of the noisy voltage fluctuations #!!!
+    # 'sigma': 4 * mV,      #4.1               # standard deviation of the noisy voltage fluctuations #!!!
     
     # AHP current
     # 'g_AHP' : 5 * nS,                      # Maximum conductance of sAHP channels
@@ -862,7 +862,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'W_0'    : 0.5,    # LTP/LTD boundary
         'tau_w'  : 346.3615*second, # Time decay of synaptic weights
         'D'      : 13.7*ms,# Synaptic delay
-        'sigma_'  : 2.8284, # variance in the diffusion approx,
+        # 'sigma_'  : 2.8284, # variance in the diffusion approx,
         'beta'   : 0.5,
         'b'      : 5.
     })
@@ -914,7 +914,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
     
     
     # State Variables
-    sigma : V
+    sigma : volt
     tau_Ca : second
     g_AHP : siemens
     g_na : siemens
@@ -994,9 +994,9 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             Omega_f_ar : 1/second
             U_0_sr : 1
             U_0_ar : 1
-            Umax : 1
+            Umax : 1/second
             Xi_ampa : 1/mole
-            Xi_nmda : 1/mmole
+            Xi_nmda : 1/mole
             alpha_syn : 1
             
   
@@ -1068,11 +1068,10 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             Omega_f_ar : 1/second
             U_0_sr : 1
             U_0_ar : 1
-            Umax : 1
-            Xi_ampa : 1/mmole
-            Xi_nmda : 1/mmole
+            Umax : 1/second
+            Xi_ampa : 1/mole
+            Xi_nmda : 1/mole
             alpha_syn : 1
-            
             
             
             ''')
