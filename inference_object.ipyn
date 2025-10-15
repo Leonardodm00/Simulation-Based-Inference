@@ -45,19 +45,28 @@ set_device('cpp_standalone', build_on_run=False)
 
 class SimWrapper:
 
-  def __init__(self,Binomial_fun):
+  def __init__(self,Binomial_fun,conn_value):
 
 
 
-    connections_path = r'Connectivity/Connectivity_data_0.150000'
+    connections_path = f"Connectivity/Connectivity_data_{conn_value:.6f}"
 
     set_connections = False
 
 
     # ------------------------- PARAMETERS -------------------------
 
+    # ------------------------- DIRECTORIES -------------------------
+
+
+
+
+
+
+
+
     # --------- SIMULATION -----------
-    simtime =   200 * second               # simulation time
+    simtime =   20 * second               # simulation time
     # transient = 3 * second
     seed_device = 50            # time omitted as transient
     seed_neuron = 39                             # random number seed
@@ -92,6 +101,7 @@ class SimWrapper:
 
     elif set_connections == False:
         Connections_dict = extract_synaptic_connections(connections_path)
+  
         Syn_pdist = None
 
 
@@ -203,7 +213,7 @@ class SimWrapper:
 
     # --- Monitors ---
     #recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
-    recording_stringN = ['V','I_cell']
+    recording_stringN = ['V']
     #recording_stringS = ['Y_S','G_A_syn']
     #recording_stringA = ['C','Gamma_A','I_coupling_tot','Y_extra']
     #recording_stringGT = ['G_A','C']
@@ -216,7 +226,7 @@ class SimWrapper:
         MonitorN = StateMonitor(N, recording_stringN, record=True,name='StVar_monitor_N')
         #MonitorGT = StateMonitor(GT, recording_stringGT, record=True)
         SpikesN = SpikeMonitor(N,name='Spike_monitor_N')
-        SpikesA = SpikeMonitor(Astro,name='Spike_monitor_A')
+        #SpikesA = SpikeMonitor(Astro,name='Spike_monitor_A')
 
 
     elif Simulated_network == 'Neuronal':
@@ -257,6 +267,11 @@ class SimWrapper:
     from brian2 import mV, nS,mmole,ms,second,cm,msiemens
     device_module.active_device = self.device
 
+    # ------------------- Direct -------------------
+    spikes_dir = '/content/drive/MyDrive'
+    metadata_dir = '/content/drive/MyDrive'
+
+
 
 
     # ------------------- Retrieve parameters -------------------
@@ -284,11 +299,12 @@ class SimWrapper:
     g_na_ = params[12]*msiemens * cm**-2 * self.net['Neuron'].namespace['area']
     g_kd_ = params[13]*msiemens * cm**-2 * self.net['Neuron'].namespace['area']
 
-    
 
+    tag = int(params[14])
 
     # ----------------------- Run the network -----------------------
     print('Running the network...')
+    start_time = time.time()
     self.device.run(run_args={
                               # Synaptic variables
 
@@ -316,42 +332,46 @@ class SimWrapper:
                     #results_directory=result_dir)
 
 
-
-
-    # ----------------------- Post-processing -----------------------
     
+    print(f'Elapsed {(time.time()-start_time):.2f} seconds')
+    # ----------------------- Post-processing -----------------------
+
     # --------- Evaluate simulation's goodness ----------
     if np.any(np.isnan(self.net['StVar_monitor_N'].V)):
       print(f"Finished the {params[14]}-th simulation: Bad")
 
-      return []
+      
 
 
     else:
+    
 
-      # ----------- Device's info -----------
-      print('Running Virtual Electrodes...')
-      pitch = 300 #[um] 
-      electrode_radius = 15 #[um]
-      neuron_radius = 9 #[um]
-      pitch_recsites = 7.5 # [um]
-      shift = 11.25 # [um]
-      electrode_dist = 300 # [um]
-      c_min = 0 #[um]
-      c_max = 1100 #[um]
-
-      # ---------- Compute traces ----------
-
-      Traces,_ = Electrode_traces(pitch,pitch_recsites,shift, self.net['Neuron'], self.net['StVar_monitor_N'],electrode_dist,neuron_radius,electrode_radius) # Visible by default is false
-
-      fs = 1/(defaultclock.dt/second)
-      _,Raster_array = get_Raster(Traces,fs,Visible = False) # Raster_array: 1st column channel 2nd column spk timings in SAMPLES
-
-      print(f"Finished the {params[14]}-th simulation: Good")
+    # ------------------------------ SAVE ------------------------------
 
 
-      #return list(Raster_array,params)
-      return Raster_array
+
+        # -------- Spikes -------
+        sp = self.net['Spike_monitor_N']
+        sp_t = sp.t
+        sp_i = sp.i
+        
+
+        file_path_spk = os.path.join(spikes_dir, f"Spikes_{tag}.npz")
+        np.savez_compressed(file_path_spk, np.vstack((
+                                                     sp_t / second, 
+                                                     sp_i
+                                                     )
+                                                     ).T
+                            )
+
+        # ----------- Metadata -----------
+
+      
+        print(f"Finished the {params[14]}-th simulation: Good")
+        print(f'Elapsed {(time.time()-start_time):.2f} seconds')
+
+
+        
 
 
 if __name__ == "__main__":
@@ -406,9 +426,19 @@ if __name__ == "__main__":
                                                       dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
 
 
-  # ---------------------------------------------------------------------------------------------------
+  # --------------------- SET DEVICE ---------------------
+  device.reinit()
+  device.activate()
+  set_device('cpp_standalone', build_on_run=False)
 
-  sim = SimWrapper(Binomial_fun)
+
+  # ------------------- SET MAIN FOR LOOP -------------------
+
+  # Connectivity_arr = [0.050000,0.100000,0.150000,0.200000,0.250000,0.300000,0.350000,0.400000,0.450000,0.500000]
+  # for conn_val in Connectivity_arr:
+  # ---------------------------------------------------------------------------------------------------
+  conn_val = 0.150000
+  sim = SimWrapper(Binomial_fun,conn_val)
 
   #---------------------------------------------------------------------------------------------------
 
@@ -465,7 +495,7 @@ if __name__ == "__main__":
   params.sort(key=lambda sublist: sublist[-1])
 
 
-  # ---------------------------------------------------------------------------------------------------
+  # -------------------------------- RUN  --------------------------------------
 
 
 
@@ -473,6 +503,11 @@ if __name__ == "__main__":
 
   #with Pool(max_workers) as pool:
     # out =  pool.map(sim.do_run, params)
+
+
+
+
+  # --------------- TEST PARAMS --------------
   initial_param_vector_numerical = np.array([
       4.0,       # Sigma (mV)
       5.0,       # g_AHP (nS)
@@ -491,12 +526,7 @@ if __name__ == "__main__":
       0, # Sublist number
   ])
   print(initial_param_vector_numerical)
+  
 
-
-  Raster_array = sim.do_run(initial_param_vector_numerical)
-
-  # SAVE ????????????????????????????????
-  print(f'Elapsed {(time.time()-start):.2f} seconds')
-
-
+  sim.do_run(initial_param_vector_numerical)
 
