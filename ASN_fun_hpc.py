@@ -1,5 +1,4 @@
 
-
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 import matplotlib.colors as mcolors
@@ -31,6 +30,80 @@ import math
 Version: cython friendly, connections and positions randomly placed
 
 '''
+
+def save_parameters_metadata(params,metadata_dir,tag):
+    """
+    Extracts the current values from the params list, associates them with
+    their variable names and units, and saves the metadata to a JSON file.
+
+    Args:
+        params (List[float]): The list of numerical parameter values.
+        filename (str): The path and name for the output JSON file.
+    """
+  
+
+    # --- Parameter Definition Map (Derived directly from your snippet) ---
+    # We store the *intended* unit (the unit you multiply by in Brian2)
+    # The value stored is the raw float from the 'params' list.
+    
+    parameter_map = [
+        # Membrane Properties / AHP
+        {"name": "Sigma_", "index": 0, "base_unit": "mV", "description": "Noise magnitude for membrane potential"},
+        {"name": "g_AHP_", "index": 1, "base_unit": "nS", "description": "Conductance for after-hyperpolarization current"},
+
+        # Synapse Dynamics
+        {"name": "Xi_ampa_", "index": 2, "base_unit": "1/mmole", "description": "AMPA receptor binding rate"},
+        {"name": "Xi_nmda_", "index": 3, "base_unit": "1/mmole", "description": "NMDA receptor binding rate"},
+        {"name": "Tau_Ca_", "index": 4, "base_unit": "second", "description": "Calcium decay time constant"},
+        {"name": "U_0_ar_", "index": 5, "base_unit": "unitless", "description": "Facilitation factor for the 'ar' synapse type"},
+        {"name": "U_max_", "index": 6, "base_unit": "1/ms", "description": "Maximum utilization/depression rate"},
+        {"name": "U_0_sr_", "index": 7, "base_unit": "unitless", "description": "Facilitation factor for the 'sr' synapse type"},
+        {"name": "Omega_f_sr_", "index": 8, "base_unit": "1/second", "description": "Facilitation time constant (fast, sr type)"},
+        {"name": "Omega_f_ar_", "index": 9, "base_unit": "1/second", "description": "Facilitation time constant (fast, ar type)"},
+        {"name": "Omega_d_", "index": 10, "base_unit": "1/second", "description": "Depression time constant"},
+
+        # Synapse-Neuron Interaction
+        {"name": "alpha_syn_", "index": 11, "base_unit": "unitless", "description": "Synaptic weight scaling factor"},
+
+        # Ion Channels (Note: These values are multiplied by area in the snippet)
+        {"name": "g_na_", "index": 12, "base_unit": "msiemens * cm**-2 * area", "description": "Maximum Sodium (Na) conductance (density)"},
+        {"name": "g_kd_", "index": 13, "base_unit": "msiemens * cm**-2 * area", "description": "Maximum Delayed-Rectifier K (Kd) conductance (density)"},
+    ]
+
+    # --- Construct the output data structure ---
+    output_data = []
+    metadata_path = os.path.join(metadata_dir, f"metadata_{tag}.json")
+    for p_info in parameter_map:
+        index = p_info["index"]
+        
+        # Ensure we don't access an index outside the provided list length
+        if index < len(params):
+            output_data.append({
+                "variable_name": p_info["name"],
+                "value": params[index],  # The raw numerical value
+                "unit_applied": p_info["base_unit"],
+                "description": p_info["description"]
+            })
+        else:
+            print(f"Warning: Parameter index {index} is missing from the provided list.")
+            break
+
+    # --- Save to JSON file ---
+    try:
+        with open(metadata_path, 'w') as f:
+            # Use indent=4 for human-readable formatting
+            json.dump(output_data, f, indent=4)
+        
+    except IOError as e:
+        print(f"Failed to write file Metadata: {e}")
+
+
+
+
+
+
+
+
 
 # ---------------------- BINOMIAL FUNCTION ------------------------
 
