@@ -8,8 +8,11 @@ import pandas as pd
 !apt-get install libgsl-dev -y
 !pip install scikit-optimize
 import torch
+import multiprocessing
+from multiprocessing import Pool
 from skopt.space import Real, Integer
 from google.colab import drive
+
 drive.mount('/content/drive',force_remount=True)
 
 # Change the current working directory to the location of the Python file in Google Drive
@@ -33,11 +36,54 @@ start_time = time.time()
 # -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
+# ------------------------- SET EXTERNAL FUNCTION -------------------------
+def Binomial_fun(n,p, _vectorisation_idx):
+      '''Generate a number from an exponential distribution using inverse transform sampling'''
+         
+      uniform = np.random.rand(n)
+      return sum(uniform < p)
 
-# --------------------- SET DEVICE ---------------------
-device.reinit()
-device.activate()
-set_device('cpp_standalone', build_on_run=False)
+
+
+Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
+                            stateless=False, auto_vectorise=True
+                            )
+
+cython_code = '''
+
+
+
+cdef double Binomial_fun(int n,double p,_vectorisation_idx):
+
+    cdef int count = 0
+    cdef double uniform
+    cdef int i
+
+
+    for i in range(n):
+        uniform=rand(_vectorisation_idx)
+
+        if uniform < p:
+            count = count+1
+
+    return count;
+
+'''
+
+cpp_code = '''
+int Binomial_fun(int n, double p, int _vectorisation_idx) {
+int count = 0;
+for (int i = 0; i < n; ++i) {
+if (rand(_vectorisation_idx) < p) {
+count = count + 1;
+}
+}
+return count;
+}
+'''
+Binomial_fun.implementations.add_implementation('cpp', cpp_code,
+                                                    dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
+
 
 
 # ------------------------------------------------------
@@ -66,7 +112,7 @@ class SimWrapper:
 
 
     # --------- SIMULATION -----------
-    simtime =   20 * second               # simulation time
+    simtime =   50 * second               # simulation time
     # transient = 3 * second
     seed_device = 50            # time omitted as transient
     seed_neuron = 39                             # random number seed
@@ -253,122 +299,130 @@ class SimWrapper:
 
     print('Building the network...')
     self.net = Network()  # automatically include all the stated group
-    self.net.add([N,S,Astro,GJ,GT,StoA,AtoS,SpikesN,MonitorN,SpikesA])
+    self.net.add([N,S,Astro,GJ,GT,StoA,AtoS,SpikesN,MonitorN])
     self.net.run(simtime)
     self.device = get_device()
     self.device.build(run=False, directory=None)  # compile the code, but don't run it yet
 
-
-
-  def do_run(self,params):
-
-    # Workaround to set the device globally in this context
-    from brian2.devices import device_module
-    from brian2 import mV, nS,mmole,ms,second,cm,msiemens
-    device_module.active_device = self.device
-
-    # ------------------- Direct -------------------
-    spikes_dir = '/content/drive/MyDrive'
-    metadata_dir = '/content/drive/MyDrive'
+    
+  
 
 
 
+def do_run(params):
 
-    # ------------------- Retrieve parameters -------------------
+  # Workaround to set the device globally in this context
+  from brian2.devices import device_module
+  from brian2 import mV, nS,mmole,ms,second,cm,msiemens
 
-    # Neurons
+  # Get the global device compiled in the main process
+  device = _global_device
+  net = _global_net
 
-    Sigma_ = params[0]* mV  # mV
-    g_AHP_ = params[1]* nS # nS
+  device_module.active_device = device
 
-    # Synapse
-    Xi_ampa_ = params[2]/ mmole # 1/ mmole
-    Xi_nmda_ = params[3]/ mmole # 1/ mmole
-    Tau_Ca_ =params[4]* second     # second
-    U_0_ar_ = params[5]
-    U_max_ = params[6]/ms # 1/ms
-    U_0_sr_ = params[7]
-    Omega_f_sr_ = params[8]/second # 1/ second
-    Omega_f_ar_ = params[9]/second # 1/ second
-    Omega_d_ =params[10]/second # 1/ second
-
-    # Syn-Neuron
-    alpha_syn_ = params[11]
-
-    # Ion-channels
-    g_na_ = params[12]*msiemens * cm**-2 * self.net['Neuron'].namespace['area']
-    g_kd_ = params[13]*msiemens * cm**-2 * self.net['Neuron'].namespace['area']
+  # ------------------- Direct -------------------
+  spikes_dir = '/content/drive/MyDrive'
+  metadata_dir = '/content/drive/MyDrive'
 
 
-    tag = int(params[14])
-
-    # ----------------------- Run the network -----------------------
-    print('Running the network...')
-    start_time = time.time()
-    self.device.run(run_args={
-                              # Synaptic variables
-
-                              self.net['Synapse'].U_0_ar: U_0_ar_,
-                              self.net['Synapse'].Umax: U_max_,
-                              self.net['Synapse'].U_0_sr: U_0_sr_,
-                              self.net['Synapse'].Omega_f_sr: Omega_f_sr_,
-                              self.net['Synapse'].Omega_f_ar: Omega_f_ar_,
-                              self.net['Synapse'].Omega_d: Omega_d_,
-                              self.net['Synapse'].alpha_syn: alpha_syn_,
-                              self.net['Synapse'].Xi_ampa: Xi_ampa_,
-                              self.net['Synapse'].Xi_nmda: Xi_nmda_,
 
 
-                              # Neuron variables
-                              self.net['Neuron'].sigma: Sigma_,
-                              self.net['Neuron'].g_AHP: g_AHP_,
-                              self.net['Neuron'].tau_Ca: Tau_Ca_,
+  # ------------------- Retrieve parameters -------------------
+
+  # Neurons
+
+  Sigma_ = params[0]* mV  # mV
+  g_AHP_ = params[1]* nS # nS
+
+  # Synapse
+  Xi_ampa_ = params[2]/ mmole # 1/ mmole
+  Xi_nmda_ = params[3]/ mmole # 1/ mmole
+  Tau_Ca_ =params[4]* second     # second
+  U_0_ar_ = params[5]
+  U_max_ = params[6]/ms # 1/ms
+  U_0_sr_ = params[7]
+  Omega_f_sr_ = params[8]/second # 1/ second
+  Omega_f_ar_ = params[9]/second # 1/ second
+  Omega_d_ =params[10]/second # 1/ second
+
+  # Syn-Neuron
+  alpha_syn_ = params[11]
+
+  # Ion-channels
+  g_na_ = params[12]*msiemens * cm**-2 * net['Neuron'].namespace['area']
+  g_kd_ = params[13]*msiemens * cm**-2 * net['Neuron'].namespace['area']
 
 
-                              # Ion channels
-                              self.net['Neuron'].g_na: g_na_,
-                              self.net['Neuron'].g_kd: g_kd_,
-                              })
-                    #results_directory=result_dir)
+  tag = int(params[14])
 
+  # ----------------------- Run the network -----------------------
+  print('Running the network...')
+  start_time = time.time()
+  device.run(run_args={
+                            # Synaptic variables
+
+                            net['Synapse'].U_0_ar: U_0_ar_,
+                            net['Synapse'].Umax: U_max_,
+                            net['Synapse'].U_0_sr: U_0_sr_,
+                            net['Synapse'].Omega_f_sr: Omega_f_sr_,
+                            net['Synapse'].Omega_f_ar: Omega_f_ar_,
+                            net['Synapse'].Omega_d: Omega_d_,
+                            net['Synapse'].alpha_syn: alpha_syn_,
+                            net['Synapse'].Xi_ampa: Xi_ampa_,
+                            net['Synapse'].Xi_nmda: Xi_nmda_,
+
+
+                            # Neuron variables
+                            net['Neuron'].sigma: Sigma_,
+                            net['Neuron'].g_AHP: g_AHP_,
+                            net['Neuron'].tau_Ca: Tau_Ca_,
+
+
+                            # Ion channels
+                            net['Neuron'].g_na: g_na_,
+                            net['Neuron'].g_kd: g_kd_,
+                            })
+                  #results_directory=result_dir)
+
+
+  
+  print(f'Elapsed {(time.time()-start_time):.2f} seconds')
+  # ----------------------- Post-processing -----------------------
+
+  # --------- Evaluate simulation's goodness ----------
+  if np.any(np.isnan(net['StVar_monitor_N'].V)):
+    print(f"Finished the {params[14]}-th simulation: Bad")
 
     
-    print(f'Elapsed {(time.time()-start_time):.2f} seconds')
-    # ----------------------- Post-processing -----------------------
 
-    # --------- Evaluate simulation's goodness ----------
-    if np.any(np.isnan(self.net['StVar_monitor_N'].V)):
-      print(f"Finished the {params[14]}-th simulation: Bad")
 
+  else:
+  
+
+  # ------------------------------ SAVE ------------------------------
+
+
+
+      # -------- Spikes -------
+      sp = net['Spike_monitor_N']
+      sp_t = sp.t
+      sp_i = sp.i
       
 
+      file_path_spk = os.path.join(spikes_dir, f"Spikes_{tag}.npz")
+      np.savez_compressed(file_path_spk, np.vstack((
+                                                    sp_t / second, 
+                                                    sp_i
+                                                    )
+                                                    ).T
+                          )
 
-    else:
-    
+      # ----------- Metadata -----------
 
-    # ------------------------------ SAVE ------------------------------
-
-
-
-        # -------- Spikes -------
-        sp = self.net['Spike_monitor_N']
-        sp_t = sp.t
-        sp_i = sp.i
-        
-
-        file_path_spk = os.path.join(spikes_dir, f"Spikes_{tag}.npz")
-        np.savez_compressed(file_path_spk, np.vstack((
-                                                     sp_t / second, 
-                                                     sp_i
-                                                     )
-                                                     ).T
-                            )
-
-        # ----------- Metadata -----------
-
-      
-        print(f"Finished the {params[14]}-th simulation: Good")
-        print(f'Elapsed {(time.time()-start_time):.2f} seconds')
+      save_parameters_metadata(params,metadata_dir,tag)
+      print(f"Finished the {params[14]}-th simulation: Good")
+      print(f'Elapsed {(time.time()-start_time):.2f} seconds')
 
 
         
@@ -376,54 +430,7 @@ class SimWrapper:
 
 if __name__ == "__main__":
 
-  # ------------------------- SET EXTERNAL FUNCTION -------------------------
-  def Binomial_fun(n,p, _vectorisation_idx):
-      '''Generate a number from an exponential distribution using inverse
-          transform sampling'''
-      uniform = np.random.rand(n)
-      return sum(uniform < p)
-
-
-
-
-  Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
-                              stateless=False, auto_vectorise=True
-                              )
-
-  cython_code = '''
-
-
-
-  cdef double Binomial_fun(int n,double p,_vectorisation_idx):
-
-      cdef int count = 0
-      cdef double uniform
-      cdef int i
-
-
-      for i in range(n):
-          uniform=rand(_vectorisation_idx)
-
-          if uniform < p:
-              count = count+1
-
-      return count;
-
-  '''
-
-  cpp_code = '''
-  int Binomial_fun(int n, double p, int _vectorisation_idx) {
-  int count = 0;
-  for (int i = 0; i < n; ++i) {
-  if (rand(_vectorisation_idx) < p) {
-  count = count + 1;
-  }
-  }
-  return count;
-  }
-  '''
-  Binomial_fun.implementations.add_implementation('cpp', cpp_code,
-                                                      dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
+  
 
 
   # --------------------- SET DEVICE ---------------------
@@ -439,6 +446,13 @@ if __name__ == "__main__":
   # ---------------------------------------------------------------------------------------------------
   conn_val = 0.150000
   sim = SimWrapper(Binomial_fun,conn_val)
+
+  # ------------------------ SET GLOBAL VARIABLES ------------------------
+  global _global_device, _global_net
+  _global_net = sim.net
+  _global_device = sim.device
+
+
 
   #---------------------------------------------------------------------------------------------------
 
@@ -499,34 +513,7 @@ if __name__ == "__main__":
 
 
 
-  #max_workers = multiprocessing.cpu_count()
-
-  #with Pool(max_workers) as pool:
-    # out =  pool.map(sim.do_run, params)
-
-
-
-
-  # --------------- TEST PARAMS --------------
-  initial_param_vector_numerical = np.array([
-      4.0,       # Sigma (mV)
-      5.0,       # g_AHP (nS)
-      0.5,       # Xi_ampa (1/mmole)
-      0.3,       # Xi_nmda (1/mmole)
-      8.0,       # Tau_Ca (s)
-      0.003,     # U_0_ar (unitless)
-      0.5,       # U_max (1/ms)
-      0.15,       # U_0_sr (unitless)
-      2   ,      # Omega_f_sr (1/second)
-      1.42857,   # Omega_f_ar (1/second, from 1/0.7)
-      2.0,       # Omega_d (1/second)
-      1.0,       # alpha_syn (unitless)
-      80.0,      # g_na coefficient (1.6 * 50)
-      6.5,        # g_kd coefficient (1.3 * 5)
-      0, # Sublist number
-  ])
-  print(initial_param_vector_numerical)
-  
-
-  sim.do_run(initial_param_vector_numerical)
-
+  max_workers = multiprocessing.cpu_count()
+  print(f"Using {max_workers} workers")
+  with Pool(max_workers) as pool:
+    pool.map(do_run, params)
