@@ -31,21 +31,18 @@ Version: cython friendly, connections and positions randomly placed
 
 '''
 
-def save_parameters_metadata(params,metadata_dir,tag):
+def save_parameters_metadata(params, metadata_dir, tag):
     """
     Extracts the current values from the params list, associates them with
-    their variable names and units, and saves the metadata to a JSON file.
+    their variable names and units, and saves the metadata to a NumPy .npy file.
 
     Args:
         params (List[float]): The list of numerical parameter values.
-        filename (str): The path and name for the output JSON file.
+        metadata_dir (str): The directory path for the output file.
+        tag (str): A tag used to name the output file (e.g., 'metadata_run1.npy').
     """
-  
-
-    # --- Parameter Definition Map (Derived directly from your snippet) ---
-    # We store the *intended* unit (the unit you multiply by in Brian2)
-    # The value stored is the raw float from the 'params' list.
     
+    # --- Parameter Definition Map ---
     parameter_map = [
         # Membrane Properties / AHP
         {"name": "Sigma_", "index": 0, "base_unit": "mV", "description": "Noise magnitude for membrane potential"},
@@ -65,14 +62,16 @@ def save_parameters_metadata(params,metadata_dir,tag):
         # Synapse-Neuron Interaction
         {"name": "alpha_syn_", "index": 11, "base_unit": "unitless", "description": "Synaptic weight scaling factor"},
 
-        # Ion Channels (Note: These values are multiplied by area in the snippet)
+        # Ion Channels
         {"name": "g_na_", "index": 12, "base_unit": "msiemens * cm**-2 * area", "description": "Maximum Sodium (Na) conductance (density)"},
         {"name": "g_kd_", "index": 13, "base_unit": "msiemens * cm**-2 * area", "description": "Maximum Delayed-Rectifier K (Kd) conductance (density)"},
     ]
 
-    # --- Construct the output data structure ---
+    # --- Construct the output data structure (List of Dictionaries) ---
     output_data = []
-    metadata_path = os.path.join(metadata_dir, f"metadata_{tag}.json")
+    # Changed file extension to .npy
+    metadata_path = os.path.join(metadata_dir, f"metadata_{tag}.npy") 
+    
     for p_info in parameter_map:
         index = p_info["index"]
         
@@ -86,16 +85,22 @@ def save_parameters_metadata(params,metadata_dir,tag):
             })
         else:
             print(f"Warning: Parameter index {index} is missing from the provided list.")
+            # If a critical parameter is missing, stop processing
             break
 
-    # --- Save to JSON file ---
+    # --- Save to NPY file ---
     try:
-        with open(metadata_path, 'w') as f:
-            # Use indent=4 for human-readable formatting
-            json.dump(output_data, f, indent=4)
+        # Convert the list of dictionaries into a NumPy object array
+        # This is the best way to save a list of heterogeneous Python objects 
+        # (like dictionaries) to the .npy format.
+        data_to_save = np.asarray(output_data, dtype=object)
         
-    except IOError as e:
-        print(f"Failed to write file Metadata: {e}")
+        np.save(metadata_path, data_to_save)
+        print(f"Successfully saved parameter metadata to: {metadata_path}")
+        
+    except Exception as e:
+        # Catch a generic exception for NumPy operations
+        print(f"Failed to write .npy file Metadata: {e}")
 
 
 
