@@ -17,3 +17,6 @@ logs/*
 *.ckpt
 data/
 runs/
+# sbi writes tensorboard summaries here on every train() call
+sbi-logs/
+runs/

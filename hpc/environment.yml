@@ -1,0 +1,51 @@
+#
+# Conda environment for the SBI / NPE stage.
+#
+#   conda env create -f environment.yml
+#   conda activate sbi_env
+#
+# Deliberate choices:
+#
+#   * Only python, pip and the compiler-free basics come from conda. Every
+#     scientific package comes from pip. Mixing conda-forge and PyPI builds
+#     of numpy/torch is the usual source of "undefined symbol" and silent
+#     ABI mismatches on clusters; keeping one package manager per layer
+#     avoids it entirely.
+#
+#   * python 3.11 -- sbi, zuko and torch all require >=3.10. 3.11 is the
+#     safe middle: new enough for every pin, old enough that wheels exist
+#     for everything on any cluster.
+#
+#   * torch is NOT pinned here. Install it separately, matching the CUDA
+#     runtime on the target machine. See README for the exact command.
+#     Pinning torch in this file would silently pull the CPU wheel on a GPU
+#     node, which fails at run time rather than install time.
+#
+#   * DO NOT install this into an existing brian_env. Brian2 needs its own
+#     compiler toolchain and code-generation cache; sharing an environment
+#     with torch is a known source of build conflicts, and the simulator
+#     environment should stay reproducible independently of the inference
+#     one.
+#
+name: sbi_env
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - pip>=24.0
+
+  - pip:
+      # -- pinned: this code depends on API details that moved between
+      # -- releases (posterior_nn(x_dist=...), the "zuko_nsf" model string,
+      # -- EnsemblePosterior.log_prob using logsumexp).
+      - sbi==0.27.0
+      - zuko==1.6.0
+
+      # -- lower bounds only; verified versions are in the README table.
+      - numpy>=1.24
+      - scipy>=1.10
+      - pandas>=2.0
+      - pyarrow>=14.0
+      - scikit-learn>=1.3

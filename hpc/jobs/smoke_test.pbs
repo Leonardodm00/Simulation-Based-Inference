@@ -39,38 +39,14 @@ fi
 python3 -c "import sys; print('python    :', sys.version.split()[0])"
 python3 -c "import torch, sbi, zuko; print('torch     :', torch.__version__); print('sbi/zuko  :', sbi.__version__, zuko.__version__)"
 
-# ---- guard: every .py in the import chain must be pure ASCII ---------------
-# A non-ASCII byte that survived a Windows/cp1252 transfer raises SyntaxError
-# at import time, which on a cluster costs a whole submission cycle to find.
-python3 - npe_contract.py npe_model.py gmm_benchmark.py \
-           smoke_test_npe.py smoke_test_gmm.py << 'PYEOF'
-import sys
-bad_files = []
-for path in sys.argv[1:]:
-    data = open(path, 'rb').read()
-    bad = [(i + 1, hex(b)) for i, b in enumerate(data) if b > 127]
-    crlf = data.count(b'\r\n')
-    status = 'ASCII OK' if not bad else 'NON-ASCII %s' % bad[:5]
-    print('  %-22s %-28s CRLF=%d' % (path, status, crlf))
-    if bad or crlf:
-        bad_files.append(path)
-if bad_files:
-    print('ABORT: encoding problems in %s' % bad_files)
-    sys.exit(1)
-PYEOF
+# ---- everything below is delegated to run_tests.sh -------------------------
+# One source of truth: the same runner used interactively. It performs the
+# encoding guard, the compile check, check_env.py, and both suites, and exits
+# nonzero if any stage fails -- so this job's exit status is meaningful.
 
-python3 -m py_compile npe_contract.py npe_model.py gmm_benchmark.py \
-                     smoke_test_npe.py smoke_test_gmm.py
-echo "compile OK"
-
-# ---- the suites ------------------------------------------------------------
-echo
-echo "=== NPE pipeline suite ==="
-python3 smoke_test_npe.py
-
-echo
-echo "=== Gaussian-mixture recovery suite ==="
-python3 smoke_test_gmm.py
+bash run_tests.sh --no-env
+STATUS=$?
 
 echo
 echo "finished  : $(date -Is)"
+exit $STATUS

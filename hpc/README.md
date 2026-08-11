@@ -21,6 +21,8 @@ here re-runs simulations or re-trains the encoder: the input is a table of
 | `gmm_benchmark.py` | A K-component n-dimensional Gaussian benchmark with an **exact** analytic posterior, for validating the estimator against a known answer. |
 | `smoke_test_npe.py` | 9 tests over the contract and the estimator, including an analytic correctness anchor. |
 | `smoke_test_gmm.py` | 6 tests: does the NPE recover three known Gaussians, with a negative control. |
+| `npe_diagnostics.py` | Post-training diagnostics: embedding overlap (MMD), SBC, expected coverage, data-dependent SBC, TARP, contraction, information spectrum. |
+| `smoke_test_diagnostics.py` | 8 tests validating the diagnostics against exact analytic posteriors. |
 | `jobs/smoke_test.pbs` | PBS job running both suites plus an encoding guard. |
 
 The modules are deliberately flat and mutually independent so that swapping
@@ -95,6 +97,10 @@ G2_nullspace_properties  posterior weights == prior weights to 2.2e-16
 G4_c2st_recovery         C2ST 0.542-0.562 (0.5 is ideal)
 G5_mode_recovery         all 3 modes found; max weight error 0.026
 G6_negative_control      prior correctly rejected at C2ST 0.906
+
+D5_blind_spot            SBC blind 12/12, coverage blind 12/12,
+                         bilinear caught 12/12, FP 0/12
+D8_information_spectrum  rank 3 of 6 params (observation dim 3)
 ```
 
 ---
@@ -205,10 +211,38 @@ detect** -- SBC and coverage both pass on a mode-dropping estimator.
 
 ---
 
+## The diagnostic blind spot
+
+Modrak et al. (doi:10.1214/23-ba1404) prove that SBC with parameter-only test
+quantities cannot detect a posterior that ignores the data, including one
+exactly equal to the prior. Expected coverage does not rescue it either: if
+q(theta | z) = p(theta) then log q(theta | z) = log p(theta) carries no
+z-dependence, the credible regions are the prior's, and coverage is exactly
+nominal.
+
+Measured here over 12 seeds on a posterior set equal to the prior:
+
+| check | detects it |
+|---|---|
+| marginal SBC | 0/12 -- blind |
+| expected coverage | 0/12 -- blind |
+| data-dependent SBC, f = theta^T W z | 12/12, median adjusted p 1.8e-06 |
+| posterior contraction | ~0 by construction |
+
+This matters directly: an insufficient summary makes the posterior partially
+ignore the data, and that is precisely the failure the standard battery
+cannot see. Always run `data_dependent_sbc` and `posterior_contraction`
+alongside SBC, never SBC alone.
+
+Note also that per-axis testing needs multiple-testing control: at 27 axes
+and alpha=0.005 per axis, a perfectly calibrated posterior trips something
+about 13% of the time. `family_verdict()` applies Holm-Bonferroni.
+
 ## Not built yet
 
-- Diagnostics module: SBC and TARP over real shards, posterior predictive checks.
-- **The sim-vs-real embedding overlap test.** This is the next thing to write
+- Posterior predictive checks (need the simulator callable).
+- **The sim-vs-real embedding overlap test on YOUR data.** `embedding_overlap()`
+  is implemented and tested; it just needs the real z vectors. This is the next thing to write
   and it is a hard go/no-go gate. The encoder was trained on real recordings,
   so it is the *simulations* that are out-of-distribution for it, not the
   reverse. An NPE trained on simulated embeddings will be perfectly
