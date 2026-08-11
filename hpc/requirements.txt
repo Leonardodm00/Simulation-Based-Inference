@@ -1,0 +1,16 @@
+# Verified working set. sbi and zuko are pinned because the API surface this
+# code depends on (posterior_nn(x_dist=...), EnsemblePosterior.log_prob using
+# logsumexp, the "zuko_nsf" model string) has moved between releases.
+sbi==0.27.0
+zuko==1.6.0
+
+# torch is deliberately NOT pinned: match the CUDA build available on the
+# cluster. Verified against 2.13.0. Any 2.x with working torch.distributions
+# should be fine.
+torch>=2.2
+
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+pyarrow>=14.0        # parquet shards
+scikit-learn>=1.3    # C2ST classifier in smoke_test_gmm.py
