@@ -31,9 +31,14 @@ echo "started   : $(date -Is)"
 
 # ---- environment -----------------------------------------------------------
 if command -v conda >/dev/null 2>&1; then
+    # set +u is REQUIRED: conda.sh references unset variables (PS1 and
+    # friends), fatal under `set -u`. This script also uses `set -e`, so
+    # without the guard the job dies here with no diagnostic at all.
+    set +u
     # shellcheck disable=SC1091
     source "$(conda info --base)/etc/profile.d/conda.sh"
     conda activate "${CONDA_ENV}"
+    set -u
 fi
 
 python3 -c "import sys; print('python    :', sys.version.split()[0])"

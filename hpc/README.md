@@ -21,9 +21,15 @@ here re-runs simulations or re-trains the encoder: the input is a table of
 | `gmm_benchmark.py` | A K-component n-dimensional Gaussian benchmark with an **exact** analytic posterior, for validating the estimator against a known answer. |
 | `smoke_test_npe.py` | 9 tests over the contract and the estimator, including an analytic correctness anchor. |
 | `smoke_test_gmm.py` | 6 tests: does the NPE recover three known Gaussians, with a negative control. |
+| `recover_npz.py` | Rebuild the diagnostics arrays for a run made before they were saved. |
+| `replot.py` | Regenerate figures/diagnostics from a finished run, in seconds. |
+| `npe_plots.py` | Figures for every diagnostic layer; drawing only, computes nothing. |
 | `npe_diagnostics.py` | Post-training diagnostics: embedding overlap (MMD), SBC, expected coverage, data-dependent SBC, TARP, contraction, information spectrum. |
 | `smoke_test_diagnostics.py` | 8 tests validating the diagnostics against exact analytic posteriors. |
-| `jobs/smoke_test.pbs` | PBS job running both suites plus an encoding guard. |
+| `jobs/smoke_test.pbs` | PBS job running all three test suites plus an encoding guard. |
+| `run_synthetic_trial.py` | Full end-to-end dress rehearsal on synthetic data at production shapes. |
+| `jobs/replot.pbs` | PBS job for replotting, with optional recovery. |
+| `jobs/synthetic_trial.pbs` | PBS job for the trial; every parameter overridable with `qsub -v`. |
 
 The modules are deliberately flat and mutually independent so that swapping
 the flow family, the ensemble size, or the data source touches one file.
@@ -252,3 +258,112 @@ about 13% of the time. `family_verdict()` applies Holm-Bonferroni.
   passing. The test needs only the query embeddings -- no training.
 - Sequential (TSNPE) rounds. These need the simulator callable again;
   amortized NPE is self-contained on a fixed export.
+
+
+## TARP reference points
+
+`tarp()` accepts `Z` and `reference_mode`. This is not cosmetic. The theorem
+behind TARP requires credible regions positioned at `theta_r(x)`, a FUNCTION
+of the observation. Reference points drawn at random independently of x do
+not satisfy that hypothesis, and the cost is total:
+
+| reference points | detections on a data-ignoring posterior |
+|---|---|
+| random, x-independent | 0/12 (chance) |
+| x-dependent readout of z | 12/12, median p = 3.8e-10, 0 false positives |
+
+Always pass `Z=` when it is available. With `reference_mode="auto"` (the
+default) the x-dependent version is used whenever `Z` is supplied, and the
+result records which mode was actually used.
+
+## Reading the information spectrum correctly
+
+`information_spectrum()` reports the LINEAR rank of the covariance of the
+posterior means. It is tempting to read this as a test of "an embedding of
+dimension E constrains at most E-1 parameter directions". That reading is
+wrong for a nonlinear estimator.
+
+The map z -> E[theta | z] has an image of intrinsic dimension at most E-1,
+because z carries only that many degrees of freedom. But a curved
+d-dimensional manifold spans more than d linear dimensions. Measured
+directly: for z on S^11, a linear f(z) gives covariance rank exactly 11; a
+nonlinear f(z) on the same z gives 12 or more. A normalizing flow is
+nonlinear, so an effective rank above E-1 is expected, not a defect.
+
+What survives is information-theoretic: I(theta; z) <= I(theta; x) and z
+carries at most E-1 real numbers, so the total information is capped however
+it is spread. A nonlinear map can spread that budget thinly across all p
+axes instead of concentrating it in E-1 of them.
+
+Judge informativeness from per-axis `posterior_contraction`, and treat the
+rank as descriptive. The bound is assertable in `smoke_test_diagnostics.py`
+D8 only because that benchmark is conjugate linear-Gaussian, so its
+posterior mean is affine and linear rank equals intrinsic dimension.
+
+
+## Figures
+
+`run_synthetic_trial.py` writes 12 PNGs to `<out-dir>/figures/`, numbered so
+`ls` puts them in reading order, which is also decreasing consequence: if 01
+is bad, nothing after it matters.
+
+| file | what it answers |
+|---|---|
+| `01_embedding_overlap` | Is the query data inside the simulated cloud? THE gate. |
+| `02_sbc_ecdf` | Are the marginals calibrated? |
+| `03_sbc_histograms` | If not, which way -- over, under, or biased? |
+| `04_coverage_pp` | Is the JOINT posterior calibrated (correlations included)? |
+| `05_data_dependent_sbc` | Is the posterior using the observation at all? |
+| `06_tarp` | Coverage without density evaluation. |
+| `07_contraction` | Which parameters does the data actually inform? |
+| `08_information_spectrum` | How fast does constrained variance decay? |
+| `09_recovery` | True vs inferred per axis, with 68% intervals. |
+| `10_posterior_pairs` | Ridges and multimodality, invisible in 1D. |
+| `11_ensemble_spread` | How much do ensemble members disagree? |
+
+### Regenerating figures without retraining
+
+Every run writes `diagnostics_data.npz` alongside the summary. Posterior
+sampling is the expensive stage; the rank statistics, coverage, TARP and
+contraction that follow are cheap numpy. So:
+
+```bash
+python replot.py synthetic_trial_20260811_150000
+python replot.py <run-dir> --n-forms 8 --out-dir /tmp/figs
+```
+
+runs in seconds and needs no model reload, no GPU, no re-sampling. Use it to
+recover figures from a `--no-plots` run, to redo them after editing
+`npe_plots.py`, or to re-read an old run's verdict without opening a job log.
+
+If a run predates `diagnostics_data.npz`, recover it rather than repeating
+the run:
+
+```bash
+python recover_npz.py <run-dir>     # needs ensemble/, i.e. --save-model
+python replot.py <run-dir>
+```
+
+`recover_npz.py` reloads the shards, reproduces the exact calibration split
+from the stored seed (verified bit-identical), and re-samples from the saved
+ensemble -- one sampling pass, no training. Note that `--save-model` is the
+default in the PBS job but NOT when running the script by hand, so a manual
+run without it cannot be recovered.
+
+One figure is not reproducible this way: 04 (expected coverage) needs
+`log q(theta | z)` from the model itself, which is deliberately not stored --
+persisting it would mean carrying the ensemble around. Replot writes 11 of
+the 12 figures and says so.
+
+Two design choices in figure 01 worth knowing, both made after the first
+version was misleading:
+
+- Panel 3 uses the whitened difference-of-means direction, NOT plain PCA.
+  PCA picks directions of greatest SIMULATED variance, which need not be
+  where the real data differs -- a query set the gate correctly rejected
+  looked perfectly well mixed in the top two PCs. Note the asymmetry this
+  creates: overlap in this view is strong evidence of no gap, separation is
+  weak evidence, since a discriminative axis can overfit at small n.
+- Panel 2 draws ECDFs, not histograms. If any query point coincides with a
+  simulated one the distance is exactly zero, and a density histogram turns
+  that into a spike that flattens everything else into the axis.

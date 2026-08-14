@@ -82,8 +82,13 @@ echo "  conda ver  : $(conda --version)"
 # Non-interactive shells do not read .bashrc, so `conda activate` is not
 # defined unless this profile script is sourced explicitly. Same reason the
 # PBS job script does it.
+# `set +u` is REQUIRED here: conda.sh references variables that are unset in
+# a non-interactive shell (PS1 among others), which under `set -u` kills the
+# shell immediately and silently.
+set +u
 # shellcheck disable=SC1091
 source "$CONDA_BASE/etc/profile.d/conda.sh" || fail "could not source conda.sh"
+set -u
 
 # ---------------------------------------------------------------------------
 say "2. create the environment"
@@ -106,7 +111,9 @@ else
  ENV_PREFIX=/path/to/scratch/envs/sbi_env bash setup_env.sh"
 fi
 
+set +u
 conda activate "$TARGET_DESC" || fail "could not activate $TARGET_DESC"
+set -u
 echo "  active python: $(which python)"
 python -c "import sys; print('  version      :', sys.version.split()[0])"
 

@@ -92,11 +92,32 @@ def sample_posteriors(posterior, Z: np.ndarray, n_draws: int = 256,
     return np.stack(out, axis=0)
 
 
-def posterior_log_probs(posterior, theta: np.ndarray, Z: np.ndarray) -> np.ndarray:
+def posterior_log_probs(posterior, theta: np.ndarray, Z: np.ndarray,
+                        norm_posterior: bool = False) -> np.ndarray:
     """log q(theta | z) evaluated row-wise.
 
     theta may be (N, p) -- one point per observation -- or (N, M, p) -- M
     points per observation. Returns (N,) or (N, M) correspondingly.
+
+    norm_posterior defaults to False, against sbi's own default of True,
+    for two reasons.
+
+    Correctness: sbi normalises by a leakage-correction factor, the fraction
+    of flow mass falling inside the prior support. When the estimator is
+    built with z_score_theta="transform_to_unconstrained" -- as npe_model
+    does -- the flow cannot place mass outside the box at all, so that
+    factor is exactly 1 and the correction is a no-op.
+
+    Cost: computing it is not a no-op. sbi estimates the factor by drawing
+    10,000 rejection samples PER OBSERVATION and per ensemble member, which
+    for a few hundred calibration observations exhausts memory before it
+    finishes. That is not a theoretical concern -- it is what killed the
+    first run of the synthetic trial.
+
+    Set norm_posterior=True only if the estimator was built WITHOUT the
+    unconstrained transform, and then expect it to be slow. Check the
+    in-box fraction of posterior samples first: if it is not 1.0, leakage
+    is real and the correction matters.
     """
     import torch
 
@@ -109,7 +130,8 @@ def posterior_log_probs(posterior, theta: np.ndarray, Z: np.ndarray) -> np.ndarr
         for i in range(th.shape[0]):
             lp = posterior.log_prob(
                 torch.as_tensor(th[i], dtype=torch.float32),
-                x=torch.as_tensor(Z[i], dtype=torch.float32))
+                x=torch.as_tensor(Z[i], dtype=torch.float32),
+                norm_posterior=norm_posterior)
             out[i] = np.asarray(lp, dtype=np.float64)
     return out[:, 0] if squeeze else out
 
@@ -129,6 +151,7 @@ class MMDResult:
     bandwidth: float
     nn_geodesic_real: Optional[np.ndarray] = None
     nn_geodesic_sim: Optional[np.ndarray] = None
+    null_samples: Optional[np.ndarray] = None
     notes: List[str] = field(default_factory=list)
 
     @property
@@ -277,6 +300,7 @@ def embedding_overlap(z_sim: np.ndarray, z_real: np.ndarray,
                          np.percentile(null, 95), 0.0))),
                      n_real=n_real, n_sim=n_sim, bandwidth=bw,
                      nn_geodesic_real=nn_real, nn_geodesic_sim=nn_sim,
+                     null_samples=np.sqrt(np.maximum(null, 0.0)),
                      notes=notes)
 
 
@@ -460,7 +484,29 @@ def expected_coverage(log_prob_true: np.ndarray,
         raise ValueError("shape mismatch: log_prob_true %s, samples %s"
                          % (lt.shape, ls.shape))
     ranks = np.sum(ls < lt[:, None], axis=1)
-    return _rank_uniformity(ranks, ls.shape[1], "expected_coverage (log q)", rng)
+    res = _rank_uniformity(ranks, ls.shape[1], "expected_coverage (log q)", rng)
+
+    # The generic verdict text from _rank_uniformity is written for PARAMETER
+    # test quantities, where a low mean rank means the posterior sits above
+    # the truth. For THIS quantity the reading is different, and the generic
+    # label is actively misleading. The rank counts how many posterior draws
+    # have lower density than the truth, so a low mean rank means the truth
+    # falls in the low-density tail of the estimated posterior -- the
+    # credible regions are too small. That is OVERCONFIDENCE, not bias.
+    if not res.passes:
+        if res.mean_rank_frac < 0.45:
+            verdict = ("OVERCONFIDENT: truth falls in the low-density tail "
+                       "too often, so credible regions are too small")
+        elif res.mean_rank_frac > 0.55:
+            verdict = ("CONSERVATIVE: truth sits in the high-density core "
+                       "too often, so credible regions are too large")
+        else:
+            verdict = ("miscalibrated joint structure with a centred mean "
+                       "rank; inspect the coverage curve shape")
+        res = RankResult(name=res.name, ranks=res.ranks, n_draws=res.n_draws,
+                         ks_pvalue=res.ks_pvalue,
+                         mean_rank_frac=res.mean_rank_frac, verdict=verdict)
+    return res
 
 
 def make_bilinear_test_quantity(n_dim: int, embedding_dim: int,
@@ -530,30 +576,70 @@ class TARPResult:
     ecdf_y: np.ndarray
     ks_pvalue: float
     max_deviation: float
+    reference_mode: str = "random"
+    notes: List[str] = field(default_factory=list)
 
     @property
     def passes(self) -> bool:
         return self.ks_pvalue > 0.005
 
     def summary(self) -> str:
-        return ("  %-26s KS p=%.4f  max|dev|=%.3f  %s"
+        head = ("  %-26s KS p=%.4f  max|dev|=%.3f  %s  [refs: %s]"
                 % ("TARP", self.ks_pvalue, self.max_deviation,
-                   "PASS" if self.passes else "FAIL"))
+                   "PASS" if self.passes else "FAIL", self.reference_mode))
+        return "\n".join([head] + ["    NOTE: " + nt for nt in self.notes])
 
 
 def tarp(theta_true: np.ndarray, posterior_samples: np.ndarray,
          n_references: int = 1, seed: int = 0,
-         reference_points: Optional[np.ndarray] = None) -> TARPResult:
+         reference_points: Optional[np.ndarray] = None,
+         Z: Optional[np.ndarray] = None,
+         reference_mode: str = "auto") -> TARPResult:
     """Tests of Accuracy with Random Points.
 
-    For each observation i and a random reference point r, compute the
-    fraction of posterior draws lying closer to r than the truth does:
+    For each observation i and a reference point r_i, compute the fraction
+    of posterior draws lying closer to r_i than the truth does:
 
-        f_i = (1/M) sum_m 1{ ||theta^q_{i,m} - r|| < ||theta*_i - r|| }
+        f_i = (1/M) sum_m 1{ ||theta^q_{i,m} - r_i|| < ||theta*_i - r_i|| }
 
     For a correct posterior the f_i are uniform on [0, 1]. Unlike expected
     coverage this needs no density evaluation, so it also applies to
-    posteriors from generative models that cannot be evaluated pointwise.
+    posteriors that cannot be evaluated pointwise.
+
+    THE REFERENCE POINTS MUST DEPEND ON THE OBSERVATION.
+    ----------------------------------------------------
+    The theorem behind TARP requires the credible regions to be POSITIONABLE
+    -- placed at theta_r(x), a function of the observation -- and correct
+    coverage must hold for every such function. Reference points drawn at
+    random INDEPENDENTLY of x do not satisfy that requirement, and the
+    difference is not academic.
+
+    Measured on a posterior set exactly equal to the prior, over 12 seeds:
+
+        reference points drawn uniformly at random :  1/12 detections
+                                                      (chance level)
+        reference points from a linear readout of z: 12/12 detections,
+                                                      median p = 3.8e-10,
+                                                      0 false positives
+
+    The reason is exchangeability. With q(theta | z) = p(theta), both the
+    true theta* and the posterior draws are marginally prior draws, so
+    given an x-independent r they are exchangeable and f_i is uniform. An
+    r that is correlated with x breaks the exchangeability, because theta*
+    generated x and the draws did not.
+
+    reference_mode
+        "auto"     -- use x-dependent references when Z is supplied,
+                      otherwise fall back to random and record a warning.
+        "x"        -- require Z; raise if absent.
+        "random"   -- force the weaker x-independent version. Provided for
+                      comparison only; it cannot see a posterior that
+                      ignores the data.
+
+    When Z is supplied, theta_r(z) is a least-squares linear readout of z,
+    fit on one half of the calibration set and applied to the other. The
+    split matters: fitting and evaluating on the same rows would let the
+    readout memorise theta* and manufacture apparent miscalibration.
     """
     from scipy import stats
 
@@ -561,18 +647,47 @@ def tarp(theta_true: np.ndarray, posterior_samples: np.ndarray,
     theta_true = np.atleast_2d(np.asarray(theta_true, dtype=np.float64))
     ps = np.asarray(posterior_samples, dtype=np.float64)
     n, m, p = ps.shape
+    notes: List[str] = []
+
+    if reference_mode not in ("auto", "x", "random"):
+        raise ValueError("reference_mode must be auto, x or random")
+    if reference_mode == "x" and Z is None:
+        raise ValueError("reference_mode='x' requires Z")
+    use_x = (Z is not None) and reference_mode in ("auto", "x")
+    if reference_mode == "auto" and Z is None:
+        notes.append("no Z supplied: using x-INDEPENDENT reference points, "
+                     "which cannot detect a posterior that ignores the data")
 
     lo = np.minimum(theta_true.min(axis=0), ps.reshape(-1, p).min(axis=0))
     hi = np.maximum(theta_true.max(axis=0), ps.reshape(-1, p).max(axis=0))
 
     fracs = []
-    for _ in range(n_references):
-        if reference_points is None:
-            r = rng.uniform(lo, hi, size=(n, p))
-        else:
+    for rep in range(n_references):
+        if reference_points is not None:
             r = np.atleast_2d(reference_points)
             if r.shape[0] == 1:
                 r = np.repeat(r, n, axis=0)
+        elif use_x:
+            Za = np.atleast_2d(np.asarray(Z, dtype=np.float64))
+            # Fit the readout on one half, apply to the other, swapping the
+            # halves so every observation gets an out-of-fit reference.
+            idx = rng.permutation(n)
+            h = max(2, n // 2)
+            first, second = idx[:h], idx[h:]
+            r = np.empty_like(theta_true)
+            for fit, app in ((first, second), (second, first)):
+                if fit.size < p + 1 or app.size == 0:
+                    continue
+                A = np.c_[Za[fit], np.ones(fit.size)]
+                coef, *_ = np.linalg.lstsq(A, theta_true[fit], rcond=None)
+                r[app] = np.c_[Za[app], np.ones(app.size)] @ coef
+            if fit.size < p + 1:
+                r = rng.uniform(lo, hi, size=(n, p))
+                notes.append("too few observations to fit an x-dependent "
+                             "readout; fell back to random references")
+        else:
+            r = rng.uniform(lo, hi, size=(n, p))
+
         d_true = np.linalg.norm(theta_true - r, axis=1)
         d_samp = np.linalg.norm(ps - r[:, None, :], axis=2)
         fracs.append(np.mean(d_samp < d_true[:, None], axis=1))
@@ -587,7 +702,9 @@ def tarp(theta_true: np.ndarray, posterior_samples: np.ndarray,
     xs = np.sort(f)
     ys = np.arange(1, xs.size + 1) / xs.size
     return TARPResult(ecdf_x=xs, ecdf_y=ys, ks_pvalue=pval,
-                      max_deviation=float(np.max(np.abs(ys - xs))))
+                      max_deviation=float(np.max(np.abs(ys - xs))),
+                      reference_mode=("x-dependent" if use_x else "random"),
+                      notes=notes)
 
 
 # ===========================================================================
@@ -671,11 +788,30 @@ def information_spectrum(theta_true: np.ndarray,
     each eigendirection. Counting those above `threshold` gives the
     effective number of constrained directions.
 
-    This is the direct empirical test of the geometric bound: an embedding
-    of dimension E confines the image of z -> E[theta | z] to at most E
-    dimensions (E-1 when the embedding is L2-normalised onto a sphere), so
-    the effective rank cannot exceed that however many parameters there are.
-    """
+    IMPORTANT LIMIT ON HOW THIS MAY BE READ. It is tempting to treat the
+    effective rank as a hard test of the bound "an embedding of dimension E
+    constrains at most E-1 parameter directions". That reading is WRONG for
+    a nonlinear estimator, and the distinction matters.
+
+    The map z -> E[theta | z] does have an image of INTRINSIC (manifold)
+    dimension at most E-1, since z carries only that many degrees of
+    freedom. But (T2) measures the LINEAR rank of the covariance of that
+    image, and a curved d-dimensional manifold spans more than d linear
+    dimensions. Measured directly: for z on S^11 and a linear f(z), the
+    covariance rank is exactly 11; for a nonlinear f(z) on the same z it is
+    12 or more. A normalizing flow is nonlinear, so an effective rank above
+    E-1 is expected behaviour, not a bug and not evidence of a leak.
+
+    What survives is the information-theoretic statement: by the data
+    processing inequality I(theta; z) <= I(theta; x), and z carries at most
+    E-1 real numbers, so the TOTAL information is capped however it is
+    spread. A nonlinear map can spread that budget thinly across all p
+    linear directions rather than concentrating it in E-1 of them.
+
+    So use this spectrum descriptively -- how many directions carry most of
+    the constrained variance, and how fast it decays -- and use per-axis
+    posterior_contraction for the question "is this parameter informed?".
+        """
     theta_true = np.atleast_2d(np.asarray(theta_true, dtype=np.float64))
     ps = np.asarray(posterior_samples, dtype=np.float64)
     p = ps.shape[2]

@@ -239,6 +239,7 @@ def d5_blind_spot() -> str:
                          separation=6.0, prior_scale=1.0, obs_noise=0.4, seed=0)
 
     sbc_hits = cov_hits = dd_hits = dd_false_pos = 0
+    tarp_rand_hits = tarp_x_hits = 0
     dd_minp = []
     for rep in range(n_rep):
         rng = np.random.default_rng(4000 + rep)
@@ -260,13 +261,28 @@ def d5_blind_spot() -> str:
                             for i in range(n_calib)], axis=0)
         cov_hits += int(not expected_coverage(lp_true, lp_samp, seed=rep).passes)
 
-        # (c) data-dependent quantity -- must detect reliably
+        # (c) TARP with X-INDEPENDENT reference points is blind for the same
+        # exchangeability reason: given an r that does not depend on x, the
+        # true theta* and a prior draw are exchangeable.
+        tarp_rand_hits += int(
+            not tarp(th, broken, n_references=3, seed=rep,
+                     reference_mode="random").passes)
+
+        # (d) TARP with X-DEPENDENT reference points MUST catch it. This is
+        # exactly what the positionability requirement in the TARP theorem
+        # buys, and it is the difference between a useful test and a blind
+        # one -- measured 0/12 versus 12/12 on this very problem.
+        tarp_x_hits += int(
+            not tarp(th, broken, Z=Z, n_references=3, seed=rep,
+                     reference_mode="x").passes)
+
+        # (e) data-dependent quantity -- must detect reliably
         dd = data_dependent_sbc(th, broken, Z, n_forms=4, seed=rep)
         fam_dd = family_verdict(dd, alpha=alpha)
         dd_hits += int(not fam_dd.passes)
         dd_minp.append(float(np.min(fam_dd.adjusted)))
 
-        # (d) and must NOT fire on the exact posterior
+        # (f) and must NOT fire on the exact posterior
         ex = np.stack([bench.posterior(Z[i]).sample(n_draws, rng)
                        for i in range(n_calib)], axis=0)
         dd_ok = family_verdict(data_dependent_sbc(th, ex, Z, n_forms=4, seed=rep),
@@ -280,6 +296,14 @@ def d5_blind_spot() -> str:
     check(cov_hits / n_rep <= 0.25,
           "expected coverage detected it in %d/%d reps; the degeneracy "
           "argument needs re-examining" % (cov_hits, n_rep))
+    check(tarp_rand_hits / n_rep <= 0.25,
+          "TARP with x-INDEPENDENT references detected it in %d/%d reps -- "
+          "above chance, so the exchangeability argument needs re-examining"
+          % (tarp_rand_hits, n_rep))
+    check(tarp_x_hits / n_rep >= 0.75,
+          "TARP with x-DEPENDENT references caught it in only %d/%d reps; "
+          "positionability is not delivering the detection the theorem "
+          "promises" % (tarp_x_hits, n_rep))
     check(dd_hits / n_rep >= 0.75,
           "data-dependent SBC caught it in only %d/%d reps -- the bilinear "
           "substitute is not a usable replacement" % (dd_hits, n_rep))
@@ -293,9 +317,11 @@ def d5_blind_spot() -> str:
           "contraction %.3f on a prior-equal posterior, expected ~0"
           % float(np.max(con.contraction)))
 
-    return ("over %d reps: SBC blind %d/%d, coverage blind %d/%d, "
-            "bilinear caught %d/%d (median adj p %.1e), FP %d/%d, contraction %.3f"
+    return ("over %d reps -- BLIND: SBC %d/%d, coverage %d/%d, TARP(random "
+            "refs) %d/%d.  DETECTS: TARP(x refs) %d/%d, bilinear %d/%d "
+            "(median adj p %.1e, FP %d/%d). contraction %.3f"
             % (n_rep, n_rep - sbc_hits, n_rep, n_rep - cov_hits, n_rep,
+               n_rep - tarp_rand_hits, n_rep, tarp_x_hits, n_rep,
                dd_hits, n_rep, float(np.median(dd_minp)), dd_false_pos, n_rep,
                float(np.max(con.contraction))))
 
@@ -344,9 +370,16 @@ def d7_contraction() -> str:
 
 
 def d8_information_spectrum() -> str:
-    """The benchmark observes n_dim=6 parameters through a rank-3 map, and
-    the component means are separated inside null(A). So at most N_OBS=3
-    directions can be constrained, and the spectrum must say so."""
+    """The benchmark observes n_dim=6 parameters through a rank-3 map.
+
+    The bound rank <= N_OBS is assertable HERE, and only here, because the
+    benchmark is conjugate linear-Gaussian: each posterior mean mu_k(x) is
+    an AFFINE function of x, so the image of x -> E[theta|x] is a flat
+    3-dimensional subspace and its linear rank equals its intrinsic
+    dimension. For a nonlinear estimator such as a normalizing flow the
+    image is curved and its linear rank can exceed the intrinsic dimension,
+    so this assertion must NOT be carried over as a general test. See the
+    note in information_spectrum()."""
     n_calib, n_draws = 800, 128
     _, theta_true, _, exact = calibration_set(n_calib, n_draws)
     spec = information_spectrum(theta_true, exact, threshold=0.05)

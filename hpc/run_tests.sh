@@ -80,9 +80,22 @@ if [ -z "$SKIP_ENV" ]; then
     if command -v conda >/dev/null 2>&1; then
         # Non-interactive shells do not read .bashrc, so `conda activate` is
         # undefined unless this profile script is sourced explicitly.
+        #
+        # `set +u` around it is REQUIRED, not cosmetic. conda.sh references
+        # variables that are unset in a non-interactive shell (PS1 among
+        # others). Under `set -u` that is a fatal error and bash exits on the
+        # spot -- silently, because the message goes into the tee pipe. The
+        # symptom is the script dying right after this header with no output.
+        # It only shows up when launched from an env whose CONDA_* variables
+        # are not already exported, which is why it can pass one day and fail
+        # the next.
+        set +u
         # shellcheck disable=SC1091
         source "$(conda info --base)/etc/profile.d/conda.sh"
-        if conda activate "$ENV_NAME" 2>/dev/null; then
+        conda activate "$ENV_NAME" 2>/dev/null
+        _act=$?
+        set -u
+        if [ "$_act" -eq 0 ]; then
             note "activated: $ENV_NAME"
         else
             note "could not activate '$ENV_NAME'; using the current interpreter"

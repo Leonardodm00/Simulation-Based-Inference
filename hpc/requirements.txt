@@ -14,3 +14,4 @@ scipy>=1.10
 pandas>=2.0
 pyarrow>=14.0        # parquet shards
 scikit-learn>=1.3    # C2ST classifier in smoke_test_gmm.py
+matplotlib>=3.7      # figures (npe_plots.py)
