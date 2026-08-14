@@ -194,6 +194,15 @@ DIAG_ARGS=()
 # trains nothing and runs in seconds -- no --fast variant needed.
 stage "suite: diagnostics (D1-D8)"        "$PY" smoke_test_diagnostics.py "${DIAG_ARGS[@]}"
 
+LOCAL_ARGS=()
+[ -n "$SELECTOR" ] && LOCAL_ARGS+=(-k "$SELECTOR")
+# Unlike the diagnostics suite this one DOES have a --fast variant: L4 and
+# L5 are rate tests over many seeds and take a few minutes, while L0-L3 run
+# in well under a minute. L6-L8 need sbi and SKIP without it -- a skip is
+# reported as a skip and does not affect this stage's exit code.
+[ -n "$FAST" ] && LOCAL_ARGS+=(--fast)
+stage "suite: local calibration (L0-L8)" "$PY" smoke_test_local.py "${LOCAL_ARGS[@]}"
+
 # ---------------------------------------------------------------------------
 hdr "summary"
 n_fail=0
