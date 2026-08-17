@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# job output
+logs/*
+!logs/.gitkeep
+*.o[0-9]*
+*.e[0-9]*
+
+# data and trained models -- never commit these
+*.parquet
+*.npz
+*.pt
+*.ckpt
+data/
+runs/
+# sbi writes tensorboard summaries here on every train() call
+sbi-logs/
+runs/

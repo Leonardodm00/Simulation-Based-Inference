@@ -1,0 +1,57 @@
+#!/bin/bash
+#PBS -N npe_smoke
+#PBS -l select=1:ncpus=8:mem=16gb
+#PBS -l walltime=02:00:00
+#PBS -j oe
+#PBS -o logs/
+###PBS -q FILL_IN_QUEUE_NAME
+###PBS -l select=1:ncpus=8:mem=32gb:ngpus=1   # uncomment for a GPU node
+#
+# Smoke tests for the SBI / NPE stage.
+#
+# BEFORE FIRST SUBMISSION
+#   1. Set the queue on the #PBS -q line above and uncomment it.
+#   2. Set CONDA_ENV below to the environment holding the requirements.
+#   3. Run the cluster-side sanity check in the README once, by hand.
+#
+# Submit with:   qsub jobs/smoke_test.pbs
+#
+# Note the tests run on CPU by default. NPEConfig(device="cuda") switches
+# the estimator to GPU, but these suites are small enough that CPU is
+# usually faster once queueing time is counted.
+
+set -euo pipefail
+
+CONDA_ENV="${CONDA_ENV:-sbi_env}"
+
+cd "${PBS_O_WORKDIR:-$(pwd)}"
+echo "host      : $(hostname)"
+echo "workdir   : $(pwd)"
+echo "started   : $(date -Is)"
+
+# ---- environment -----------------------------------------------------------
+if command -v conda >/dev/null 2>&1; then
+    # set +u is REQUIRED: conda.sh references unset variables (PS1 and
+    # friends), fatal under `set -u`. This script also uses `set -e`, so
+    # without the guard the job dies here with no diagnostic at all.
+    set +u
+    # shellcheck disable=SC1091
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "${CONDA_ENV}"
+    set -u
+fi
+
+python3 -c "import sys; print('python    :', sys.version.split()[0])"
+python3 -c "import torch, sbi, zuko; print('torch     :', torch.__version__); print('sbi/zuko  :', sbi.__version__, zuko.__version__)"
+
+# ---- everything below is delegated to run_tests.sh -------------------------
+# One source of truth: the same runner used interactively. It performs the
+# encoding guard, the compile check, check_env.py, and both suites, and exits
+# nonzero if any stage fails -- so this job's exit status is meaningful.
+
+bash run_tests.sh --no-env
+STATUS=$?
+
+echo
+echo "finished  : $(date -Is)"
+exit $STATUS

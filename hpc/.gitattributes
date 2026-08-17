@@ -1,0 +1,18 @@
+# Force LF on every text file regardless of the checkout platform.
+# Without this, core.autocrlf=true on Windows gives the working tree CRLF,
+# and a direct Windows -> cluster copy then produces "bad interpreter" on any
+# shebang'd file. A byte scan does NOT catch it, since \r is itself ASCII.
+* text=auto eol=lf
+
+*.py     text eol=lf
+*.pbs    text eol=lf
+*.sh     text eol=lf
+*.slurm  text eol=lf
+*.md     text eol=lf
+*.txt    text eol=lf
+.gitignore text eol=lf
+
+*.tar.gz binary
+*.parquet binary
+*.npz    binary
+*.pt     binary

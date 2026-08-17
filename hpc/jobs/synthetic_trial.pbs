@@ -1,0 +1,139 @@
+#!/bin/bash
+#PBS -N npe_trial
+#PBS -l select=1:ncpus=8:mem=32gb
+#PBS -l walltime=24:00:00
+#PBS -j oe
+#PBS -o logs/
+###PBS -q FILL_IN_QUEUE_NAME
+###PBS -l select=1:ncpus=8:mem=48gb:ngpus=1   # uncomment for a GPU node
+#
+# Full synthetic trial: shards -> contract -> ensemble -> diagnostics -> gate.
+#
+# BEFORE FIRST SUBMISSION
+#   1. Set the queue on the #PBS -q line above and uncomment it.
+#   2. Set CONDA_ENV below if your environment is not called sbi_env.
+#   3. Run `python run_synthetic_trial.py --quick` interactively once. It
+#      prints a timing table; scale walltime from that rather than from the
+#      defaults here, which are a guess.
+#
+# Submit with defaults:
+#     qsub jobs/synthetic_trial.pbs
+#
+# Override any parameter without editing this file:
+#     qsub -v N_TRAIN=300000,N_MEMBERS=10,N_CALIB=1000 jobs/synthetic_trial.pbs
+#     qsub -v QUICK=1 jobs/synthetic_trial.pbs
+#     qsub -v P=27,EMBEDDING_DIM=8 jobs/synthetic_trial.pbs
+#
+# COST NOTE. The bottleneck is stage 4, drawing posteriors for the
+# calibration set: it is a Python loop over observations, once per ensemble
+# member, so its cost is n_calib * n_members and it does NOT benefit from a
+# bigger machine. n_calib around 1000 is usually enough for SBC and coverage;
+# pushing it to 10000 buys little and costs a lot.
+
+set -uo pipefail
+
+CONDA_ENV="${CONDA_ENV:-sbi_env}"
+
+# Defaults, each overridable with `qsub -v NAME=value`.
+P="${P:-27}"
+EMBEDDING_DIM="${EMBEDDING_DIM:-12}"
+N_LOG_AXES="${N_LOG_AXES:-19}"
+N_TRAIN="${N_TRAIN:-20000}"
+N_SHARDS="${N_SHARDS:-2}"
+N_CALIB="${N_CALIB:-500}"
+N_DRAWS="${N_DRAWS:-128}"
+N_MEMBERS="${N_MEMBERS:-5}"
+N_REAL="${N_REAL:-36}"
+SEED="${SEED:-0}"
+OUT_DIR="${OUT_DIR:-synthetic_trial_$(date +%Y%m%d_%H%M%S)}"
+QUICK="${QUICK:-0}"
+SAVE_MODEL="${SAVE_MODEL:-1}"
+
+cd "${PBS_O_WORKDIR:-$(pwd)}" || exit 1
+mkdir -p logs
+
+echo "host      : $(hostname)"
+echo "jobid     : ${PBS_JOBID:-interactive}"
+echo "workdir   : $(pwd)"
+echo "started   : $(date -Is)"
+echo "out dir   : $OUT_DIR"
+
+# ---- environment -----------------------------------------------------------
+# set +u is REQUIRED around conda: conda.sh references variables that are
+# unset in a non-interactive shell (PS1 among them), which under `set -u`
+# kills the shell silently, with the failure appearing as a job that produces
+# a header and nothing else.
+if command -v conda >/dev/null 2>&1; then
+    set +u
+    # shellcheck disable=SC1091
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "${CONDA_ENV}"
+    set -u
+else
+    echo "WARNING: conda not on PATH; using whatever python is available"
+fi
+
+python -c "import sys; print('python    :', sys.version.split()[0])"
+python -c "import torch, sbi, zuko; print('torch     :', torch.__version__); print('sbi/zuko  :', sbi.__version__, zuko.__version__)" || {
+    echo "FATAL: the SBI stack does not import. Run 'python check_env.py'."
+    exit 1
+}
+python -c "import torch; print('cuda      :', torch.cuda.is_available())"
+
+# Keep BLAS from oversubscribing the allocated cores. Without this, numpy and
+# torch each spawn a full thread pool and contend, which on a shared node is
+# slower than single-threaded and annoys everyone else on the machine.
+NCPUS="${NCPUS:-${PBS_NCPUS:-8}}"
+export OMP_NUM_THREADS="$NCPUS"
+export MKL_NUM_THREADS="$NCPUS"
+echo "threads   : $NCPUS"
+
+# ---- line-ending guard -----------------------------------------------------
+# Idempotent, and cheap insurance against a Windows-mediated transfer. \r is
+# itself ASCII so a byte scan does not catch it.
+sed -i 's/\r$//' ./*.py 2>/dev/null || true
+
+# ---- assemble arguments ----------------------------------------------------
+ARGS=(--p "$P"
+      --embedding-dim "$EMBEDDING_DIM"
+      --n-log-axes "$N_LOG_AXES"
+      --n-train "$N_TRAIN"
+      --n-shards "$N_SHARDS"
+      --n-calib "$N_CALIB"
+      --n-draws "$N_DRAWS"
+      --n-members "$N_MEMBERS"
+      --n-real "$N_REAL"
+      --seed "$SEED"
+      --out-dir "$OUT_DIR")
+[ "$QUICK" = "1" ] && ARGS+=(--quick)
+[ "$SAVE_MODEL" = "1" ] && ARGS+=(--save-model)
+
+echo
+echo "command   : python run_synthetic_trial.py ${ARGS[*]}"
+echo
+
+# ---- run -------------------------------------------------------------------
+python run_synthetic_trial.py "${ARGS[@]}"
+STATUS=$?
+
+echo
+echo "exit code : $STATUS"
+echo "finished  : $(date -Is)"
+
+if [ "$STATUS" -eq 0 ]; then
+    echo
+    echo "Results in $OUT_DIR:"
+    ls -la "$OUT_DIR" 2>/dev/null
+    echo
+    echo "Machine-readable summary:"
+    python -c "
+import json
+d = json.load(open('$OUT_DIR/trial_summary.json'))
+for k in ('sbc_family_rejected','coverage_ks_p','ddsbc_rejected','tarp_ks_p',
+          'effective_rank_descriptive','n_axes_uninformed','mean_contraction',
+          'overlap_matched_p','overlap_shifted_p'):
+    print('  %-28s %s' % (k, d.get(k)))
+" 2>/dev/null || true
+fi
+
+exit "$STATUS"
