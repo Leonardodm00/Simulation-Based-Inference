@@ -203,6 +203,12 @@ LOCAL_ARGS=()
 [ -n "$FAST" ] && LOCAL_ARGS+=(--fast)
 stage "suite: local calibration (L0-L8)" "$PY" smoke_test_local.py "${LOCAL_ARGS[@]}"
 
+MIS_ARGS=()
+[ -n "$SELECTOR" ] && MIS_ARGS+=(-k "$SELECTOR")
+# G4 is a rate test over many seeds; the rest run in about a minute.
+[ -n "$FAST" ] && MIS_ARGS+=(--fast)
+stage "suite: misspecification (G0-G7)" "$PY" smoke_test_misspec.py "${MIS_ARGS[@]}"
+
 # ---------------------------------------------------------------------------
 hdr "summary"
 n_fail=0
