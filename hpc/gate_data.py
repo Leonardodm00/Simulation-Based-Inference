@@ -131,7 +131,10 @@ def load_sim(pattern: str,
              dedup_theta: bool = True,
              want_zraw: bool = True,
              max_rows: Optional[int] = None,
-             seed: int = 0) -> Arm:
+             seed: int = 0,
+             activity_path: Optional[str] = None,
+             min_rate: Optional[float] = None,
+             max_rate: Optional[float] = None) -> Arm:
     """Load and pool simulated shards matching a glob, optionally deduplicated.
 
     dedup_theta keeps the FIRST row of each distinct theta. Rows sharing a
@@ -172,6 +175,43 @@ def load_sim(pattern: str,
 
     meta: Dict[str, object] = {"pattern": pattern, "n_shards": len(paths),
                                "n_rows_raw": int(z.shape[0])}
+
+    # --- activity filter, applied BEFORE dedup ---------------------------
+    # The activity table is built in the same sorted-glob row order as
+    # load_shards, so it aligns with the RAW rows. Deduplicating first would
+    # break that alignment silently, which is why the length is asserted
+    # against the raw count rather than the post-dedup one.
+    if activity_path is not None and (min_rate is not None
+                                      or max_rate is not None):
+        tab = np.load(activity_path, allow_pickle=False)
+        rate = np.asarray(tab["sim_rate"], dtype=np.float64)
+        if rate.shape[0] != z.shape[0]:
+            raise RuntimeError(
+                "activity table has %d rows but the shards give %d. It must "
+                "be rebuilt against the SAME --sim glob, or the mask would "
+                "silently select the wrong simulations."
+                % (rate.shape[0], z.shape[0]))
+        keep = np.isfinite(rate)
+        if min_rate is not None:
+            keep &= rate >= float(min_rate)
+        if max_rate is not None:
+            keep &= rate <= float(max_rate)
+        meta["activity_filter"] = {
+            "path": activity_path,
+            "min_rate_hz_per_electrode": min_rate,
+            "max_rate_hz_per_electrode": max_rate,
+            "n_before": int(z.shape[0]), "n_after": int(keep.sum()),
+            "fraction_kept": float(keep.mean()),
+            "kept_rate_median": (float(np.median(rate[keep]))
+                                 if keep.any() else None),
+            "kept_rate_min": float(np.min(rate[keep])) if keep.any() else None,
+            "kept_rate_max": float(np.max(rate[keep])) if keep.any() else None,
+        }
+        if not keep.any():
+            raise ValueError("the activity filter removed every simulation")
+        z = z[keep]; theta = theta[keep]
+        if zraw is not None:
+            zraw = zraw[keep]
 
     if dedup_theta:
         _, keep = np.unique(theta, axis=0, return_index=True)

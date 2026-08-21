@@ -89,6 +89,17 @@ def main() -> int:
                     help="keep duplicated theta rows (NOT recommended; see "
                          "gate_data.load_sim)")
     ap.add_argument("--max_sim_rows", type=int, default=None)
+    ap.add_argument("--activity", default=None,
+                    help="activity table .npz from build_activity_table.py, "
+                         "built against the SAME --sim glob")
+    ap.add_argument("--min_rate", type=float, default=None,
+                    help="drop simulations below this Hz/electrode. NOTE: "
+                         "this CONDITIONS the test -- it then asks whether "
+                         "real data lies inside P_sim(. | rate >= min), a "
+                         "weaker claim than the unconditioned gate.")
+    ap.add_argument("--max_rate", type=float, default=None,
+                    help="drop simulations above this Hz/electrode; use with "
+                         "--min_rate to restrict to the real observed range")
     ap.add_argument("--spaces", default="z,zraw")
     ap.add_argument("--skip_mde", action="store_true")
     ap.add_argument("--quick", action="store_true")
@@ -116,7 +127,17 @@ def main() -> int:
 
     print("[2/5] loading the simulated arm")
     sim = D.load_sim(args.sim, dedup_theta=not args.no_dedup,
-                     max_rows=args.max_sim_rows, seed=args.seed)
+                     max_rows=args.max_sim_rows, seed=args.seed,
+                     activity_path=args.activity,
+                     min_rate=args.min_rate, max_rate=args.max_rate)
+    af = sim.meta.get("activity_filter")
+    if af:
+        print("      activity filter [%s, %s] Hz/electrode: kept %d / %d "
+              "(%.1f%%), retained rate median %.4g"
+              % (af["min_rate_hz_per_electrode"],
+                 af["max_rate_hz_per_electrode"], af["n_after"],
+                 af["n_before"], 100.0 * af["fraction_kept"],
+                 af["kept_rate_median"]))
     print("      shards = %s, rows raw = %s, rows used = %d"
           % (sim.meta.get("n_shards"), sim.meta.get("n_rows_raw"), sim.n))
     if "duplication_factor" in sim.meta:
@@ -244,7 +265,12 @@ def main() -> int:
             "range changes which rows are drawn, not how many enter the "
             "statistic.",
             "p_iid is reported for contrast only; the verdict is p_group.",
-        ],
+        ] + ([
+            "An activity filter was applied: the gate therefore tests "
+            "P_sim(. | rate in the retained band) against P_real, which is a "
+            "WEAKER claim than the unconditioned prior predictive check. "
+            "State the band alongside any verdict."
+        ] if sim.meta.get("activity_filter") else []),
     }
     with open(args.out + "_results.json", "w") as fh:
         json.dump(doc, fh, indent=2, sort_keys=True)
