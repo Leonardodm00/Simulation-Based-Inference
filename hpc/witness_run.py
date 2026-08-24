@@ -209,6 +209,12 @@ def main() -> int:
         groups = np.asarray([str(g) for g in npz["real_groups"]])
         print("      real recordings carry %d distinct group labels"
               % len(set(groups.tolist())))
+    classes = None
+    if "real_classes" in keys:
+        classes = np.asarray([str(c) for c in npz["real_classes"]])
+        cnt = {c: int((classes == c).sum()) for c in dict.fromkeys(classes)}
+        print("      real conditions: %s"
+              % ", ".join("%s=%d" % (k, v) for k, v in cnt.items()))
 
     spaces = [s.strip() for s in args.spaces.split(",") if s.strip()]
     methods = [m.strip() for m in args.methods.split(",") if m.strip()]
@@ -231,6 +237,11 @@ def main() -> int:
         if groups is not None and g_use is None:
             print("      NOTE %s: %d group labels but %d real rows; labels "
                   "not used" % (space, groups.shape[0], z_real.shape[0]))
+        c_use = classes if (classes is not None
+                            and classes.shape[0] == z_real.shape[0]) else None
+        if classes is not None and c_use is None:
+            print("      NOTE %s: %d class labels but %d real rows; classes "
+                  "not used" % (space, classes.shape[0], z_real.shape[0]))
         print("      %s: sim %s, real %s" % (space, z_sim.shape, z_real.shape))
 
         rec: Dict[str, object] = {"n_sim": int(z_sim.shape[0]),
@@ -242,7 +253,7 @@ def main() -> int:
             paths = M.witness_maps(z_sim, z_real, args.out, space=space,
                                    split=not args.no_split,
                                    methods=tuple(methods), groups=g_use,
-                                   seed=args.seed,
+                                   classes=c_use, seed=args.seed,
                                    max_points=args.max_points,
                                    max_real_plot=args.max_real_plot,
                                    n_fit_max=args.n_fit_max,
@@ -265,6 +276,30 @@ def main() -> int:
               float(res.v_sum[j]))
              for j in np.argsort(res.v_sum)[:5]])
         rec["notes"] = list(res.notes)
+        if c_use is not None:
+            # Does the discrepancy differ by condition? The witness value
+            # of a real window is how much simulated density exceeds real
+            # density there, so a MORE negative median means that class
+            # sits deeper in the region the simulator under-covers.
+            by_cls = {}
+            for lab in dict.fromkeys(c_use.tolist()):
+                m = (c_use == lab)
+                vals = res.v_sum[m]
+                by_cls[str(lab)] = {
+                    "n": int(m.sum()),
+                    "median_v": float(np.median(vals)),
+                    "mean_v": float(np.mean(vals)),
+                    "q05_v": float(np.percentile(vals, 5)),
+                    "q95_v": float(np.percentile(vals, 95)),
+                    "frac_positive": float(np.mean(vals > 0)),
+                }
+            rec["by_class"] = by_cls
+            print("      witness by condition (more negative = deeper in "
+                  "the under-covered region):")
+            for lab, st in by_cls.items():
+                print("        %-14s n=%-5d median=%+.4f  [q05 %+.4f, "
+                      "q95 %+.4f]" % (lab, st["n"], st["median_v"],
+                                      st["q05_v"], st["q95_v"]))
 
         heat: Dict[str, Dict] = {}
         try:
@@ -272,7 +307,7 @@ def main() -> int:
                                     split=not args.no_split,
                                     methods=tuple(methods), field="auto",
                                     grid=args.grid, groups=g_use,
-                                    seed=args.seed,
+                                    classes=c_use, seed=args.seed,
                                     max_points=args.max_points,
                                     max_real_plot=args.max_real_plot,
                                     n_fit_max=args.n_fit_max,
@@ -308,7 +343,8 @@ def main() -> int:
                     sp = M.witness_slices(
                         z_sim, z_real, args.out, space=space, method=m,
                         split=not args.no_split, quantiles=quantiles,
-                        grid=args.slice_grid, groups=g_use, seed=args.seed,
+                        grid=args.slice_grid, groups=g_use, classes=c_use,
+                        seed=args.seed,
                         max_points=args.max_points,
                         max_real_plot=args.max_real_plot,
                         n_fit_max=args.n_fit_max,

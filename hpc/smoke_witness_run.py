@@ -203,6 +203,18 @@ def main():
         check("the identity regime is flagged",
               zrec["witness_gap_is_exact_mmd2"] is False)
 
+        print("check 4b: per-class witness statistics")
+        check("by_class present for both conditions",
+              set(zrec.get("by_class", {}).keys()) == {"ctrl", "treat"},
+              str(sorted(zrec.get("by_class", {}).keys())))
+        for lab, st in zrec.get("by_class", {}).items():
+            check("%s: n, median, quantiles recorded" % lab,
+                  all(k in st for k in ("n", "median_v", "q05_v", "q95_v",
+                                        "frac_positive")))
+        tot = sum(st["n"] for st in zrec.get("by_class", {}).values())
+        check("class counts sum to the real row count",
+              tot == zrec["n_real"], "%d vs %d" % (tot, zrec["n_real"]))
+
         print("check 5: reported gap matches the library, not a copy of it")
         res = witness_function(sim_z, real_z, space="z", split=True, seed=0)
         check("witness_gap equals witness_function's own value",

@@ -874,13 +874,14 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
                  split: bool = True,
                  methods: Sequence[str] = ("pca", "tsne"),
                  groups: Optional[Sequence] = None,
+                 classes: Optional[Sequence] = None,
                  seed: int = 0,
                  max_points: int = 2000,
                  max_real_plot: Optional[int] = None,
                  n_fit_max: int = 2000,
                  n_eval_max: int = 2000,
-                 n_label: int = 3,
-                 annotate: bool = True,
+                 n_label: int = 0,
+                 annotate: bool = False,
                  clip_quantile: float = 0.005,
                  dpi: int = 150) -> Dict[str, str]:
     """Witness maps (PCA and t-SNE layouts) and witness histograms, saved.
@@ -921,6 +922,19 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
                      the witness values, the histograms and every
                      diagnostic: this changes ink, not numbers. The
                      n_label most extreme recordings are always kept.
+
+    `classes` (length n_real, e.g. control / pathological) splits the real
+    arm by MARKER SHAPE, one per class, with the count in the legend.
+    Colour stays reserved for the witness value g: recolouring by class
+    would collide with the diverging scale and make the quantity the
+    figure is actually about unreadable. Classes are ordered by first
+    appearance, so a given condition keeps its marker across runs.
+
+    Text labels are OFF by default (`annotate=False`, `n_label=0`). With a
+    cohort of any size the per-point annotations overplot each other and
+    obscure the field underneath; the per-recording readout belongs in
+    witness_summary.json. Pass annotate=True with n_label=3 to restore
+    them for a small cohort.
     """
     import os
     import matplotlib
@@ -955,6 +969,7 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
                              % (groups.shape[0], z_real.shape[0]))
     worst = np.argsort(res.v_sum)[:max(0, int(n_label))]
     rkeep = _plot_subset(z_real.shape[0], max_real_plot, rng, force=worst)
+    cls = _class_split(classes, z_real.shape[0])
     s_real = _marker_size(rkeep.size)
     lw_real = 0.6 if s_real > 20 else 0.25
     a_real = 1.0 if s_real > 20 else 0.75
@@ -980,13 +995,18 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
             sc = ax.scatter(Y[:n_s, 0], Y[:n_s, 1], c=us, cmap="coolwarm",
                             vmin=-vmax, vmax=vmax, s=8, alpha=0.55,
                             linewidths=0, label="sim")
-            ax.scatter(Y[n_s:][rkeep, 0], Y[n_s:][rkeep, 1], c=vs[rkeep],
-                       cmap="coolwarm", vmin=-vmax, vmax=vmax, s=s_real,
-                       marker="^", edgecolors="black", linewidths=lw_real,
-                       alpha=a_real,
-                       label="real" if rkeep.size == z_real.shape[0]
-                       else "real (%d of %d shown)"
-                       % (rkeep.size, z_real.shape[0]))
+            for lab, cidx, mk in cls:
+                sel = np.intersect1d(cidx, rkeep, assume_unique=False)
+                if sel.size == 0:
+                    continue
+                ax.scatter(Y[n_s:][sel, 0], Y[n_s:][sel, 1], c=vs[sel],
+                           cmap="coolwarm", vmin=-vmax, vmax=vmax,
+                           s=s_real, marker=mk, edgecolors="black",
+                           linewidths=lw_real, alpha=a_real,
+                           label="%s (n=%d%s)"
+                           % (lab, sel.size,
+                              "" if sel.size == cidx.size
+                              else " of %d" % cidx.size))
             if annotate and groups is not None:
                 for j in worst:
                     ax.annotate(str(groups[j]), (Y[n_s + j, 0], Y[n_s + j, 1]),
@@ -1133,6 +1153,41 @@ def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean((a - a.mean()) * (b - b.mean())) / (sa * sb))
 
 
+# Shapes chosen to stay distinguishable at the small marker sizes a large
+# cohort forces: "^" vs "v" is nearly unreadable below ~10 pt, whereas
+# triangle / square / circle remain separable.
+_CLASS_MARKERS = ("^", "s", "o", "D", "P", "X", "*", "v")
+
+
+def _class_split(classes: Optional[Sequence], n_real: int
+                 ) -> List[Tuple[str, np.ndarray, str]]:
+    """Split the real arm into (label, row indices, marker) per class.
+
+    Returns a single unlabelled group when `classes` is None, so callers
+    can always iterate over the result. Marker SHAPE carries the class;
+    marker COLOUR stays reserved for the witness value, which is the
+    quantity the figure is about -- recolouring by class would collide
+    with the diverging scale and make g unreadable.
+
+    Classes are ordered by first appearance rather than sorted, so the
+    marker assigned to a given condition does not silently change when a
+    cohort with different label strings is analysed.
+    """
+    if classes is None:
+        return [("real", np.arange(n_real), _CLASS_MARKERS[0])]
+    c = np.asarray([str(x) for x in classes])
+    if c.shape[0] != n_real:
+        raise ValueError("classes has length %d but z_real has %d rows"
+                         % (c.shape[0], n_real))
+    seen: List[str] = []
+    for x in c:
+        if x not in seen:
+            seen.append(x)
+    return [(lab, np.flatnonzero(c == lab),
+             _CLASS_MARKERS[i % len(_CLASS_MARKERS)])
+            for i, lab in enumerate(seen)]
+
+
 def _plot_subset(n: int, cap: Optional[int], rng, force: Optional[
         np.ndarray] = None) -> np.ndarray:
     """Indices of the rows to DRAW, thinned to `cap`. Display only.
@@ -1233,6 +1288,7 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
                      field: str = "auto",
                      grid: int = 120,
                      groups: Optional[Sequence] = None,
+                     classes: Optional[Sequence] = None,
                      seed: int = 0,
                      max_points: int = 2000,
                      max_real_plot: Optional[int] = None,
@@ -1241,8 +1297,8 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
                      sphere: Optional[bool] = None,
                      nw_scale: float = 0.04,
                      mask_radius: float = 2.5,
-                     n_label: int = 3,
-                     annotate: bool = True,
+                     n_label: int = 0,
+                     annotate: bool = False,
                      clip_quantile: float = 0.005,
                      dpi: int = 150) -> Dict[str, str]:
     """Witness g as a filled field over each 2-D layout, saved as PNG.
@@ -1295,6 +1351,9 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
         rho near 1: the slice tracks the landscape. rho near 0: it is a
         decorative cut and the verdict must come from "proj"/"nw" or from
         a different plane. A rho below 0.5 raises a WARNING note.
+    classes : sequence of length n_real, or None
+        Splits the real arm by marker shape (e.g. control vs
+        pathological); colour continues to encode the witness value g.
     max_points, n_eval_max, n_fit_max, max_real_plot
         The four caps. max_points thins the simulated rows entering the
         LAYOUT and so affects var_frac, the residuals and the t-SNE cost;
@@ -1361,6 +1420,7 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
                              % (groups.shape[0], z_real.shape[0]))
     worst = np.argsort(res.v_sum)[:max(0, int(n_label))]
     rkeep = _plot_subset(z_real.shape[0], max_real_plot, rng, force=worst)
+    cls = _class_split(classes, z_real.shape[0])
     s_real = _marker_size(rkeep.size, base=58.0)
     lw_real = 0.7 if s_real > 20 else 0.25
     a_real = 1.0 if s_real > 20 else 0.75
@@ -1496,13 +1556,18 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
             ax.scatter(Y[:n_s, 0], Y[:n_s, 1], c=pv[:n_s], cmap="coolwarm",
                        vmin=-vmax, vmax=vmax, s=5, alpha=0.5, linewidths=0.2,
                        edgecolors="k", label="sim")
-            ax.scatter(Y[n_s:][rkeep, 0], Y[n_s:][rkeep, 1],
-                       c=pv[n_s:][rkeep], cmap="coolwarm", vmin=-vmax,
-                       vmax=vmax, s=s_real, marker="^", edgecolors="k",
-                       linewidths=lw_real, alpha=a_real,
-                       label="real" if rkeep.size == z_real.shape[0]
-                       else "real (%d of %d shown)"
-                       % (rkeep.size, z_real.shape[0]))
+            for lab, cidx, mk in cls:
+                sel = np.intersect1d(cidx, rkeep, assume_unique=False)
+                if sel.size == 0:
+                    continue
+                ax.scatter(Y[n_s:][sel, 0], Y[n_s:][sel, 1],
+                           c=pv[n_s:][sel], cmap="coolwarm", vmin=-vmax,
+                           vmax=vmax, s=s_real, marker=mk, edgecolors="k",
+                           linewidths=lw_real, alpha=a_real,
+                           label="%s (n=%d%s)"
+                           % (lab, sel.size,
+                              "" if sel.size == cidx.size
+                              else " of %d" % cidx.size))
             if annotate and groups is not None:
                 for j in worst:
                     ax.annotate(str(groups[j]), (Y[n_s + j, 0],
@@ -1625,6 +1690,7 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
                    quantiles: Sequence[float] = (0.05, 0.25, 0.5, 0.75, 0.95),
                    grid: int = 100,
                    groups: Optional[Sequence] = None,
+                   classes: Optional[Sequence] = None,
                    seed: int = 0,
                    max_points: int = 2000,
                    max_real_plot: Optional[int] = None,
@@ -1660,6 +1726,9 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
         Display-only cap on the real markers drawn per slab. Slab
         membership and every diagnostic are unaffected; the per-panel
         count in the axis label reports how many are shown.
+    classes : sequence of length n_real, or None
+        Splits the real arm by marker shape (e.g. control vs
+        pathological). Colour continues to encode the witness value.
     bandwidth_index : int or None
         None -> the field is the sum over bandwidths, i.e. the gate's own
         kernel. An integer selects a single bandwidth of the grid, which
@@ -1738,6 +1807,7 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
 
     XX, YY, Q = _grid_2d(Y, grid, clip=clip_quantile)
     rkeep = _plot_subset(z_real.shape[0], max_real_plot, rng)
+    cls = _class_split(classes, z_real.shape[0])
     rshow = np.zeros(z_real.shape[0], dtype=bool)
     rshow[rkeep] = True
     s_real = _marker_size(rkeep.size, base=58.0)
@@ -1797,10 +1867,16 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
         ax.scatter(Y[:n_s][ms, 0], Y[:n_s][ms, 1], c=pt_vals[:n_s][ms],
                    cmap="coolwarm", vmin=-vmax, vmax=vmax, s=6, alpha=0.6,
                    linewidths=0.2, edgecolors="k", label="sim in slab")
-        ax.scatter(Y[n_s:][mr, 0], Y[n_s:][mr, 1], c=pt_vals[n_s:][mr],
-                   cmap="coolwarm", vmin=-vmax, vmax=vmax, s=s_real,
-                   marker="^", edgecolors="k", linewidths=lw_real,
-                   alpha=a_real, label="real in slab")
+        for lab, cidx, mk in cls:
+            sel = np.flatnonzero(mr)
+            sel = np.intersect1d(cidx, sel, assume_unique=False)
+            if sel.size == 0:
+                continue
+            ax.scatter(Y[n_s:][sel, 0], Y[n_s:][sel, 1],
+                       c=pt_vals[n_s:][sel], cmap="coolwarm", vmin=-vmax,
+                       vmax=vmax, s=s_real, marker=mk, edgecolors="k",
+                       linewidths=lw_real, alpha=a_real,
+                       label="%s in slab (n=%d)" % (lab, sel.size))
         # Labels are OFF by default here: a slice slab can hold hundreds
         # of real windows and every annotation lands on top of the next.
         # The per-recording readout belongs in witness_summary.json

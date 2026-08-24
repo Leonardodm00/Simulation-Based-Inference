@@ -245,11 +245,18 @@ def main():
         check("annotate defaults to False on slices",
               sig.parameters["annotate"].default is False,
               str(sig.parameters["annotate"].default))
+        # Labels are now OFF everywhere by default, not just on slices:
+        # at any cohort size the annotations overplot each other and hide
+        # the field. The per-recording readout is witness_summary.json.
         from npe_misspec import witness_heatmaps as _wh, witness_maps as _wm
-        check("heatmaps/maps keep annotate=True (few labelled points)",
-              inspect.signature(_wh).parameters["annotate"].default is True
-              and inspect.signature(_wm).parameters["annotate"].default
-              is True)
+        for fn, nm in ((_wh, "heatmaps"), (_wm, "maps")):
+            pr = inspect.signature(fn).parameters
+            check("%s: annotate defaults OFF too" % nm,
+                  pr["annotate"].default is False)
+            check("%s: n_label defaults to 0" % nm,
+                  pr["n_label"].default == 0)
+        check("slices accept classes for marker-shape splitting",
+              "classes" in sig.parameters)
 
         print("check 7c: max_real_plot thins slab markers only")
         s_cap = witness_slices(z_sim, z_real, outdir, space="zcap",

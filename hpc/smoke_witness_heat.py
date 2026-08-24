@@ -280,6 +280,38 @@ def main():
               got[None] == got[20],
               "None=%s cap=%s" % (got[None][:2], got[20][:2]))
 
+        print("check 8d: class split and label suppression")
+        from npe_misspec import _class_split, _CLASS_MARKERS
+        cl = np.array(["control"] * 10 + ["patho"] * 20)
+        sp = _class_split(cl, 30)
+        check("one entry per distinct class", len(sp) == 2)
+        check("classes ordered by FIRST APPEARANCE, not sorted",
+              [lab for lab, _i, _m in sp] == ["control", "patho"],
+              str([lab for lab, _i, _m in sp]))
+        check("indices partition the real arm exactly",
+              sorted(np.concatenate([i for _l, i, _m in sp]).tolist())
+              == list(range(30)))
+        check("each class gets a distinct marker",
+              len({m for _l, _i, m in sp}) == 2)
+        check("markers avoid the ^/v pair that is illegible when small",
+              _CLASS_MARKERS[1] != "v")
+        check("classes=None yields one unlabelled group covering all rows",
+              len(_class_split(None, 30)) == 1
+              and _class_split(None, 30)[0][1].size == 30)
+        try:
+            _class_split(cl, 29)
+            check("wrong-length classes raises", False, "no exception")
+        except ValueError:
+            check("wrong-length classes raises ValueError", True)
+        import inspect
+        for fn, nm in ((witness_heatmaps, "heatmaps"),):
+            pr = inspect.signature(fn).parameters
+            check("%s: annotate defaults OFF" % nm,
+                  pr["annotate"].default is False)
+            check("%s: n_label defaults to 0" % nm,
+                  pr["n_label"].default == 0)
+            check("%s: accepts classes" % nm, "classes" in pr)
+
         print("check 9: files written with the field mode in the name")
         saved = witness_heatmaps(z_sim, z_real, outdir, space="z",
                                  bandwidths=bw, methods=("pca", "tsne"),
