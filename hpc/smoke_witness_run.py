@@ -131,8 +131,9 @@ def main():
         check("the verdict states how many scales resolve the data",
               "2/3 bandwidths resolve" in v_mixed,
               v_mixed[v_mixed.find("["):][:52])
-        check("all scales resolved -> 3/3 reported",
-              "3/3 bandwidths resolve" in v_ok)
+        check("all scales resolved -> no vacuous 'at the others' clause",
+              "all 3 bandwidths resolve" in v_ok
+              and "at the other" not in v_ok, v_ok[v_ok.find("["):][:44])
         check("NO scale resolving the data downgrades even a high rho",
               _verdict(0.97, none_, 0.30, 0.95, 0.01).startswith(
                   "READ WITH CAUTION"),

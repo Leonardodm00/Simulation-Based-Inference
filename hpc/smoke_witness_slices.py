@@ -238,6 +238,32 @@ def main():
             except ImportError:
                 print("  [SKIP] %s (scikit-learn absent)" % name)
 
+        print("check 7b: group labels are OFF by default on slice panels")
+        import inspect
+        sig = inspect.signature(witness_slices)
+        check("witness_slices exposes annotate", "annotate" in sig.parameters)
+        check("annotate defaults to False on slices",
+              sig.parameters["annotate"].default is False,
+              str(sig.parameters["annotate"].default))
+        from npe_misspec import witness_heatmaps as _wh, witness_maps as _wm
+        check("heatmaps/maps keep annotate=True (few labelled points)",
+              inspect.signature(_wh).parameters["annotate"].default is True
+              and inspect.signature(_wm).parameters["annotate"].default
+              is True)
+
+        print("check 7c: max_real_plot thins slab markers only")
+        s_cap = witness_slices(z_sim, z_real, outdir, space="zcap",
+                               bandwidths=bw, method="pca", grid=30,
+                               quantiles=(0.05, 0.5, 0.95), seed=0,
+                               max_real_plot=5)
+        with np.load(s_cap["arrays"]) as zc:
+            check("thinning does not change the slice fields",
+                  zc["fields"].shape[0] == 3)
+            check("thinning does not change stability diagnostics",
+                  np.all(np.isfinite(zc["stability"])))
+            check("t_data still covers every real row",
+                  zc["t_data"].size == zc["coords"].shape[0])
+
         print("check 8: outputs")
         check("PNG written",
               os.path.getsize(saved["slices"]) > 5000,

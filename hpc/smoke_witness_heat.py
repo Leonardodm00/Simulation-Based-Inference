@@ -221,6 +221,65 @@ def main():
         check("z_sim is unit norm, so sphere=None must resolve True",
               np.allclose(np.linalg.norm(z_sim, axis=1), 1.0, atol=1e-6))
 
+        print("check 8b: view window and adaptive marker size")
+        from npe_misspec import _marker_size, _view_window
+        Yo = np.concatenate([rng.normal(size=(500, 2)),
+                             np.array([[1e4, 1e4]])])
+        x0, x1, _y0, _y1 = _view_window(Yo, clip=0.005, pad=0.0)
+        check("view window rejects a far outlier", x1 < 1e3,
+              "x1=%.3g" % x1)
+        # 2-D retention: clip is applied per axis, so the fraction inside
+        # the RECTANGLE is lower than 1 - 2*clip. Measured with the pad the
+        # code actually uses, on the real figures this came out at 99.6%.
+        px0, px1, py0, py1 = _view_window(Yo, clip=0.005)
+        inside = float(np.mean((Yo[:, 0] >= px0) & (Yo[:, 0] <= px1)
+                               & (Yo[:, 1] >= py0) & (Yo[:, 1] <= py1)))
+        check("view window keeps >=98 pct of points in 2-D",
+              inside >= 0.98, "%.2f%% inside" % (100 * inside))
+        fx0, fx1, fy0, fy1 = _view_window(Yo, clip=0.0, pad=0.0)
+        check("clip=0 recovers the exact full range",
+              np.allclose([fx0, fx1, fy0, fy1],
+                          [Yo[:, 0].min(), Yo[:, 0].max(),
+                           Yo[:, 1].min(), Yo[:, 1].max()]))
+        check("marker size is monotonically decreasing in n",
+              _marker_size(30) > _marker_size(200) > _marker_size(1890)
+              >= _marker_size(20000))
+        check("marker size never exceeds the base or drops below the floor",
+              _marker_size(1) <= 52.0 and _marker_size(10 ** 7) >= 5.0,
+              "n=1 -> %.1f, n=1e7 -> %.1f"
+              % (_marker_size(1), _marker_size(10 ** 7)))
+        check("a 1890-window cohort gets a small marker",
+              _marker_size(1890, base=58.0) < 10.0,
+              "%.1f" % _marker_size(1890, base=58.0))
+
+        print("check 8c: the two caps behave as documented")
+        # n_eval_max is the ceiling; max_points cannot raise past it
+        big = np.concatenate([z_sim, z_sim, z_sim])          # 3x the rows
+        r_lo = witness_function(big, z_real, bandwidths=bw, split=True,
+                                seed=0, n_eval_max=200)
+        r_hi = witness_function(big, z_real, bandwidths=bw, split=True,
+                                seed=0, n_eval_max=900)
+        check("n_eval_max caps the scored simulated rows",
+              r_lo.eval_idx.size == 200 and r_hi.eval_idx.size == 900,
+              "%d vs %d" % (r_lo.eval_idx.size, r_hi.eval_idx.size))
+        check("raising max_points cannot exceed n_eval_max",
+              min(r_lo.eval_idx.size, 5000) == 200)
+        # max_real_plot is display-only: every diagnostic must be identical
+        got = {}
+        for cap in (None, 20):
+            pth = witness_heatmaps(z_sim, z_real, outdir,
+                                   space="cap%s" % cap, bandwidths=bw,
+                                   methods=("pca",), field="lift", grid=30,
+                                   seed=0, max_real_plot=cap)
+            with np.load(pth["arrays"]) as zc:
+                got[cap] = (float(zc["pca_var_frac"]),
+                            float(zc["pca_rho_sum"]),
+                            float(np.median(zc["pca_resid"])),
+                            float(zc["pca_field"].sum()))
+        check("max_real_plot leaves every diagnostic bit-identical",
+              got[None] == got[20],
+              "None=%s cap=%s" % (got[None][:2], got[20][:2]))
+
         print("check 9: files written with the field mode in the name")
         saved = witness_heatmaps(z_sim, z_real, outdir, space="z",
                                  bandwidths=bw, methods=("pca", "tsne"),

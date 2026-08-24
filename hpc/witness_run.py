@@ -99,10 +99,14 @@ def _verdict(rho_sum: float, resid_over_sigma, sigma_min: float,
            if resid_over_sigma is not None else np.asarray([np.nan]))
     n_tot = int(np.sum(np.isfinite(ros)))
     n_res = int(np.sum(np.isfinite(ros) & (ros <= 1.0)))
-    scope = ("" if n_tot == 0 else
-             " [%d/%d bandwidths resolve the data; at the others the plane "
-             "cuts through empty space and those panels mean less]"
-             % (n_res, n_tot))
+    if n_tot == 0:
+        scope = ""
+    elif n_res == n_tot:
+        scope = " [all %d bandwidths resolve the data]" % n_tot
+    else:
+        scope = (" [%d/%d bandwidths resolve the data; at the other %d the "
+                 "plane cuts through empty space and those panels mean "
+                 "less]" % (n_res, n_tot, n_tot - n_res))
     faithful = (np.isfinite(rho_sum) and rho_sum >= 0.9
                 and (n_tot == 0 or n_res > 0))
     if np.isfinite(slice_min_corr):
@@ -147,8 +151,24 @@ def main() -> int:
                     help="slice depths, as quantiles of the data's own "
                          "off-plane coordinate")
     ap.add_argument("--max_points", type=int, default=2000,
-                    help="cap on PLOTTED simulated points; scores are "
-                         "computed on all evaluated points regardless")
+                    help="cap on simulated points entering the LAYOUT. "
+                         "Cannot exceed --n_eval_max, which is the real "
+                         "ceiling on plotted simulated points")
+    ap.add_argument("--max_real_plot", type=int, default=None,
+                    help="DISPLAY-ONLY cap on real markers drawn. Every "
+                         "real row still enters mu_real, the witness "
+                         "values and every diagnostic; this changes ink, "
+                         "not numbers. Useful when ~2000 real windows "
+                         "blanket the simulated cloud")
+    ap.add_argument("--n_eval_max", type=int, default=2000,
+                    help="simulated rows SCORED by the witness, and hence "
+                         "the hard ceiling on how many can be plotted. "
+                         "Cheap to raise: O(n_fit x n_eval) once, and it "
+                         "does not change the estimate of mu_sim")
+    ap.add_argument("--n_fit_max", type=int, default=2000,
+                    help="simulated rows used to ESTIMATE mu_sim. "
+                         "Expensive to raise (every heatmap grid cell is "
+                         "O(n_fit)) and it changes the statistic itself")
     ap.add_argument("--no_split", action="store_true",
                     help="estimate mu_sim on the same simulated rows it is "
                          "evaluated on. Makes mean(u)-mean(v) exactly the "
@@ -223,7 +243,10 @@ def main() -> int:
                                    split=not args.no_split,
                                    methods=tuple(methods), groups=g_use,
                                    seed=args.seed,
-                                   max_points=args.max_points)
+                                   max_points=args.max_points,
+                                   max_real_plot=args.max_real_plot,
+                                   n_fit_max=args.n_fit_max,
+                                   n_eval_max=args.n_eval_max)
             rec["maps"] = {k: os.path.basename(v) for k, v in paths.items()}
         except Exception as exc:                               # noqa: BLE001
             rec["maps_error"] = str(exc)
@@ -231,7 +254,9 @@ def main() -> int:
 
         # the identity: mean(u) - mean(v) is the gate's own statistic
         res = M.witness_function(z_sim, z_real, space=space,
-                                 split=not args.no_split, seed=args.seed)
+                                 split=not args.no_split, seed=args.seed,
+                                 n_fit_max=args.n_fit_max,
+                                 n_eval_max=args.n_eval_max)
         rec["bandwidths"] = _jsonable(res.bandwidths)
         rec["witness_gap"] = float(res.mmd2_from_witness())
         rec["witness_gap_is_exact_mmd2"] = bool(args.no_split)
@@ -248,7 +273,10 @@ def main() -> int:
                                     methods=tuple(methods), field="auto",
                                     grid=args.grid, groups=g_use,
                                     seed=args.seed,
-                                    max_points=args.max_points)
+                                    max_points=args.max_points,
+                                    max_real_plot=args.max_real_plot,
+                                    n_fit_max=args.n_fit_max,
+                                    n_eval_max=args.n_eval_max)
             with np.load(hp["arrays"], allow_pickle=False) as zh:
                 for m in methods:
                     if "%s_field_mode" % m not in zh:
@@ -282,6 +310,9 @@ def main() -> int:
                         split=not args.no_split, quantiles=quantiles,
                         grid=args.slice_grid, groups=g_use, seed=args.seed,
                         max_points=args.max_points,
+                        max_real_plot=args.max_real_plot,
+                        n_fit_max=args.n_fit_max,
+                        n_eval_max=args.n_eval_max,
                         bandwidth_index=args.bandwidth_index)
                     with np.load(sp["arrays"], allow_pickle=False) as zs:
                         sl[m] = {

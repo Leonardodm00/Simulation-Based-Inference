@@ -876,7 +876,12 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
                  groups: Optional[Sequence] = None,
                  seed: int = 0,
                  max_points: int = 2000,
+                 max_real_plot: Optional[int] = None,
+                 n_fit_max: int = 2000,
+                 n_eval_max: int = 2000,
                  n_label: int = 3,
+                 annotate: bool = True,
+                 clip_quantile: float = 0.005,
                  dpi: int = 150) -> Dict[str, str]:
     """Witness maps (PCA and t-SNE layouts) and witness histograms, saved.
 
@@ -899,9 +904,23 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
 
     Parameters beyond witness_function's: `groups` (length n_real) labels
     the `n_label` most negative real points -- the recordings sitting
-    deepest in the simulation gap; `max_points` caps the simulated points
-    that are PLOTTED (scores are computed on all evaluated points; the cap
-    only thins the scatter and the t-SNE input).
+    deepest in the simulation gap.
+
+    TWO DIFFERENT CAPS, easily confused:
+
+      max_points     caps the simulated rows entering the LAYOUT. It thins
+                     the projected cloud, so it also sets the t-SNE cost.
+                     It CANNOT raise the plotted count above n_eval_max.
+      n_eval_max     simulated rows scored by witness_function, and hence
+                     the hard ceiling on plotted simulated points. Cheap
+                     to raise; does not change the estimate of mu_sim.
+      n_fit_max      simulated rows used to ESTIMATE mu_sim. Expensive to
+                     raise, and it changes the statistic itself.
+      max_real_plot  DISPLAY-ONLY cap on the real markers drawn. None
+                     draws them all. Every real row still enters mu_real,
+                     the witness values, the histograms and every
+                     diagnostic: this changes ink, not numbers. The
+                     n_label most extreme recordings are always kept.
     """
     import os
     import matplotlib
@@ -912,7 +931,8 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
     rng = np.random.default_rng(seed)
 
     res = witness_function(z_sim, z_real, bandwidths=bandwidths, space=space,
-                           split=split, seed=seed)
+                           split=split, seed=seed, n_fit_max=n_fit_max,
+                           n_eval_max=n_eval_max)
     z_sim = np.atleast_2d(np.asarray(z_sim, dtype=np.float64))
     z_real = np.atleast_2d(np.asarray(z_real, dtype=np.float64))
     ev = z_sim[res.eval_idx]
@@ -934,6 +954,10 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
             raise ValueError("groups has length %d but z_real has %d rows"
                              % (groups.shape[0], z_real.shape[0]))
     worst = np.argsort(res.v_sum)[:max(0, int(n_label))]
+    rkeep = _plot_subset(z_real.shape[0], max_real_plot, rng, force=worst)
+    s_real = _marker_size(rkeep.size)
+    lw_real = 0.6 if s_real > 20 else 0.25
+    a_real = 1.0 if s_real > 20 else 0.75
 
     saved: Dict[str, str] = {}
     coords: Dict[str, np.ndarray] = {}
@@ -945,6 +969,7 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
             res.notes.append("SKIPPED %s: %s" % (method, e))
             continue
         coords[method] = Y
+        vx0, vx1, vy0, vy1 = _view_window(Y, clip=clip_quantile)
         ncol = len(panels)
         fig, axes = plt.subplots(1, ncol, figsize=(4.2 * ncol, 4.6),
                                  squeeze=False)
@@ -955,16 +980,21 @@ def witness_maps(z_sim: np.ndarray, z_real: np.ndarray,
             sc = ax.scatter(Y[:n_s, 0], Y[:n_s, 1], c=us, cmap="coolwarm",
                             vmin=-vmax, vmax=vmax, s=8, alpha=0.55,
                             linewidths=0, label="sim")
-            ax.scatter(Y[n_s:, 0], Y[n_s:, 1], c=vs, cmap="coolwarm",
-                       vmin=-vmax, vmax=vmax, s=52, marker="^",
-                       edgecolors="black", linewidths=0.6, label="real")
-            if groups is not None:
+            ax.scatter(Y[n_s:][rkeep, 0], Y[n_s:][rkeep, 1], c=vs[rkeep],
+                       cmap="coolwarm", vmin=-vmax, vmax=vmax, s=s_real,
+                       marker="^", edgecolors="black", linewidths=lw_real,
+                       alpha=a_real,
+                       label="real" if rkeep.size == z_real.shape[0]
+                       else "real (%d of %d shown)"
+                       % (rkeep.size, z_real.shape[0]))
+            if annotate and groups is not None:
                 for j in worst:
                     ax.annotate(str(groups[j]), (Y[n_s + j, 0], Y[n_s + j, 1]),
                                 fontsize=7, xytext=(3, 3),
                                 textcoords="offset points")
             ax.set_title(title, fontsize=10)
             ax.set_xlabel(axlabel, fontsize=8)
+            ax.set_xlim(vx0, vx1); ax.set_ylim(vy0, vy1)
             ax.set_xticks([]); ax.set_yticks([])
         cb = fig.colorbar(sc, ax=axes[0].tolist(), fraction=0.02, pad=0.01)
         cb.set_label("g(z) = mu_sim(z) - mu_real(z)")
@@ -1103,14 +1133,72 @@ def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean((a - a.mean()) * (b - b.mean())) / (sa * sb))
 
 
-def _grid_2d(Y: np.ndarray, grid: int, pad: float = 0.06):
-    """Regular grid covering the layout Y with a small margin."""
-    x0, x1 = float(Y[:, 0].min()), float(Y[:, 0].max())
-    y0, y1 = float(Y[:, 1].min()), float(Y[:, 1].max())
-    dx = (x1 - x0) or 1.0
-    dy = (y1 - y0) or 1.0
-    gx = np.linspace(x0 - pad * dx, x1 + pad * dx, int(grid))
-    gy = np.linspace(y0 - pad * dy, y1 + pad * dy, int(grid))
+def _plot_subset(n: int, cap: Optional[int], rng, force: Optional[
+        np.ndarray] = None) -> np.ndarray:
+    """Indices of the rows to DRAW, thinned to `cap`. Display only.
+
+    Returns all indices when cap is None or n <= cap. Rows listed in
+    `force` are always kept, so a labelled extreme recording never
+    disappears because the thinning did not happen to draw it.
+
+    This is deliberately separate from `max_points`, which caps the
+    simulated rows entering the LAYOUT and therefore changes var_frac,
+    the residuals and the t-SNE input. Thinning the real arm here changes
+    nothing but ink: every real row still enters mu_real, the witness
+    values, the histograms and every diagnostic.
+    """
+    idx = np.arange(int(n))
+    if cap is None or n <= int(cap):
+        return idx
+    keep = rng.choice(n, int(cap), replace=False)
+    if force is not None and np.size(force):
+        keep = np.union1d(keep, np.asarray(force, dtype=int))
+    return np.sort(keep)
+
+
+def _view_window(Y: np.ndarray, clip: float = 0.005, pad: float = 0.06):
+    """Robust axis limits for the layout Y: (x0, x1, y0, y1).
+
+    Uses the [clip, 1-clip] quantiles rather than min/max, because a
+    handful of extreme points -- in practice the degenerate simulated
+    cluster -- otherwise stretch the axes until the bulk of the data
+    occupies a few pixels. Points outside the window are still plotted;
+    they are simply off the edge, which is the correct trade when 99% of
+    the information is in the core. clip=0 recovers the old full-range
+    behaviour.
+    """
+    lo = np.quantile(Y, clip, axis=0)
+    hi = np.quantile(Y, 1.0 - clip, axis=0)
+    dx = float(hi[0] - lo[0]) or 1.0
+    dy = float(hi[1] - lo[1]) or 1.0
+    return (float(lo[0]) - pad * dx, float(hi[0]) + pad * dx,
+            float(lo[1]) - pad * dy, float(hi[1]) + pad * dy)
+
+
+def _marker_size(n: int, base: float = 52.0, n_ref: int = 30,
+                 lo: float = 5.0) -> float:
+    """Real-marker area, shrinking as the cohort grows.
+
+    A size tuned for a few dozen recordings turns into a solid black mass
+    at n ~ 2000 windows, hiding both the individual markers and the field
+    underneath. Area is scaled as (n_ref / n)^(1/2), i.e. the marker's
+    linear size falls as n^(-1/4): slow enough to stay visible, fast
+    enough to keep the total ink roughly bounded.
+    """
+    n = max(int(n), 1)
+    return float(max(lo, min(base, base * (float(n_ref) / n) ** 0.5)))
+
+
+def _grid_2d(Y: np.ndarray, grid: int, pad: float = 0.06,
+             clip: float = 0.005):
+    """Regular grid covering the ROBUST extent of the layout Y.
+
+    The grid follows _view_window, so the field is evaluated where the
+    data actually are rather than across a range set by a few outliers.
+    """
+    x0, x1, y0, y1 = _view_window(Y, clip=clip, pad=pad)
+    gx = np.linspace(x0, x1, int(grid))
+    gy = np.linspace(y0, y1, int(grid))
     XX, YY = np.meshgrid(gx, gy)
     return XX, YY, np.column_stack([XX.ravel(), YY.ravel()])
 
@@ -1147,10 +1235,15 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
                      groups: Optional[Sequence] = None,
                      seed: int = 0,
                      max_points: int = 2000,
+                     max_real_plot: Optional[int] = None,
+                     n_fit_max: int = 2000,
+                     n_eval_max: int = 2000,
                      sphere: Optional[bool] = None,
                      nw_scale: float = 0.04,
                      mask_radius: float = 2.5,
                      n_label: int = 3,
+                     annotate: bool = True,
+                     clip_quantile: float = 0.005,
                      dpi: int = 150) -> Dict[str, str]:
     """Witness g as a filled field over each 2-D layout, saved as PNG.
 
@@ -1187,8 +1280,9 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
         the two plotted directions. "Plotted" matters: the cloud is the
         held-out evaluation half of z_sim (thinned to max_points) stacked
         on all of z_real, not the full simulated set, so this number is
-        not comparable across different max_points or split settings. Answers "where are the points", not "does the
-        picture represent g". Reported for completeness, not as the test.
+        not comparable across different max_points or split settings.
+        Answers "where are the points", not "does the picture represent
+        g". Reported for completeness, not as the test.
     resid, resid_over_sigma
         Off-plane distance of each datum from its own lifted shadow, and
         the median of that distance divided by each bandwidth. This is
@@ -1201,6 +1295,14 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
         rho near 1: the slice tracks the landscape. rho near 0: it is a
         decorative cut and the verdict must come from "proj"/"nw" or from
         a different plane. A rho below 0.5 raises a WARNING note.
+    max_points, n_eval_max, n_fit_max, max_real_plot
+        The four caps. max_points thins the simulated rows entering the
+        LAYOUT and so affects var_frac, the residuals and the t-SNE cost;
+        it cannot raise the plotted count above n_eval_max, which is the
+        real ceiling. n_eval_max is cheap to raise and adds plotted points
+        without changing mu_sim; n_fit_max is expensive (every grid cell
+        is O(n_fit)) and does change the statistic. max_real_plot is
+        display-only: it thins the drawn real markers and nothing else.
     grid : int
         Grid points per axis. Cost is O(grid^2 * n_fit) kernel entries per
         bandwidth, chunked; 120 is cheap, 240 is still fine for n_fit
@@ -1235,7 +1337,8 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
     rng = np.random.default_rng(seed)
 
     res = witness_function(z_sim, z_real, bandwidths=bandwidths, space=space,
-                           split=split, seed=seed)
+                           split=split, seed=seed, n_fit_max=n_fit_max,
+                           n_eval_max=n_eval_max)
     z_sim = np.atleast_2d(np.asarray(z_sim, dtype=np.float64))
     z_real = np.atleast_2d(np.asarray(z_real, dtype=np.float64))
     ev = z_sim[res.eval_idx]
@@ -1257,6 +1360,10 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
             raise ValueError("groups has length %d but z_real has %d rows"
                              % (groups.shape[0], z_real.shape[0]))
     worst = np.argsort(res.v_sum)[:max(0, int(n_label))]
+    rkeep = _plot_subset(z_real.shape[0], max_real_plot, rng, force=worst)
+    s_real = _marker_size(rkeep.size, base=58.0)
+    lw_real = 0.7 if s_real > 20 else 0.25
+    a_real = 1.0 if s_real > 20 else 0.75
 
     saved: Dict[str, str] = {}
     store: Dict[str, np.ndarray] = {"bandwidths": res.bandwidths}
@@ -1276,7 +1383,7 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
                 "field=%r needs a linear layout; %s has no inverse map. "
                 "Use field='nw' for %s." % (fld, method, method))
 
-        XX, YY, Q = _grid_2d(Y, grid)
+        XX, YY, Q = _grid_2d(Y, grid, clip=clip_quantile)
         pt_vals = np.concatenate([res.u[:, keep], res.v], axis=1)   # (S, n)
         diag: Dict[str, np.ndarray] = {"var_frac": np.asarray(var_frac)}
 
@@ -1389,10 +1496,14 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
             ax.scatter(Y[:n_s, 0], Y[:n_s, 1], c=pv[:n_s], cmap="coolwarm",
                        vmin=-vmax, vmax=vmax, s=5, alpha=0.5, linewidths=0.2,
                        edgecolors="k", label="sim")
-            ax.scatter(Y[n_s:, 0], Y[n_s:, 1], c=pv[n_s:], cmap="coolwarm",
-                       vmin=-vmax, vmax=vmax, s=58, marker="^",
-                       edgecolors="k", linewidths=0.7, label="real")
-            if groups is not None:
+            ax.scatter(Y[n_s:][rkeep, 0], Y[n_s:][rkeep, 1],
+                       c=pv[n_s:][rkeep], cmap="coolwarm", vmin=-vmax,
+                       vmax=vmax, s=s_real, marker="^", edgecolors="k",
+                       linewidths=lw_real, alpha=a_real,
+                       label="real" if rkeep.size == z_real.shape[0]
+                       else "real (%d of %d shown)"
+                       % (rkeep.size, z_real.shape[0]))
+            if annotate and groups is not None:
                 for j in worst:
                     ax.annotate(str(groups[j]), (Y[n_s + j, 0],
                                                  Y[n_s + j, 1]),
@@ -1400,6 +1511,9 @@ def witness_heatmaps(z_sim: np.ndarray, z_real: np.ndarray,
                                 textcoords="offset points")
             ax.set_title(title, fontsize=10)
             ax.set_xlabel(axlabel, fontsize=8)
+            # the scatter can push the axes past the field; the field's
+            # own extent is the view we want
+            ax.set_xlim(ext[0], ext[1]); ax.set_ylim(ext[2], ext[3])
             ax.set_xticks([]); ax.set_yticks([])
         cb = fig.colorbar(im, ax=axes[0].tolist(), fraction=0.02, pad=0.01)
         cb.set_label("g(z) = mu_sim(z) - mu_real(z)")
@@ -1513,8 +1627,13 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
                    groups: Optional[Sequence] = None,
                    seed: int = 0,
                    max_points: int = 2000,
+                   max_real_plot: Optional[int] = None,
+                   n_fit_max: int = 2000,
+                   n_eval_max: int = 2000,
                    sphere: Optional[bool] = None,
                    bandwidth_index: Optional[int] = None,
+                   annotate: bool = False,
+                   clip_quantile: float = 0.005,
                    dpi: int = 150) -> Dict[str, str]:
     """A stack of parallel lifted slices, to test whether one cut suffices.
 
@@ -1537,6 +1656,10 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
         quantiles rather than fixed offsets guarantees every slice is
         populated. The slice nearest the median is the reference slice
         for the stability diagnostics.
+    max_real_plot : int or None
+        Display-only cap on the real markers drawn per slab. Slab
+        membership and every diagnostic are unaffected; the per-panel
+        count in the axis label reports how many are shown.
     bandwidth_index : int or None
         None -> the field is the sum over bandwidths, i.e. the gate's own
         kernel. An integer selects a single bandwidth of the grid, which
@@ -1561,7 +1684,8 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
     rng = np.random.default_rng(seed)
 
     res = witness_function(z_sim, z_real, bandwidths=bandwidths, space=space,
-                           split=split, seed=seed)
+                           split=split, seed=seed, n_fit_max=n_fit_max,
+                           n_eval_max=n_eval_max)
     z_sim = np.atleast_2d(np.asarray(z_sim, dtype=np.float64))
     z_real = np.atleast_2d(np.asarray(z_real, dtype=np.float64))
     ev, fit = z_sim[res.eval_idx], z_sim[res.fit_idx]
@@ -1612,7 +1736,13 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
         else float(np.std(t_data))
     slab = slab if slab > 0 else float(np.std(t_data)) or 1.0
 
-    XX, YY, Q = _grid_2d(Y, grid)
+    XX, YY, Q = _grid_2d(Y, grid, clip=clip_quantile)
+    rkeep = _plot_subset(z_real.shape[0], max_real_plot, rng)
+    rshow = np.zeros(z_real.shape[0], dtype=bool)
+    rshow[rkeep] = True
+    s_real = _marker_size(rkeep.size, base=58.0)
+    lw_real = 0.7 if s_real > 20 else 0.25
+    a_real = 1.0 if s_real > 20 else 0.75
     if bandwidth_index is None:
         which = slice(None)
         kernel_label = "sum over bandwidths"
@@ -1663,14 +1793,19 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
             ax.contour(XX, YY, G, levels=[0.0], colors="k", linewidths=0.8)
         inslab = np.abs(t_data - offsets[i]) <= slab
         ms = inslab[:n_s]
-        mr = inslab[n_s:]
+        mr = inslab[n_s:] & rshow
         ax.scatter(Y[:n_s][ms, 0], Y[:n_s][ms, 1], c=pt_vals[:n_s][ms],
                    cmap="coolwarm", vmin=-vmax, vmax=vmax, s=6, alpha=0.6,
                    linewidths=0.2, edgecolors="k", label="sim in slab")
         ax.scatter(Y[n_s:][mr, 0], Y[n_s:][mr, 1], c=pt_vals[n_s:][mr],
-                   cmap="coolwarm", vmin=-vmax, vmax=vmax, s=58, marker="^",
-                   edgecolors="k", linewidths=0.7, label="real in slab")
-        if groups is not None:
+                   cmap="coolwarm", vmin=-vmax, vmax=vmax, s=s_real,
+                   marker="^", edgecolors="k", linewidths=lw_real,
+                   alpha=a_real, label="real in slab")
+        # Labels are OFF by default here: a slice slab can hold hundreds
+        # of real windows and every annotation lands on top of the next.
+        # The per-recording readout belongs in witness_summary.json
+        # (most_negative_real), not on a depth panel.
+        if annotate and groups is not None:
             for j in np.flatnonzero(mr):
                 ax.annotate(str(groups[j]), (Y[n_s + j, 0], Y[n_s + j, 1]),
                             fontsize=7, xytext=(3, 3),
@@ -1680,6 +1815,7 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
                         stab[i], 100 * sign_dis[i]), fontsize=9)
         ax.set_xlabel("%d sim, %d real in slab" % (int(ms.sum()),
                                                    int(mr.sum())), fontsize=8)
+        ax.set_xlim(ext[0], ext[1]); ax.set_ylim(ext[2], ext[3])
         ax.set_xticks([]); ax.set_yticks([])
     cb = fig.colorbar(im, ax=axes[0].tolist(), fraction=0.02, pad=0.01)
     cb.set_label("g(z) = mu_sim(z) - mu_real(z)")
