@@ -174,6 +174,22 @@ def main() -> int:
                          "evaluated on. Makes mean(u)-mean(v) exactly the "
                          "gate's MMD^2, at the cost of in-sample scores")
     ap.add_argument("--no_slices", action="store_true")
+    ap.add_argument("--kde", action="store_true",
+                    help="also write per-arm KDE panels of the projected "
+                         "clouds (where each cloud IS, as opposed to where "
+                         "they differ)")
+    ap.add_argument("--null", action="store_true",
+                    help="also write the null-referenced map: Z in units "
+                         "of the simulator's own sampling variability, "
+                         "plus family-wise thresholds. Needs real_groups")
+    ap.add_argument("--n_null", type=int, default=200,
+                    help="null draws for --null")
+    ap.add_argument("--n_window_choices", type=int, default=8,
+                    help="one-window-per-culture picks averaged for the "
+                         "observed field under --null")
+    ap.add_argument("--null_grid", type=int, default=100)
+    ap.add_argument("--level", type=float, default=0.95,
+                    help="family-wise level for --null")
     ap.add_argument("--bandwidth_index", type=int, default=None,
                     help="restrict the slice stack to one bandwidth of the "
                          "grid; use when the heatmap panels disagreed "
@@ -366,6 +382,63 @@ def main() -> int:
                     sl[m] = {"error": str(exc)}
                     print("      witness_slices[%s] FAILED: %s" % (m, exc))
             rec["slices"] = sl
+
+        if args.kde:
+            try:
+                kp = M.witness_kde_maps(
+                    z_sim, z_real, args.out, space=space,
+                    split=not args.no_split, methods=tuple(methods),
+                    grid=args.grid, seed=args.seed,
+                    max_points=args.max_points, n_fit_max=args.n_fit_max,
+                    n_eval_max=args.n_eval_max)
+                rec["kde_files"] = {k: os.path.basename(v)
+                                    for k, v in kp.items()}
+            except Exception as exc:                           # noqa: BLE001
+                rec["kde_error"] = str(exc)
+                print("      witness_kde_maps FAILED: %s" % exc)
+
+        if args.null:
+            if g_use is None:
+                print("      SKIP --null for %s: needs real_groups; the "
+                      "null is group-aware and has no ungrouped form"
+                      % space)
+                rec["null_error"] = "no usable real_groups"
+            else:
+                nulls = {}
+                for m in linear:
+                    try:
+                        nr, _np_ = M.witness_null_map(
+                            z_sim, z_real, args.out, groups=g_use,
+                            space=space, method=m,
+                            n_null=args.n_null,
+                            n_window_choices=args.n_window_choices,
+                            grid=args.null_grid, seed=args.seed,
+                            max_points=args.max_points,
+                            n_fit_max=args.n_fit_max,
+                            n_eval_max=args.n_eval_max,
+                            level=args.level, classes=c_use)
+                        flagged = [n for n, f in zip(nr.group_names,
+                                                     nr.group_flag) if f]
+                        nulls[m] = {
+                            "n_null": nr.n_null, "n_groups": nr.n_groups,
+                            "t_neg": nr.t_neg, "t_pos": nr.t_pos,
+                            "point_t_neg": nr.point_t_neg,
+                            "point_t_pos": nr.point_t_pos,
+                            "n_cultures_flagged": len(flagged),
+                            "cultures_flagged": flagged,
+                            "notes": list(nr.notes),
+                        }
+                        print("      null[%s/%s]: FWE %.0f%% t_neg=%.4g "
+                              "t_pos=%.4g | point-level t_neg=%.4g -> "
+                              "%d/%d cultures exceed it"
+                              % (space, m, 100 * args.level, nr.t_neg,
+                                 nr.t_pos, nr.point_t_neg, len(flagged),
+                                 nr.n_groups))
+                    except Exception as exc:                   # noqa: BLE001
+                        nulls[m] = {"error": str(exc)}
+                        print("      witness_null_map[%s] FAILED: %s"
+                              % (m, exc))
+                rec["null"] = nulls
 
         # mechanical verdict per linear method
         verdicts = {}

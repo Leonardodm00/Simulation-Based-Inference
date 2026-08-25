@@ -108,6 +108,8 @@ __all__ = [
     "witness_maps",
     "witness_heatmaps",
     "witness_slices",
+    "witness_kde_maps",
+    "witness_null_map",
 ]
 
 
@@ -1934,3 +1936,459 @@ def witness_slices(z_sim: np.ndarray, z_real: np.ndarray,
               "witness_heatmaps is representative; extra slices add "
               "nothing." % worst)
     return {"slices": path, "arrays": apath}
+
+
+# ---------------------------------------------------------------------------
+# KDE panels: where each cloud IS, as opposed to where they differ
+# ---------------------------------------------------------------------------
+#
+# The witness answers "where do the two clouds disagree". It cannot answer
+# "where is each cloud", because a region with no simulations and no real
+# data has g = 0 exactly like a region where both are dense and equal. The
+# KDE panels supply the missing half: the marginal density of each arm in
+# the plotted layout, drawn on a common grid so the two are comparable.
+#
+# WHAT THESE ARE, AND ARE NOT. This is a density of the PUSHFORWARD -- the
+# projected cloud -- not of the ambient distribution. For a linear layout
+# (pca, contrast) that is a genuine marginal and behaves as expected. For
+# t-SNE it is NOT a density estimate of anything: t-SNE's perplexity
+# normalisation deliberately equalises local densities, so dense and sparse
+# regions of the embedding are rendered at comparable extents. A t-SNE KDE
+# therefore measures LAYOUT OCCUPANCY, and the figure says so on its face.
+# Read the PCA panel for density; read the t-SNE panel for which points
+# group together.
+
+def _mu_on_points(Q: np.ndarray, pts: np.ndarray,
+                  bandwidths: np.ndarray,
+                  chunk: int = 4096) -> np.ndarray:
+    """Kernel mean embedding of `pts` evaluated at `Q`, per bandwidth.
+
+    Returns (S, len(Q)). Chunked over Q. When Q is pts itself the result
+    includes the self-term k(q, q) = 1 for each bandwidth; the null and
+    the observed arm are both built this way, so that term is common to
+    them and cancels in every comparison made here.
+    """
+    Q = np.atleast_2d(np.asarray(Q, dtype=np.float64))
+    pts = np.atleast_2d(np.asarray(pts, dtype=np.float64))
+    bandwidths = np.asarray(bandwidths, dtype=np.float64)
+    out = np.empty((bandwidths.size, Q.shape[0]), dtype=np.float64)
+    for a in range(0, Q.shape[0], int(chunk)):
+        q = Q[a:a + int(chunk)]
+        d = _sqdist(pts, q)
+        for s in range(bandwidths.size):
+            gam = 1.0 / (2.0 * float(bandwidths[s]) ** 2)
+            out[s, a:a + q.shape[0]] = np.exp(-gam * d).mean(axis=0)
+    return out
+
+
+def _kde_2d(pts: np.ndarray, Q: np.ndarray, h: float,
+            chunk: int = 4096) -> np.ndarray:
+    """Gaussian KDE of `pts` evaluated at `Q`, both (n, 2). Chunked."""
+    out = np.empty(Q.shape[0], dtype=np.float64)
+    for a in range(0, Q.shape[0], int(chunk)):
+        q = Q[a:a + int(chunk)]
+        out[a:a + q.shape[0]] = np.exp(
+            -_sqdist(q, pts) / (2.0 * float(h) ** 2)).mean(axis=1)
+    return out / (2.0 * np.pi * float(h) ** 2)
+
+
+def _scott_h(Y: np.ndarray) -> float:
+    """Scott's rule in 2-D: h = n^(-1/6) * (mean per-axis sd).
+
+    Computed on the POOLED layout so both arms are smoothed identically;
+    a per-arm bandwidth would make the arm with fewer points look
+    systematically broader, which is an artefact of the rule and not a
+    property of the data.
+    """
+    n = max(Y.shape[0], 2)
+    sd = float(np.mean(np.std(Y, axis=0)))
+    return max(sd * n ** (-1.0 / 6.0), 1e-12)
+
+
+def witness_kde_maps(z_sim: np.ndarray, z_real: np.ndarray,
+                     outdir: str,
+                     space: str = "z",
+                     bandwidths: Optional[Sequence[float]] = None,
+                     split: bool = True,
+                     methods: Sequence[str] = ("pca", "contrast", "tsne"),
+                     grid: int = 160,
+                     seed: int = 0,
+                     max_points: int = 2000,
+                     n_fit_max: int = 2000,
+                     n_eval_max: int = 2000,
+                     kde_scale: float = 1.0,
+                     clip_quantile: float = 0.005,
+                     dpi: int = 150) -> Dict[str, str]:
+    """Per-arm KDE of the projected clouds, saved as PNG.
+
+    Produces `witness_kde_<space>_<method>.png`: three panels -- simulated
+    density (Reds), real density (Blues), and an overlay of both as
+    contour LINES at fractions of each arm's own maximum. The two filled
+    panels share nothing but the grid: each is normalised to its own
+    maximum, because the arms differ in size by more than an order of
+    magnitude and a shared scale would render the smaller one invisible.
+    Absolute densities are therefore NOT comparable between panels; the
+    witness map is the tool for that comparison, and this figure is the
+    complement to it, not a substitute.
+
+    kde_scale multiplies Scott's bandwidth (>1 smoother, <1 sharper).
+    """
+    import os
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    os.makedirs(outdir, exist_ok=True)
+    rng = np.random.default_rng(seed)
+    res = witness_function(z_sim, z_real, bandwidths=bandwidths, space=space,
+                           split=split, seed=seed, n_fit_max=n_fit_max,
+                           n_eval_max=n_eval_max)
+    z_sim = np.atleast_2d(np.asarray(z_sim, dtype=np.float64))
+    z_real = np.atleast_2d(np.asarray(z_real, dtype=np.float64))
+    ev = z_sim[res.eval_idx]
+    keep = np.arange(ev.shape[0])
+    if ev.shape[0] > max_points:
+        keep = np.sort(rng.choice(ev.shape[0], max_points, replace=False))
+    P = np.concatenate([ev[keep], z_real], axis=0)
+    n_s = keep.size
+
+    saved: Dict[str, str] = {}
+    for method in methods:
+        try:
+            Y, axlabel, _lift, _vf = _project_2d(P, method, seed,
+                                                 n_sim_pts=n_s)
+        except ImportError as e:
+            res.notes.append("SKIPPED %s: %s" % (method, e))
+            continue
+        XX, YY, Q = _grid_2d(Y, grid, clip=clip_quantile)
+        h = _scott_h(Y) * float(kde_scale)
+        ds = _kde_2d(Y[:n_s], Q, h).reshape(XX.shape)
+        dr = _kde_2d(Y[n_s:], Q, h).reshape(XX.shape)
+        ext = [XX.min(), XX.max(), YY.min(), YY.max()]
+
+        fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.9))
+        for ax, (D, cmap, ttl) in zip(
+                axes[:2],
+                ((ds, "Reds", "simulated (n=%d plotted)" % n_s),
+                 (dr, "Blues", "real (n=%d)" % z_real.shape[0]))):
+            im = ax.imshow(D / max(D.max(), 1e-300), extent=ext,
+                           origin="lower", cmap=cmap, aspect="auto",
+                           vmin=0.0, vmax=1.0, interpolation="bilinear")
+            ax.set_title(ttl + "  (scaled to own max)", fontsize=10)
+            fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
+            ax.set_xlabel(axlabel, fontsize=8)
+            ax.set_xlim(ext[0], ext[1]); ax.set_ylim(ext[2], ext[3])
+            ax.set_xticks([]); ax.set_yticks([])
+        ax = axes[2]
+        lv = [0.1, 0.3, 0.5, 0.7, 0.9]
+        cs = ax.contour(XX, YY, ds / max(ds.max(), 1e-300), levels=lv,
+                        colors="firebrick", linewidths=1.0)
+        cr = ax.contour(XX, YY, dr / max(dr.max(), 1e-300), levels=lv,
+                        colors="navy", linewidths=1.0, linestyles="--")
+        ax.clabel(cs, inline=True, fontsize=6, fmt="%.1f")
+        ax.clabel(cr, inline=True, fontsize=6, fmt="%.1f")
+        ax.set_title("overlay: red solid = sim, blue dashed = real\n"
+                     "contours at 0.1-0.9 of each arm's own maximum",
+                     fontsize=9)
+        ax.set_xlabel(axlabel, fontsize=8)
+        ax.set_xlim(ext[0], ext[1]); ax.set_ylim(ext[2], ext[3])
+        ax.set_xticks([]); ax.set_yticks([])
+        warn = ("" if method != "tsne" else
+                "  |  t-SNE equalises local densities: this is LAYOUT "
+                "OCCUPANCY, not a density estimate")
+        fig.suptitle("Projected-density KDE [%s, %s], Scott h=%.3g%s"
+                     % (space, method, h, warn), fontsize=11, y=1.04)
+        path = os.path.join(outdir, "witness_kde_%s_%s.png" % (space, method))
+        fig.savefig(path, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        saved["kde_%s" % method] = path
+    return saved
+
+
+# ---------------------------------------------------------------------------
+# Null reference map: the witness in units of the simulator's own variability
+# ---------------------------------------------------------------------------
+#
+# g is UNNORMALISED, so its magnitude has no absolute meaning and cannot be
+# compared across bandwidths or between the z and zraw spaces. The null
+# supplies the missing scale. It is built to mirror _one_gate exactly:
+#
+#   reference arm   the FIXED fit set (n_fit simulated rows);
+#   null arm        n_groups points drawn from POOL, the simulated rows
+#                   disjoint from fit -- the simulator standing in for the
+#                   cohort. n_groups, not n_real: the real windows are
+#                   clustered within cultures, so the cohort carries about
+#                   n_groups independent units, and an arm of n_real
+#                   independent points would give a null far too tight.
+#                   That is the same error p_iid makes against p_group.
+#   observed arm    one real window per culture, median over
+#                   n_window_choices picks -- built the same way so that
+#                   observed and null are comparable in variance.
+#
+# Because the reference is FIXED while only the arm is resampled,
+#
+#     E_b[ g_null(z) ] = mu_fit(z) - mu_POOL(z)                        (5)
+#
+# which is NOT zero: it is the difference between two disjoint subsamples
+# of the same simulated cloud, largest where that cloud is sparse.
+# Subtracting the null mean therefore de-biases the reference, replacing
+# the n_fit-point estimate by the far larger POOL one. (Under full label
+# permutation, where the reference is re-drawn each time, this term
+# vanishes identically and the subtraction would be a no-op.)
+#
+# TWO UNITS OF INFERENCE, deliberately separate:
+#
+#   GRID level (lift layouts only). Z(y) = (g_obs - mean) / sd on the
+#       lifted plane, with family-wise thresholds from the max statistic:
+#       within each null draw collapse the whole map to one number by
+#       maximising over space, then take the 0.95 quantile ACROSS draws.
+#       One threshold then controls the error rate for the entire map,
+#       and it adapts to the spatial correlation the kernel induces --
+#       Bonferroni over grid^2 correlated cells would be crushing.
+#       Separate one-sided thresholds t_neg and t_pos are reported, NOT a
+#       two-sided one: the null is asymmetric (reference of n_fit against
+#       an arm of n_groups), so its tails are not mirror images. This
+#       level is conditional on the plane.
+#
+#   POINT level (layout-free, valid for every view including t-SNE). The
+#       same max statistic over the n_groups arm points rather than over
+#       grid cells, giving a per-culture verdict: which recordings sit
+#       deeper than the simulator's own sampling variability allows.
+#       Since u and v never depend on a projection, these numbers are
+#       computed once and are valid for the pca, contrast and t-SNE
+#       figures alike. Multiplicity here is over n_groups recordings, a
+#       smaller and far more interpretable family than grid^2 cells.
+#
+# The null never touches the real data: it is simulator-versus-simulator
+# throughout, and measures only what the simulator's sampling variability
+# produces.
+
+@dataclass
+class NullMapResult:
+    space: str
+    method: str
+    n_null: int
+    n_groups: int
+    obs: np.ndarray                   # (n_grid,) observed field, or empty
+    null_mean: np.ndarray             # (n_grid,)
+    null_sd: np.ndarray               # (n_grid,)
+    zmap: np.ndarray                  # (n_grid,)
+    mask: np.ndarray                  # (n_grid,) True where sd below floor
+    t_neg: float
+    t_pos: float
+    point_t_neg: float
+    point_t_pos: float
+    group_names: List[str]
+    group_v: np.ndarray               # (n_groups,) observed per-culture
+    group_flag: np.ndarray            # (n_groups,) bool, exceeds t_neg
+    notes: List[str] = field(default_factory=list)
+
+
+def witness_null_map(z_sim: np.ndarray, z_real: np.ndarray,
+                     outdir: str,
+                     groups: Sequence,
+                     space: str = "z",
+                     method: str = "pca",
+                     bandwidths: Optional[Sequence[float]] = None,
+                     n_null: int = 200,
+                     n_window_choices: int = 8,
+                     grid: int = 100,
+                     seed: int = 0,
+                     max_points: int = 2000,
+                     n_fit_max: int = 2000,
+                     n_eval_max: int = 2000,
+                     sphere: Optional[bool] = None,
+                     sd_floor_quantile: float = 0.05,
+                     level: float = 0.95,
+                     classes: Optional[Sequence] = None,
+                     clip_quantile: float = 0.005,
+                     dpi: int = 150) -> Tuple[NullMapResult, Dict[str, str]]:
+    """Null-referenced witness map. Returns (result, saved paths).
+
+    `groups` (length n_real) is REQUIRED: the null is group-aware and
+    there is no sensible ungrouped version of it.
+
+    Saves `witness_null_<space>_<method>.png` (observed / null mean /
+    null sd / Z with the family-wise contour) and
+    `witness_null_<space>_<method>.npz` with every field, both threshold
+    pairs, the max-statistic distributions and the per-culture verdicts.
+    """
+    import os
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    os.makedirs(outdir, exist_ok=True)
+    rng = np.random.default_rng(seed)
+    z_sim = np.atleast_2d(np.asarray(z_sim, dtype=np.float64))
+    z_real = np.atleast_2d(np.asarray(z_real, dtype=np.float64))
+    groups = np.asarray([str(g) for g in groups])
+    if groups.shape[0] != z_real.shape[0]:
+        raise ValueError("groups has length %d but z_real has %d rows"
+                         % (groups.shape[0], z_real.shape[0]))
+    uniq = list(dict.fromkeys(groups.tolist()))
+    idx_by_group = [np.flatnonzero(groups == g) for g in uniq]
+    n_groups = len(uniq)
+    notes: List[str] = []
+
+    bw = (np.asarray(bandwidths, dtype=np.float64) if bandwidths is not None
+          else bandwidth_grid(z_sim, z_real, rng=rng))
+    if sphere is None:
+        sphere = bool(np.allclose(np.linalg.norm(z_sim, axis=1), 1.0,
+                                  atol=1e-6))
+
+    # fit / POOL: disjoint, exactly as _one_gate splits reference / pool
+    perm = rng.permutation(z_sim.shape[0])
+    n_fit = min(z_sim.shape[0] // 2, n_fit_max)
+    fit = z_sim[perm[:n_fit]]
+    pool = z_sim[perm[n_fit:]]
+    replace = pool.shape[0] < n_groups
+    if replace:
+        notes.append("NOTE: simulated pool smaller than the number of "
+                     "recordings; the null arm is drawn with replacement")
+
+    # ---- layout, from the observed data; relabelling cannot change it ----
+    res = witness_function(z_sim, z_real, bandwidths=bw, space=space,
+                           split=True, seed=seed, n_fit_max=n_fit_max,
+                           n_eval_max=n_eval_max)
+    ev = z_sim[res.eval_idx]
+    keep = np.arange(ev.shape[0])
+    if ev.shape[0] > max_points:
+        keep = np.sort(rng.choice(ev.shape[0], max_points, replace=False))
+    P = np.concatenate([ev[keep], z_real], axis=0)
+    Y, axlabel, lift, var_frac = _project_2d(P, method, seed,
+                                             n_sim_pts=keep.size)
+
+    do_grid = lift is not None
+    if not do_grid:
+        notes.append("%s has no lift: the grid-level map is skipped and "
+                     "only the layout-free point-level null is computed"
+                     % method)
+        XX = YY = np.zeros((1, 1))
+        Q = np.zeros((1, 2))
+        mu_fit = np.zeros((bw.size, 1))
+    else:
+        XX, YY, Q2 = _grid_2d(Y, grid, clip=clip_quantile)
+        Ql = lift(Q2)
+        if sphere:
+            Ql = Ql / np.maximum(np.linalg.norm(Ql, axis=1, keepdims=True),
+                                 1e-12)
+        Q = Ql
+        # fixed across every null draw -> computed once
+        mu_fit = _mu_on_points(Q, fit, bw)
+
+    # ---- null draws -------------------------------------------------------
+    n_cells = Q.shape[0] if do_grid else 1
+    s_sum = np.zeros(n_cells)
+    s_sq = np.zeros(n_cells)
+    Mneg = np.empty(n_null)
+    Mpos = np.empty(n_null)
+    pt_neg = np.empty(n_null)
+    pt_pos = np.empty(n_null)
+    for b in range(int(n_null)):
+        take = rng.choice(pool.shape[0], size=n_groups, replace=replace)
+        arm = pool[take]
+        # point level: the arm scored against the reference, layout-free
+        gp = (_mu_on_points(arm, fit, bw) - _mu_on_points(arm, arm, bw)
+              ).sum(axis=0)
+        pt_neg[b] = float(np.max(-gp))
+        pt_pos[b] = float(np.max(gp))
+        if do_grid:
+            g = (mu_fit - _mu_on_points(Q, arm, bw)).sum(axis=0)
+            s_sum += g
+            s_sq += g * g
+            Mneg[b] = float(np.max(-g))
+            Mpos[b] = float(np.max(g))
+        else:
+            Mneg[b] = Mpos[b] = np.nan
+
+    null_mean = s_sum / max(int(n_null), 1)
+    var = np.maximum(s_sq / max(int(n_null), 1) - null_mean ** 2, 0.0)
+    null_sd = np.sqrt(var)
+
+    # ---- observed, built the SAME way: one window per culture ------------
+    obs_list = []
+    gv = np.zeros(n_groups)
+    for _ in range(int(n_window_choices)):
+        pick = np.array([g[rng.integers(0, g.size)] for g in idx_by_group])
+        arm = z_real[pick]
+        gv += (_mu_on_points(arm, fit, bw)
+               - _mu_on_points(arm, arm, bw)).sum(axis=0)
+        if do_grid:
+            obs_list.append((mu_fit - _mu_on_points(Q, arm, bw)).sum(axis=0))
+    gv /= float(n_window_choices)
+    obs = (np.median(np.stack(obs_list, axis=0), axis=0) if do_grid
+           else np.zeros(1))
+
+    q = float(np.quantile(null_sd, sd_floor_quantile)) if do_grid else 0.0
+    floor = max(q, 1e-12)
+    mask = null_sd < floor
+    zmap = (obs - null_mean) / np.maximum(null_sd, floor)
+
+    t_neg = float(np.quantile(Mneg, level)) if do_grid else float("nan")
+    t_pos = float(np.quantile(Mpos, level)) if do_grid else float("nan")
+    ptn = float(np.quantile(pt_neg, level))
+    ptp = float(np.quantile(pt_pos, level))
+    flag = gv < -ptn
+
+    out = NullMapResult(space=space, method=method, n_null=int(n_null),
+                        n_groups=n_groups, obs=obs, null_mean=null_mean,
+                        null_sd=null_sd, zmap=zmap, mask=mask, t_neg=t_neg,
+                        t_pos=t_pos, point_t_neg=ptn, point_t_pos=ptp,
+                        group_names=[str(u) for u in uniq], group_v=gv,
+                        group_flag=flag, notes=notes)
+
+    saved: Dict[str, str] = {}
+    if do_grid:
+        panels = [("observed (1 window per culture)", obs, "coolwarm"),
+                  ("null mean = mu_fit - mu_POOL", null_mean, "coolwarm"),
+                  ("null sd", null_sd, "viridis"),
+                  ("Z = (obs - mean) / sd", np.where(mask, np.nan, zmap),
+                   "coolwarm")]
+        fig, axes = plt.subplots(1, 4, figsize=(19.5, 4.9))
+        ext = [XX.min(), XX.max(), YY.min(), YY.max()]
+        for ax, (ttl, F, cm) in zip(axes, panels):
+            G = F.reshape(XX.shape)
+            if cm == "coolwarm":
+                v = float(np.nanpercentile(np.abs(G), 99.5)) or 1e-12
+                kw = dict(cmap=cm, vmin=-v, vmax=v)
+            else:
+                kw = dict(cmap=cm)
+            im = ax.imshow(G, extent=ext, origin="lower", aspect="auto",
+                           interpolation="bilinear", **kw)
+            fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
+            if ttl.startswith("observed"):
+                Go = obs.reshape(XX.shape)
+                if np.nanmin(Go) < -t_neg:
+                    ax.contour(XX, YY, Go, levels=[-t_neg], colors="k",
+                               linewidths=1.2)
+                if np.nanmax(Go) > t_pos:
+                    ax.contour(XX, YY, Go, levels=[t_pos], colors="k",
+                               linewidths=1.2, linestyles="--")
+            ax.set_title(ttl, fontsize=9)
+            ax.set_xlabel(axlabel, fontsize=8)
+            ax.set_xticks([]); ax.set_yticks([])
+        fig.suptitle("Null-referenced witness [%s, %s] | B=%d draws of %d "
+                     "simulated recordings | FWE %.0f%%: t_neg=%.4g "
+                     "(solid), t_pos=%.4g (dashed) | %d/%d cultures exceed "
+                     "the point-level t_neg=%.4g"
+                     % (space, method, n_null, n_groups, 100 * level, t_neg,
+                        t_pos, int(flag.sum()), n_groups, ptn),
+                     fontsize=10, y=1.06)
+        path = os.path.join(outdir,
+                            "witness_null_%s_%s.png" % (space, method))
+        fig.savefig(path, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        saved["null_map"] = path
+
+    apath = os.path.join(outdir, "witness_null_%s_%s.npz" % (space, method))
+    np.savez_compressed(
+        apath, XX=XX, YY=YY, obs=obs, null_mean=null_mean, null_sd=null_sd,
+        zmap=zmap, mask=mask, t_neg=np.asarray(t_neg),
+        t_pos=np.asarray(t_pos), max_neg=Mneg, max_pos=Mpos,
+        point_max_neg=pt_neg, point_max_pos=pt_pos,
+        point_t_neg=np.asarray(ptn), point_t_pos=np.asarray(ptp),
+        group_names=np.asarray([str(u) for u in uniq]), group_v=gv,
+        group_flag=flag, bandwidths=bw, n_null=np.asarray(int(n_null)))
+    saved["arrays"] = apath
+    return out, saved
