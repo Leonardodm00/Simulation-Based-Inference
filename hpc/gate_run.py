@@ -92,14 +92,22 @@ def main() -> int:
     ap.add_argument("--activity", default=None,
                     help="activity table .npz from build_activity_table.py, "
                          "built against the SAME --sim glob")
-    ap.add_argument("--min_rate", type=float, default=None,
-                    help="drop simulations below this Hz/electrode. NOTE: "
-                         "this CONDITIONS the test -- it then asks whether "
-                         "real data lies inside P_sim(. | rate >= min), a "
-                         "weaker claim than the unconditioned gate.")
+    ap.add_argument("--min_rate", type=float, default=0.1,
+                    help="Hz/electrode below which a simulation is INVALID. "
+                         "Default 0.1 = cohort.mfr_threshold, the same "
+                         "criterion the real cohort was built with, so both "
+                         "arms are selected on the same rule rather than "
+                         "the real arm alone. Pass 0 to disable.")
     ap.add_argument("--max_rate", type=float, default=None,
-                    help="drop simulations above this Hz/electrode; use with "
-                         "--min_rate to restrict to the real observed range")
+                    help="optional upper Hz/electrode bound; normally unset "
+                         "-- the cohort rule is a floor, not a band")
+    ap.add_argument("--witness", action="store_true", default=True,
+                    help="run the witness decomposition (default on): "
+                         "localises WHERE sim and real disagree, which the "
+                         "pooled scalar cannot do")
+    ap.add_argument("--no_witness", dest="witness", action="store_false")
+    ap.add_argument("--witness_outdir", default=None,
+                    help="directory for witness figures; default <out>_witness")
     ap.add_argument("--spaces", default="z,zraw")
     ap.add_argument("--skip_mde", action="store_true")
     ap.add_argument("--quick", action="store_true")
@@ -126,10 +134,17 @@ def main() -> int:
               np.unique(real.groups, return_inverse=True)[1]).tolist())),))
 
     print("[2/5] loading the simulated arm")
+    min_rate = None if (args.min_rate is not None
+                        and args.min_rate <= 0) else args.min_rate
+    if min_rate is not None and args.activity is None:
+        raise SystemExit(
+            "--min_rate %g was requested but no --activity table was given. "
+            "Build one with build_activity_table.py against the SAME --sim "
+            "glob, or pass --min_rate 0 to run unfiltered." % min_rate)
     sim = D.load_sim(args.sim, dedup_theta=not args.no_dedup,
                      max_rows=args.max_sim_rows, seed=args.seed,
                      activity_path=args.activity,
-                     min_rate=args.min_rate, max_rate=args.max_rate)
+                     min_rate=min_rate, max_rate=args.max_rate)
     af = sim.meta.get("activity_filter")
     if af:
         print("      activity filter [%s, %s] Hz/electrode: kept %d / %d "
@@ -225,6 +240,52 @@ def main() -> int:
     else:
         print("[5/5] MDE skipped")
 
+    # ---- witness decomposition -------------------------------------------
+    # The gate's scalar is blind to WHERE the clouds disagree: a bulk
+    # displacement and a few stranded real recordings give the same MMD^2.
+    # This matters here specifically because the simulated cloud is
+    # multimodal, and with a median-heuristic bandwidth dominated by
+    # between-mode distances the scalar can fire while the real cohort sits
+    # inside one mode. The witness separates those cases.
+    witness = {}
+    if args.witness and hasattr(M, "witness_function"):
+        wdir = args.witness_outdir or (args.out + "_witness")
+        os.makedirs(wdir, exist_ok=True)
+        print("[6/6] witness decomposition -> %s" % wdir)
+        for space in spaces:
+            zs = sim.z if space == "z" else sim.zraw
+            zr = real.z if space == "z" else real.zraw
+            if zs is None or zr is None:
+                continue
+            try:
+                w = M.witness_function(zs, zr, space=space, seed=args.seed)
+                rec = {}
+                for attr in ("bandwidths", "mmd2_total", "mmd2_per_bandwidth",
+                             "u_mean", "v_mean", "identity_gap"):
+                    if hasattr(w, attr):
+                        rec[attr] = _jsonable(getattr(w, attr))
+                for attr in ("u", "v", "u_sum", "v_sum"):
+                    if hasattr(w, attr):
+                        arrays["%s::witness_%s" % (space, attr)] = \
+                            np.asarray(getattr(w, attr))
+                witness[space] = rec
+                print("      %-5s witness computed" % space)
+            except Exception as exc:                           # noqa: BLE001
+                witness[space] = {"error": str(exc)}
+                print("      %-5s witness FAILED: %s" % (space, exc))
+            if hasattr(M, "witness_maps"):
+                try:
+                    paths = M.witness_maps(
+                        zs, zr, outdir=wdir, space=space,
+                        groups=real.groups, classes=real.classes,
+                        seed=args.seed)
+                    witness.setdefault(space, {})["figures"] = _jsonable(paths)
+                    print("      %-5s witness maps: %d figure(s)"
+                          % (space, len(paths) if paths else 0))
+                except Exception as exc:                       # noqa: BLE001
+                    witness.setdefault(space, {})["figures_error"] = str(exc)
+                    print("      %-5s witness maps FAILED: %s" % (space, exc))
+
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".",
                 exist_ok=True)
 
@@ -256,6 +317,7 @@ def main() -> int:
                               "evidence while a REJECTION stays decisive."},
         "gate": _jsonable(results),
         "mde": _jsonable(mde),
+        "witness": _jsonable(witness),
         "caveats": [
             "misspecification_gate treats z_sim as i.i.d.; simulated rows "
             "sharing a topology are not independent. Distinct topology draws "
@@ -265,11 +327,16 @@ def main() -> int:
             "range changes which rows are drawn, not how many enter the "
             "statistic.",
             "p_iid is reported for contrast only; the verdict is p_group.",
+            "The simulated cloud is multimodal; with a median-heuristic "
+            "bandwidth dominated by between-mode distances, the pooled "
+            "scalar can reject while the real cohort sits inside one mode. "
+            "Read the witness decomposition before interpreting a rejection.",
         ] + ([
-            "An activity filter was applied: the gate therefore tests "
-            "P_sim(. | rate in the retained band) against P_real, which is a "
-            "WEAKER claim than the unconditioned prior predictive check. "
-            "State the band alongside any verdict."
+            "An activity filter was applied. At min_rate = "
+            "cohort.mfr_threshold this is the SAME selection rule the real "
+            "cohort was built with, so it removes an asymmetry rather than "
+            "introducing one; at any other value it conditions the test and "
+            "the band must be stated with the verdict."
         ] if sim.meta.get("activity_filter") else []),
     }
     with open(args.out + "_results.json", "w") as fh:
