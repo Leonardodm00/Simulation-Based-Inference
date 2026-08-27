@@ -31,11 +31,24 @@ import tempfile
 
 import numpy as np
 
+# Fixture dimensions, SET FROM THE COMMAND LINE. The encoder was refit from
+# E=14 to E=10, so any module that hardcodes a dimension is a latent bug;
+# the suite is therefore run at two different E.
 E = 14
 P = 26
-PARAM_NAMES = ["a%02d" % i for i in range(P - 3)] + ["p0_conn", "d0_conn",
-                                                    "beta_conn"]
+PARAM_NAMES = []
 RESULTS = []
+
+
+def set_dims(e, p=26):
+    """Set fixture dimensions. The pipeline must adapt to whatever is used."""
+    global E, P, PARAM_NAMES
+    E, P = int(e), int(p)
+    PARAM_NAMES = ["a%02d" % i for i in range(P - 3)] + ["p0_conn", "d0_conn",
+                                                        "beta_conn"]
+
+
+set_dims(14, 26)
 
 
 def check(name, cond, detail=""):
@@ -143,11 +156,36 @@ def build_fixture(root, shift=0.0, seed=0, n_topo=12, per_topo=40,
             "n_topo": n_topo, "n_real": len(rz), "n_groups": n_groups}
 
 
+def run_all_dims(misspec_dir, keep=False) -> int:
+    """Run the whole suite at two different E, proving nothing hardcodes it."""
+    import subprocess as sp
+    here = os.path.dirname(os.path.abspath(__file__))
+    rc = 0
+    for e in (14, 10):
+        print("\n" + "#" * 66)
+        print("# FIXTURE EMBEDDING DIMENSION: E = %d" % e)
+        print("#" * 66)
+        r = sp.run([sys.executable, os.path.join(here, "smoke_test_gate.py"),
+                    "--misspec_dir", os.path.abspath(misspec_dir),
+                    "--E", str(e)] + (["--keep"] if keep else []))
+        rc |= r.returncode
+    print("\n" + "=" * 66)
+    print("DIMENSION INDEPENDENCE (E = 14 and E = 10):",
+          "PASS" if rc == 0 else "FAIL")
+    print("=" * 66)
+    return rc
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--misspec_dir", required=True)
     ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--E", type=int, default=14,
+                    help="embedding dimension of the synthetic fixture. The "
+                         "whole pipeline reads E from the data, so this is a "
+                         "real test of that, not a formality.")
     args = ap.parse_args()
+    set_dims(args.E, 26)
 
     here = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, here)
@@ -211,7 +249,8 @@ def main() -> int:
                    "--real", os.path.join(d, "sbi_real_cohort.parquet"),
                    "--sim", os.path.join(d, "sbi_sim__*.parquet"),
                    "--misspec_dir", os.path.abspath(args.misspec_dir),
-                   "--out", stem, "--quick", "--spaces", "z"]
+                   "--out", stem, "--quick", "--spaces", "z",
+                   "--min_rate", "0", "--no_witness"]
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0:
                 print(r.stdout[-3000:]); print(r.stderr[-3000:])
@@ -236,6 +275,45 @@ def main() -> int:
                   == info["n_topo"])
             check("B7_caveats_present",
                   len(outs["well"].get("caveats", [])) >= 3)
+
+        # ---------- B2. the activity filter path and its guard ----------
+        print("\n[B2] activity filter")
+        rawn = D.load_sim(os.path.join(wd, "sbi_sim__*.parquet"),
+                          dedup_theta=False).n
+        rate = np.zeros(rawn)
+        rate[:rawn // 2] = 5.0           # half above any sane threshold
+        np.savez(os.path.join(wd, "act.npz"), sim_rate=rate)
+        stem2 = os.path.join(tmp, "res_filt")
+        r = subprocess.run(
+            [sys.executable, os.path.join(here, "gate_run.py"),
+             "--real", os.path.join(wd, "sbi_real_cohort.parquet"),
+             "--sim", os.path.join(wd, "sbi_sim__*.parquet"),
+             "--misspec_dir", os.path.abspath(args.misspec_dir),
+             "--out", stem2, "--quick", "--spaces", "z", "--no_witness",
+             "--activity", os.path.join(wd, "act.npz"), "--min_rate", "0.1"],
+            capture_output=True, text=True)
+        check("B8_filtered_run_exit0", r.returncode == 0, "rc=%d" % r.returncode)
+        if r.returncode == 0:
+            with open(stem2 + "_results.json") as fh:
+                fdoc = json.load(fh)
+            af = fdoc["sim"]["meta"].get("activity_filter", {})
+            check("B9_filter_applied_and_recorded",
+                  af.get("n_after") == rawn // 2,
+                  "kept %s of %s" % (af.get("n_after"), af.get("n_before")))
+            check("B10_conditioning_caveat_present",
+                  any("mfr_threshold" in c or "selection rule" in c
+                      for c in fdoc.get("caveats", [])))
+        # the guard: min_rate without a table must REFUSE, not run unfiltered
+        r = subprocess.run(
+            [sys.executable, os.path.join(here, "gate_run.py"),
+             "--real", os.path.join(wd, "sbi_real_cohort.parquet"),
+             "--sim", os.path.join(wd, "sbi_sim__*.parquet"),
+             "--misspec_dir", os.path.abspath(args.misspec_dir),
+             "--out", os.path.join(tmp, "res_guard"), "--quick",
+             "--spaces", "z", "--min_rate", "0.1"],
+            capture_output=True, text=True)
+        check("B11_guard_refuses_without_table", r.returncode != 0,
+              "rc=%d" % r.returncode)
 
         # ---------- C. figures ----------
         print("\n[C] gate_plots")
