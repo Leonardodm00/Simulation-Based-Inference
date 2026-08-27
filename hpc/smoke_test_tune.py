@@ -47,8 +47,9 @@ import npe_tune_ledger as TL
 import npe_tune_score as TS
 import npe_tune_search as TSR
 
-FAST_TESTS = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10")
-FULL_TESTS = ("S11", "S12", "S13")
+FAST_TESTS = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8",
+              "S9", "S10", "S14", "S15", "S16")
+FULL_TESTS = ("S11", "S12", "S13", "S17")
 
 
 # ---------------------------------------------------------------------------
@@ -497,6 +498,147 @@ def test_S13_defaults_do_not_drift() -> str:
     return "mirrored defaults match npe_model.NPEConfig exactly"
 
 
+def test_S14_c2st_sanity() -> str:
+    """S14: the C2ST metric itself behaves. Two samples from the SAME
+    distribution must score near 0.5; two well-separated ones near 1.0. A
+    metric that cannot tell those apart cannot certify anything about a
+    posterior, so this is checked before assertion 2 of the synthetic
+    benchmark relies on it."""
+    import npe_tune_benchmark as B
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(600, 4))
+    b = rng.normal(size=(600, 4))
+    same = B.c2st(a, b, seed=0)
+    far = B.c2st(a, rng.normal(loc=5.0, size=(600, 4)), seed=0)
+    assert 0.40 < same < 0.62, "identical distributions scored %.3f" % same
+    assert far > 0.90, "well-separated distributions scored only %.3f" % far
+    try:
+        B.c2st(a[:3], b[:3])
+        raise AssertionError("c2st must refuse a sample too small to test")
+    except ValueError:
+        pass
+    return "same=%.3f (~0.5), separated=%.3f (~1.0), tiny sample refused" % (
+        same, far)
+
+
+def test_S15_mode_recovery_detects_a_dropped_mode() -> str:
+    """S15: THE NEGATIVE PATH for assertion 5 of the synthetic benchmark.
+
+    mode_recovery must FAIL a sample that has dropped a mode. A detector
+    that has only ever been shown a good answer is a detector nobody has
+    tested: if this passed everything, assertion 5 would be decorative.
+    Exercised against the exact analytic posterior, so the truth is known.
+    """
+    from gmm_benchmark import GMMBenchmark
+    import npe_tune_benchmark as B
+
+    bench = GMMBenchmark(n_dim=6, n_obs=3, n_components=3, seed=0)
+    rng = np.random.default_rng(1)
+    theta_star = bench.prior_sample(1, rng)
+    x_o = bench.simulate(theta_star, rng)[0]
+    exact = bench.posterior(x_o)
+
+    good = exact.sample(6000, rng)
+    ok = B.mode_recovery(bench, x_o, good)
+    assert ok["all_modes_found"], ok
+    assert ok["weight_ok"], "exact draws failed the weight check: %s" % ok
+
+    dropped = rng.multivariate_normal(exact.means[0], exact.covs[0], size=6000)
+    bad = B.mode_recovery(bench, x_o, dropped)
+    assert not bad["passed"], "a single-mode sample passed mode recovery"
+    return ("exact draws recovered; single-mode sample REJECTED "
+            "(found %s)" % bad["found_per_mode"])
+
+
+def test_S16_benchmark_floor_and_contract() -> str:
+    """S16: the Monte Carlo floor is the right quantity and its reported
+    error is honest, and BenchmarkContract exposes what the tuner touches.
+
+    The floor cannot use the box formula here (the GMM prior is an unbounded
+    mixture), so it is estimated; this checks it against an independent
+    larger-sample estimate and confirms the standard error shrinks with n
+    rather than being decorative.
+    """
+    from gmm_benchmark import GMMBenchmark
+    import npe_tune_benchmark as B
+
+    bench = GMMBenchmark(n_dim=6, n_obs=3, n_components=3, seed=0)
+    small = B.benchmark_prior_floor(bench, n_mc=5000, seed=0)
+    big = B.benchmark_prior_floor(bench, n_mc=80000, seed=1)
+    assert abs(small.value - big.value) < 6.0 * small.se, (
+        "floor estimates disagree by more than the reported error: "
+        "%.4f vs %.4f (se %.4f)" % (small.value, big.value, small.se))
+    assert big.se < small.se, "se did not shrink with n (%.5f -> %.5f)" % (
+        small.se, big.se)
+
+    c = B.make_benchmark_contract(bench)
+    assert c.p == bench.n_dim
+    assert c.embedding_dim == bench.n_obs
+    assert len(c.param_names) == c.p and len(c.coord) == c.p
+    bt = np.asarray(c.bounds_theta)
+    assert bt.shape == (c.p, 2)
+    assert np.all(bt[:, 1] > bt[:, 0])
+    json.dumps(c.to_dict())
+
+    bank = B.benchmark_bank(bench, n_rows=400, seed=0)
+    assert bank.n == 400 and bank.p == bench.n_dim
+    assert bank.embedding_dim == bench.n_obs
+    assert bank.z.shape == (400, bench.n_obs)
+    return ("floor %.4f+/-%.4f agrees with %.4f+/-%.4f at 16x n; contract "
+            "and bank wire up at p=%d E=%d"
+            % (small.value, small.se, big.value, big.se, c.p, c.embedding_dim))
+
+
+def test_S17_benchmark_prior_matches() -> str:
+    """S17 (needs torch): the picklable prior replica IS the benchmark's own
+    prior, is picklable, and is a real torch Distribution.
+
+    Three independent properties, each of which broke once in development:
+      * sbi's check_prior() asserts isinstance(prior, Distribution) -- a
+        duck-typed first version failed that on the first training call;
+      * torch.save() on a trained posterior pickles its .prior, and
+        GMMBenchmark.torch_prior()'s wrapper class is declared INSIDE the
+        method body, so its __qualname__ contains "<locals>" and it cannot
+        be pickled at all;
+      * the replica must be the SAME distribution, not a similar one, or
+        the NPE is fit against a different prior than generated the data.
+    """
+    import pickle
+    import torch
+    from torch.distributions import Distribution
+    from gmm_benchmark import GMMBenchmark
+    import npe_tune_benchmark as B
+
+    bench = GMMBenchmark(n_dim=6, n_obs=3, n_components=3, seed=0)
+    mine = B._RealVectorMixturePrior(bench.weights, bench.means, bench.covs)
+
+    assert isinstance(mine, Distribution), "sbi's check_prior would reject it"
+    assert "<locals>" not in type(mine).__qualname__, (
+        "the class is nested again (%r) and will not pickle"
+        % type(mine).__qualname__)
+
+    rng = np.random.default_rng(1)
+    theta = bench.prior_sample(400, rng)
+    tt = torch.as_tensor(theta, dtype=torch.float32)
+    lp_mine = mine.log_prob(tt).detach().numpy()
+    lp_analytic = bench.prior_log_prob(theta)
+    lp_theirs = bench.torch_prior().log_prob(tt).detach().numpy()
+    d_an = float(np.max(np.abs(lp_mine - lp_analytic)))
+    d_th = float(np.max(np.abs(lp_mine - lp_theirs)))
+    assert d_an < 1e-3, "replica differs from the analytic density by %.2e" % d_an
+    assert d_th < 1e-5, "replica differs from torch_prior by %.2e" % d_th
+
+    back = pickle.loads(pickle.dumps(mine))
+    assert np.allclose(back.log_prob(tt).detach().numpy(), lp_mine), \
+        "unpickled replica computes differently"
+
+    draws = mine.sample(torch.Size([256]))
+    assert tuple(draws.shape) == (256, bench.n_dim), draws.shape
+    return ("isinstance OK; |replica-analytic|=%.1e, |replica-torch_prior|=%.1e; "
+            "pickle round-trip preserves log_prob" % (d_an, d_th))
+
+
 def test_S11_train_and_extend() -> str:
     """S11 (needs torch + sbi): members train independently, the ensemble
     extends by training only the missing seeds, and the reused members are
@@ -506,7 +648,7 @@ def test_S11_train_and_extend() -> str:
 
     tmp = tempfile.mkdtemp()
     try:
-        z, theta, contract = C.make_synthetic_shard(
+        z, theta, contract, _ = C.make_synthetic_shard(
             tmp, n_rows=400, p=4, embedding_dim=3, n_log_axes=2, seed=0,
             write=False)
         cfg = TT.make_config({"hidden_features": 16, "num_transforms": 2,
@@ -556,7 +698,7 @@ def test_S12_mixture_matches_ensemble() -> str:
 
     tmp = tempfile.mkdtemp()
     try:
-        z, theta, contract = C.make_synthetic_shard(
+        z, theta, contract, _ = C.make_synthetic_shard(
             tmp, n_rows=300, p=3, embedding_dim=3, n_log_axes=1, seed=1,
             write=False)
         cfg = TT.make_config({"hidden_features": 16, "num_transforms": 2,
@@ -604,6 +746,10 @@ TESTS: Dict[str, Tuple[str, Callable[[], str]]] = {
     "S11": ("[needs sbi] independent training and free extension", test_S11_train_and_extend),
     "S12": ("[needs sbi] ensemble log_prob is the arithmetic mixture", test_S12_mixture_matches_ensemble),
     "S13": ("[needs npe_model] mirrored NPEConfig defaults have not drifted", test_S13_defaults_do_not_drift),
+    "S14": ("C2ST metric sanity: same ~0.5, separated ~1.0", test_S14_c2st_sanity),
+    "S15": ("NEGATIVE PATH: mode recovery rejects a dropped mode", test_S15_mode_recovery_detects_a_dropped_mode),
+    "S16": ("benchmark MC floor and BenchmarkContract wiring", test_S16_benchmark_floor_and_contract),
+    "S17": ("[needs torch] picklable prior replica == benchmark prior", test_S17_benchmark_prior_matches),
 }
 
 
