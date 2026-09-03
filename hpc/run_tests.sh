@@ -209,6 +209,12 @@ MIS_ARGS=()
 [ -n "$FAST" ] && MIS_ARGS+=(--fast)
 stage "suite: misspecification (G0-G7)" "$PY" smoke_test_misspec.py "${MIS_ARGS[@]}"
 
+REG_ARGS=()
+[ -n "$SELECTOR" ] && REG_ARGS+=(-k "$SELECTOR")
+# No --fast variant: R0-R8 score against exact analytic posteriors and run
+# in well under a minute, same as the diagnostics suite.
+stage "suite: region extraction (R0-R8)" "$PY" smoke_test_regions.py "${REG_ARGS[@]}"
+
 # ---------------------------------------------------------------------------
 hdr "summary"
 n_fail=0
