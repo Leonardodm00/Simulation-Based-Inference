@@ -1,0 +1,123 @@
+#!/bin/bash
+#PBS -N npe_tune
+#PBS -l select=1:ncpus=8:mem=32gb
+#PBS -l walltime=12:00:00
+#PBS -j oe
+#PBS -o logs/
+###PBS -q FILL_IN_QUEUE_NAME
+###PBS -l select=1:ncpus=8:mem=48gb:ngpus=1   # uncomment for a GPU node
+#
+# One job = ONE hyperparameter evaluation = M_probe independently trained
+# members plus their held-out score plus one ledger row.
+#
+# BEFORE FIRST SUBMISSION
+#   1. Set the queue on the #PBS -q line above and uncomment it.
+#   2. Set CONDA_ENV below if the inference environment is not sbi_env.
+#      NOTE: HPC_PATHS.md section 7 flags an unresolved conflict between
+#      sbi_export (the export pipeline) and sbi_env (seen at the gate).
+#      Resolve it with `python check_env.py` BEFORE the first real run and
+#      record which one was used; a score produced under the wrong stack is
+#      not comparable to one produced under the right one.
+#   3. Run ONE evaluation interactively first (see the dry-run ladder in
+#      the protocol). Scale WALLTIME from its measured time, not from the
+#      guess above, which is a guess.
+#
+# Submit one evaluation:
+#     qsub -v OUT_DIR=run1,SPEC=run1/pending/trial_abc123.json jobs/npe_tune.pbs
+#
+# Submit whatever is pending, one job each (preferred):
+#     bash jobs/launch_npe_tune.sh run1              # DRY RUN, prints only
+#     bash jobs/launch_npe_tune.sh run1 --submit     # actually submits
+#
+# WHAT CORRECT OUTPUT LOOKS LIKE. The shape report must show the expected
+# p, E, n and split hash; then one "[trial] id=..." line, M_probe "[train]
+# member" lines each ending with an epoch count, one "[score]" line whose
+# NLL is BELOW the printed floor (a gain above zero) or close to it, and
+# one "[ledger] wrote ..." line. A score far above the floor, or a gain
+# that is large and negative, means the fit diverged.
+
+set -uo pipefail
+
+CONDA_ENV="${CONDA_ENV:-sbi_env}"
+OUT_DIR="${OUT_DIR:-}"
+SPEC="${SPEC:-}"
+DEVICE="${DEVICE:-cpu}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"
+
+cd "${PBS_O_WORKDIR:-$(pwd)}" || exit 1
+mkdir -p logs
+
+echo "host      : $(hostname)"
+echo "jobid     : ${PBS_JOBID:-interactive}"
+echo "workdir   : $(pwd)"
+echo "started   : $(date -Is)"
+echo "out dir   : ${OUT_DIR}"
+echo "spec      : ${SPEC:-<first pending>}"
+
+if [ -z "${OUT_DIR}" ]; then
+    echo "FATAL: OUT_DIR is not set. Pass it: qsub -v OUT_DIR=run1 ..."
+    exit 2
+fi
+if [ ! -f "${OUT_DIR}/campaign.json" ]; then
+    echo "FATAL: ${OUT_DIR}/campaign.json is missing. Run freeze-split first;"
+    echo "       it records the loader arguments every later command reuses."
+    exit 2
+fi
+
+# ---- environment -----------------------------------------------------------
+# set +u is REQUIRED around conda: conda.sh references variables that are
+# unset in a non-interactive shell (PS1 among them), which under `set -u`
+# kills the shell silently -- the failure then looks like a job that printed
+# a header and nothing else.
+if command -v conda >/dev/null 2>&1; then
+    set +u
+    # shellcheck disable=SC1091
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "${CONDA_ENV}"
+    set -u
+else
+    echo "WARNING: conda not on PATH; using whatever python is available"
+fi
+
+python -c "import sys; print('python    :', sys.version.split()[0])"
+python -c "import torch, sbi, zuko; print('torch     :', torch.__version__); print('sbi/zuko  :', sbi.__version__, zuko.__version__)" || {
+    echo "FATAL: the SBI stack does not import. Run 'python check_env.py'."
+    exit 1
+}
+python -c "import skopt; print('skopt     :', skopt.__version__)" || {
+    echo "NOTE: scikit-optimize is absent. Evaluation still works; only the"
+    echo "      GP proposal step (npe_tune.py propose) needs it."
+}
+echo "conda env : ${CONDA_DEFAULT_ENV:-none}"
+
+# Keep BLAS from oversubscribing the allocation. Without this numpy and torch
+# each spawn a full thread pool and contend, which on a shared node is slower
+# than single-threaded and annoys everyone else on the machine.
+NCPUS="${NCPUS:-${PBS_NCPUS:-8}}"
+export OMP_NUM_THREADS="$NCPUS"
+export MKL_NUM_THREADS="$NCPUS"
+echo "threads   : $NCPUS"
+
+# ---- pick a spec if none was given -----------------------------------------
+if [ -z "${SPEC}" ]; then
+    SPEC=$(ls -1 "${OUT_DIR}"/pending/trial_*.json 2>/dev/null | head -n 1)
+    if [ -z "${SPEC}" ]; then
+        echo "nothing pending in ${OUT_DIR}/pending -- run propose first."
+        exit 0
+    fi
+    echo "spec      : ${SPEC} (first pending)"
+fi
+if [ ! -f "${SPEC}" ]; then
+    echo "FATAL: spec file ${SPEC} does not exist"
+    exit 2
+fi
+
+# ---- run -------------------------------------------------------------------
+echo "----------------------------------------------------------------"
+# shellcheck disable=SC2086
+python npe_tune.py evaluate --out-dir "${OUT_DIR}" --spec "${SPEC}" \
+    --device "${DEVICE}" ${EXTRA_ARGS}
+STATUS=$?
+echo "----------------------------------------------------------------"
+echo "finished  : $(date -Is)  exit=${STATUS}"
+exit ${STATUS}
