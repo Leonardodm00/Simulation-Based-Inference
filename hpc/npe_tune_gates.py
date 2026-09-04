@@ -48,8 +48,9 @@ ASCII-only by policy (HPC transfer safety).
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -115,7 +116,7 @@ class GateBattery:
 def delta_min_from_control(control_deltas: Sequence[float],
                            k_sigma: float = 3.0,
                            floor: float = 0.0) -> float:
-    """Set the G1 threshold from the shuffled-pairs control, not by taste.
+    """PROVISIONAL G1 screen from a bank-level shuffled-pairs control.
 
     The control destroys the association between theta and z while keeping
     both marginals, so its achievable optimum IS the prior and its measured
@@ -126,6 +127,28 @@ def delta_min_from_control(control_deltas: Sequence[float],
     With fewer than two control runs the spread is unknown, so the threshold
     falls back to `floor` and the caller is expected to say so in the report
     rather than present a measured-looking number.
+
+    STATUS (HANDOFF_DELTA_MIN_PER_CONFIG_v1 S3, Tier 1). This is a cheap
+    SCREEN evaluated at every GP evaluation, not the authoritative verdict.
+    Two reasons, both measured rather than assumed:
+
+      1. The null gain distribution is capacity- and recipe-dependent. How
+         much of a finite shuffled sample a network can fit, and how much of
+         that survives to the held-out split, depends on the architecture,
+         the optimiser and the early-stopping rule. A floor measured under
+         ONE reference configuration is mis-calibrated for every candidate
+         far from it, in a direction nobody can sign without measuring.
+      2. `mean + k_sigma * sd` is not a tail probability at small n_ctrl.
+         With n_ctrl = 5, s is a poor estimate of sigma and "mean + 3s" is
+         nowhere near a 1e-3 tail; its realised false-pass rate is measured
+         in test S21 and is far above nominal.
+
+    The authoritative object is `control_pvalue` below, computed per
+    finalist against that finalist's OWN controls, then Holm-corrected across
+    finalists. Keep this function's output as the screen and as a
+    cross-check: a finalist whose own floor differs from the bank-level floor
+    by a large factor says how much the configuration's capacity is driving
+    the floor, and should be reported rather than silently overridden.
     """
     d = np.asarray([x for x in control_deltas if np.isfinite(x)],
                    dtype=np.float64)
@@ -134,6 +157,172 @@ def delta_min_from_control(control_deltas: Sequence[float],
     if d.size == 1:
         return float(max(floor, d[0]))
     return float(max(floor, np.mean(d) + k_sigma * np.std(d, ddof=1)))
+
+
+@dataclass
+class ControlVerdict:
+    """One finalist's G1 evidence against its OWN shuffled control.
+
+    Fields
+    ------
+    name          : finalist identifier (trial id, arm name, ...).
+    delta         : Delta_hat_j, the candidate's gain on the GATE split,
+                    averaged over its n_s training seeds.
+    n_seeds       : n_s, the number of seeds behind `delta`. 1 when `delta`
+                    is a single realisation.
+    control_mean  : mean of that finalist's own control gains.
+    control_sd    : sample SD (ddof=1) of the same.
+    n_control     : n_ctrl, the number of control runs.
+    t             : the statistic of eq. (S4.1).
+    pvalue        : one-sided P[T_nu > t], nu = n_ctrl - 1.
+    delta_min_provisional : the bank-level screen, carried for comparison.
+    floor         : the hard minimum in nats/row, applied regardless of p.
+    above_floor   : delta > floor.
+    """
+
+    name: str
+    delta: float
+    n_seeds: int
+    control_mean: float
+    control_sd: float
+    n_control: int
+    t: float
+    pvalue: float
+    delta_min_provisional: float = float("nan")
+    floor: float = 0.0
+    above_floor: bool = True
+    adjusted_pvalue: float = float("nan")
+    rejected: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+def control_pvalue(delta: float,
+                   control_deltas: Sequence[float],
+                   n_seeds: int = 1) -> Tuple[float, float]:
+    """One-sided t for "this configuration beats its own noise floor".
+
+    For each fixed finalist j, with Delta_hat_j the candidate's gain on the
+    gate split averaged over its n_s training seeds, and
+    Delta^ctrl_{j,1..n_ctrl} that finalist's own control gains,
+
+        t_j = (Delta_hat_j - mean(Delta^ctrl_j))
+              / (s_j * sqrt(1/n_s + 1/n_ctrl)),
+        p_j = P[T_nu > t_j],   nu = n_ctrl - 1,
+
+    where s_j is the sample SD (ddof=1) of that finalist's controls.
+
+    The sqrt(1/n_s + 1/n_ctrl) factor is what makes this a PREDICTION
+    interval rather than a confidence interval on the control mean, which is
+    the correct object because Delta_hat_j is one realisation and not a
+    population parameter. Using sqrt(1/n_ctrl) alone treats the candidate as
+    if it had no sampling variability of its own and is anticonservative.
+
+    Returns (t, p). Degenerate inputs return (nan, nan) rather than raising,
+    so a caller looping over finalists keeps the other verdicts:
+      - fewer than 2 controls: nu = 0, no scale estimate;
+      - zero control SD: t is +-inf, and p is 0.0 or 1.0 by the sign of the
+        difference, which is the correct limit but rests on an SD of exactly
+        zero, so it is returned as nan to force the caller to look.
+    """
+    from scipy import stats
+
+    d = np.asarray([x for x in control_deltas if np.isfinite(x)],
+                   dtype=np.float64)
+    n_ctrl = int(d.size)
+    n_s = max(1, int(n_seeds))
+    if n_ctrl < 2 or not np.isfinite(delta):
+        return float("nan"), float("nan")
+    s = float(np.std(d, ddof=1))
+    if not np.isfinite(s) or s <= 0.0:
+        return float("nan"), float("nan")
+    se = s * math.sqrt(1.0 / n_s + 1.0 / n_ctrl)
+    t = (float(delta) - float(np.mean(d))) / se
+    p = float(stats.t.sf(t, df=n_ctrl - 1))
+    return float(t), p
+
+
+def per_finalist_control_verdicts(
+        candidates: Sequence[Dict[str, Any]],
+        alpha: float = 0.05,
+        floor: float = 0.0,
+        delta_min_provisional: float = float("nan")) -> List[ControlVerdict]:
+    """Test ALL K finalists against their own controls, Holm across them.
+
+    `candidates` is a sequence of dicts with keys `name`, `delta`,
+    `control_deltas`, and optionally `n_seeds` (default 1).
+
+    Walking down a ranked list and stopping at the first configuration that
+    passes is a sequential multiple-comparison procedure: testing up to K
+    candidates each at a nominal per-test level inflates the family-wise
+    error roughly K-fold. A valid early-stopping version needs an
+    alpha-spending rule, which is more machinery than K = 3 is worth. So all
+    K are tested, the K p-values are Holm-corrected, and the caller ships the
+    best-RANKED configuration among those rejected -- not the one with the
+    smallest p.
+
+    A candidate whose p-value is undefined (fewer than 2 controls, or zero
+    control spread) is carried with `rejected = False` and an adjusted p of
+    nan; it is excluded from the Holm family, since a missing test is not a
+    non-significant one. `above_floor` is reported separately and is a hard
+    minimum: a configuration can be statistically distinguishable from its
+    own noise floor while still being useless in nats/row.
+    """
+    import npe_diagnostics as D
+
+    out: List[ControlVerdict] = []
+    for c in candidates:
+        ctrl = np.asarray([x for x in c.get("control_deltas", [])
+                           if np.isfinite(x)], dtype=np.float64)
+        delta = float(c["delta"])
+        n_s = int(c.get("n_seeds", 1) or 1)
+        t, p = control_pvalue(delta, ctrl, n_seeds=n_s)
+        out.append(ControlVerdict(
+            name=str(c.get("name", "")),
+            delta=delta, n_seeds=n_s,
+            control_mean=(float(np.mean(ctrl)) if ctrl.size else float("nan")),
+            control_sd=(float(np.std(ctrl, ddof=1)) if ctrl.size > 1
+                        else float("nan")),
+            n_control=int(ctrl.size), t=t, pvalue=p,
+            delta_min_provisional=float(delta_min_provisional),
+            floor=float(floor), above_floor=bool(delta > floor)))
+
+    testable = [k for k, v in enumerate(out) if np.isfinite(v.pvalue)]
+    if testable:
+        fam = D.holm_bonferroni([out[k].pvalue for k in testable],
+                                alpha=float(alpha),
+                                names=[out[k].name for k in testable])
+        for slot, k in enumerate(testable):
+            out[k].adjusted_pvalue = float(fam.adjusted[slot])
+            out[k].rejected = bool(fam.rejected[slot]
+                                   and out[k].above_floor)
+    return out
+
+
+def format_control_verdicts(verdicts: Sequence[ControlVerdict],
+                            alpha: float = 0.05) -> str:
+    """The full K-row table. Reporting all K is not optional.
+
+    This procedure has a garden-of-forking-paths failure mode if reported
+    selectively, so passes AND failures are printed, with raw p, Holm p, the
+    candidate's own gain, and its own control mean and SD.
+    """
+    lines = ["  per-finalist control test (alpha=%.3f, Holm over %d testable "
+             "of %d)" % (alpha,
+                         sum(1 for v in verdicts if np.isfinite(v.pvalue)),
+                         len(verdicts)),
+             "  | finalist | Delta_hat | n_s | ctrl mean | ctrl sd | n_ctrl "
+             "| t | raw p | Holm p | > floor | verdict |",
+             "  |---|---|---|---|---|---|---|---|---|---|---|"]
+    for v in verdicts:
+        lines.append("  | %s | %.4f | %d | %.4f | %.4f | %d | %.3f | %.4g "
+                     "| %.4g | %s | %s |"
+                     % (v.name, v.delta, v.n_seeds, v.control_mean,
+                        v.control_sd, v.n_control, v.t, v.pvalue,
+                        v.adjusted_pvalue, "yes" if v.above_floor else "NO",
+                        "REJECT null" if v.rejected else "not rejected"))
+    return "\n".join(lines)
 
 
 def gate_g1_informativeness(delta: float,

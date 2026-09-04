@@ -119,7 +119,9 @@ encoding_guard() {
     "$PY" - npe_contract.py npe_model.py gmm_benchmark.py \
               smoke_test_npe.py smoke_test_gmm.py npe_diagnostics.py \
               smoke_test_diagnostics.py -- check_env.py \
-              bootstrap_paired.py smoke_test_bootstrap_paired.py << 'PYEOF'
+              bootstrap_paired.py smoke_test_bootstrap_paired.py \
+              npe_tune.py npe_tune_data.py npe_tune_gates.py \
+              smoke_test_tune.py << 'PYEOF'
 import sys
 
 # Arguments before "--" are required; after it, optional. A missing optional
@@ -169,6 +171,7 @@ compile_check() {
     files="$files smoke_test_npe.py smoke_test_gmm.py smoke_test_diagnostics.py"
     [ -f check_env.py ] && files="$files check_env.py"
     [ -f bootstrap_paired.py ] && files="$files bootstrap_paired.py smoke_test_bootstrap_paired.py"
+    [ -f npe_tune.py ] && files="$files npe_tune.py npe_tune_data.py npe_tune_gates.py smoke_test_tune.py"
     # shellcheck disable=SC2086
     "$PY" -m py_compile $files && note "all present modules compile"
 }
@@ -216,6 +219,19 @@ REG_ARGS=()
 # No --fast variant: R0-R8 score against exact analytic posteriors and run
 # in well under a minute, same as the diagnostics suite.
 stage "suite: region extraction (R0-R8)" "$PY" smoke_test_regions.py "${REG_ARGS[@]}"
+
+if [ -f smoke_test_tune.py ]; then
+    TUNE_ARGS=()
+    [ -n "$SELECTOR" ] && TUNE_ARGS+=(-k "$SELECTOR")
+    # S11/S12/S13/S17 need torch, sbi or npe_model and SKIP without them; the
+    # fast tier is pure numpy/scipy and includes the split tests (S18/S19) and
+    # the control-statistic calibration tests (S20/S21).
+    [ -n "$FAST" ] && TUNE_ARGS+=(--fast)
+    stage "suite: tuning stack (S1-S21)" "$PY" smoke_test_tune.py "${TUNE_ARGS[@]}"
+else
+    note ""
+    note "SKIP: smoke_test_tune.py not present"
+fi
 
 if [ -f smoke_test_bootstrap_paired.py ]; then
     BP_ARGS=()

@@ -199,14 +199,36 @@ def load_bank(sim_glob: str,
 # Splits
 # ---------------------------------------------------------------------------
 
+# Positional side order. The gate side is THIRD in a four-way split, so that
+# (train, sel, rep) and (train, sel, gate, rep) both put the report split
+# last and a reader cannot confuse the two by position.
+SIDE_NAMES_3 = ("train", "sel", "rep")
+SIDE_NAMES_4 = ("train", "sel", "gate", "rep")
+SIDE_NAMES = SIDE_NAMES_4
+
+
 @dataclass
 class SplitManifest:
-    """A frozen three-way, group-disjoint partition of one bank.
+    """A frozen group-disjoint partition of one bank, three-way or four-way.
 
-    train / sel / rep hold ROW INDICES into the bank as loaded under the
-    recorded loader arguments. The manifest is only meaningful together with
-    those arguments, which is why they are stored alongside and folded into
-    the hash.
+    train / sel / gate / rep hold ROW INDICES into the bank as loaded under
+    the recorded loader arguments. The manifest is only meaningful together
+    with those arguments, which is why they are stored alongside and folded
+    into the hash.
+
+    `gate` is EMPTY for a three-way split (version 1) and non-empty for a
+    four-way one (version 2). The fourth side exists because ranking and
+    gating on the same rows makes the gate anti-conservative: finalists are
+    the argmax of held-out NLL over the whole search, so the winner's score
+    on that split is a maximum over a large family and is biased upward by
+    selection. A null calibrated for a single configuration then understates
+    the false-pass rate, and a multiplicity correction over the K finalists
+    does not repair it -- it corrects for the K tests performed, not for the
+    N_search selections that produced the candidates. Ranking on `sel` and
+    gating on `gate` makes the gate statistic independent of the quantity
+    that selected the finalist. See HANDOFF_DELTA_MIN_PER_CONFIG_v1 S4.2.
+
+    `rep` remains the report split, touched exactly once at the end.
     """
 
     train: List[int]
@@ -219,6 +241,10 @@ class SplitManifest:
     param_names: List[str]
     seed: int
     fractions: List[float]
+    # Added in version 2. Declared here (after the required fields) so that
+    # `SplitManifest(**json)` still constructs from a version-1 manifest on
+    # disk, which has no `gate` key.
+    gate: List[int] = field(default_factory=list)
     loader: Dict[str, object] = field(default_factory=dict)
     grouping: Dict[str, object] = field(default_factory=dict)
     contract_digest: str = ""
@@ -227,16 +253,52 @@ class SplitManifest:
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
 
+    def _hash_payload(self) -> Dict[str, object]:
+        d = self.to_dict()
+        if int(self.version) < 2:
+            # Version-1 manifests were hashed before `gate` existed. Dropping
+            # the empty key here keeps every already-frozen manifest loadable
+            # and its recorded hash verifiable; without this, adding the field
+            # would silently invalidate frozen artefacts on disk. A version-1
+            # manifest with a non-empty gate is a construction error, not a
+            # thing to hash around.
+            if d.get("gate"):
+                raise ValueError("version 1 manifest carries a non-empty "
+                                 "gate side; set version=2")
+            d.pop("gate", None)
+        return d
+
     def hash(self) -> str:
         """Stable content hash. Two manifests with the same hash are the
         same experiment; anything else must not be compared."""
-        payload = json.dumps(self.to_dict(), sort_keys=True,
+        payload = json.dumps(self._hash_payload(), sort_keys=True,
                              separators=(",", ":")).encode("ascii")
         return hashlib.sha256(payload).hexdigest()[:16]
 
     def sizes(self) -> Dict[str, int]:
-        return {"train": len(self.train), "sel": len(self.sel),
-                "rep": len(self.rep)}
+        s = {"train": len(self.train), "sel": len(self.sel),
+             "rep": len(self.rep)}
+        if self.gate:
+            s["gate"] = len(self.gate)
+        return s
+
+    @property
+    def has_gate_split(self) -> bool:
+        """True when a dedicated gate side exists (four-way split)."""
+        return bool(self.gate)
+
+    def side(self, name: str) -> List[int]:
+        """Row indices of one side by name, with a specific error otherwise."""
+        if name not in SIDE_NAMES:
+            raise ValueError("unknown split side %r; expected one of %s"
+                             % (name, ", ".join(SIDE_NAMES)))
+        ix = getattr(self, name)
+        if name == "gate" and not ix:
+            raise ValueError(
+                "this manifest has no gate side: it is a three-way split "
+                "(version %d). Re-freeze with four fractions to rank on `sel` "
+                "and gate on `gate`." % int(self.version))
+        return ix
 
 
 def _contract_digest(contract) -> str:
@@ -260,21 +322,30 @@ def make_split(bank: Bank,
                seed: int = 0,
                min_groups_per_side: int = 5,
                min_rows_per_side: int = 200) -> SplitManifest:
-    """Build the three-way group-disjoint split.
+    """Build the group-disjoint split, three-way or four-way.
 
-    Groups are shuffled once and dealt to the three sides in order until each
-    reaches its row quota, so no group is ever divided. The guards are hard
-    errors rather than warnings: a side too small to give a meaningful
-    standard error makes every later comparison meaningless, and failing at
-    freeze time costs seconds where failing later costs a campaign.
+    `fractions` is (train, sel, rep) for a three-way split or
+    (train, sel, gate, rep) for a four-way one; the ORDER is positional and
+    the gate side is third. Groups are shuffled once and dealt to the sides
+    in order until each reaches its row quota, so no group is ever divided.
+    The guards are hard errors rather than warnings: a side too small to give
+    a meaningful standard error makes every later comparison meaningless, and
+    failing at freeze time costs seconds where failing later costs a campaign.
+
+    A three-way manifest is byte-identical to what this function produced
+    before the gate side existed, and hashes to the same value, so frozen
+    artefacts stay valid.
     """
     fr = np.asarray(fractions, dtype=np.float64)
-    if fr.shape != (3,):
+    if fr.ndim != 1 or fr.shape[0] not in (3, 4):
         raise ValueError("fractions must have exactly 3 entries "
-                         "(train, sel, rep)")
+                         "(train, sel, rep) or 4 (train, sel, gate, rep), "
+                         "got %r" % (np.asarray(fractions).tolist(),))
     if np.any(fr <= 0) or abs(fr.sum() - 1.0) > 1e-9:
         raise ValueError("fractions must be positive and sum to 1, got %r"
                          % (fr.tolist(),))
+    n_sides = int(fr.shape[0])
+    names = SIDE_NAMES_4 if n_sides == 4 else SIDE_NAMES_3
 
     rng = np.random.default_rng(seed)
     uniq = np.unique(bank.groups)
@@ -282,8 +353,8 @@ def make_split(bank: Bank,
 
     counts = {int(g): int(np.sum(bank.groups == g)) for g in uniq}
     quota = fr * bank.n
-    sides: List[List[int]] = [[], [], []]      # group ids per side
-    filled = np.zeros(3, dtype=np.float64)     # rows so far per side
+    sides: List[List[int]] = [[] for _ in range(n_sides)]   # group ids per side
+    filled = np.zeros(n_sides, dtype=np.float64)            # rows so far per side
 
     for g in order:
         # Give the group to whichever side is furthest below its quota, in
@@ -298,7 +369,6 @@ def make_split(bank: Bank,
         mask = np.isin(bank.groups, np.asarray(side_groups, dtype=np.int64))
         idx_by_side.append(np.flatnonzero(mask).astype(np.int64))
 
-    names = ("train", "sel", "rep")
     for name, gl, ix in zip(names, sides, idx_by_side):
         if len(gl) < min_groups_per_side:
             raise ValueError(
@@ -313,16 +383,21 @@ def make_split(bank: Bank,
 
     # Disjointness is asserted, not assumed: this is the property the whole
     # evaluation rests on, and it costs microseconds to prove.
-    a, b, c = (set(x.tolist()) for x in idx_by_side)
-    if a & b or a & c or b & c:
-        raise RuntimeError("internal error: split sides overlap")
-    if len(a) + len(b) + len(c) != bank.n:
+    as_sets = [set(x.tolist()) for x in idx_by_side]
+    for i in range(len(as_sets)):
+        for j in range(i + 1, len(as_sets)):
+            if as_sets[i] & as_sets[j]:
+                raise RuntimeError("internal error: split sides %r and %r "
+                                   "overlap" % (names[i], names[j]))
+    if sum(len(s) for s in as_sets) != bank.n:
         raise RuntimeError("internal error: split does not cover the bank")
 
+    by_name = {nm: ix.tolist() for nm, ix in zip(names, idx_by_side)}
     return SplitManifest(
-        train=idx_by_side[0].tolist(),
-        sel=idx_by_side[1].tolist(),
-        rep=idx_by_side[2].tolist(),
+        train=by_name["train"],
+        sel=by_name["sel"],
+        gate=by_name.get("gate", []),
+        rep=by_name["rep"],
         n_rows=bank.n,
         n_groups=bank.n_groups,
         p=bank.p,
@@ -333,6 +408,7 @@ def make_split(bank: Bank,
         loader={k: v for k, v in bank.meta.items() if k != "grouping"},
         grouping=bank.meta.get("grouping", {}),
         contract_digest=_contract_digest(bank.contract),
+        version=(2 if n_sides == 4 else 1),
     )
 
 
@@ -388,12 +464,18 @@ def check_split(bank: Bank, manifest: SplitManifest) -> None:
                          + "; ".join(problems))
 
     # Group disjointness across sides, re-verified against the actual bank.
-    gt = set(np.unique(bank.groups[np.asarray(manifest.train, dtype=np.int64)]).tolist())
-    gs = set(np.unique(bank.groups[np.asarray(manifest.sel, dtype=np.int64)]).tolist())
-    gr = set(np.unique(bank.groups[np.asarray(manifest.rep, dtype=np.int64)]).tolist())
-    if gt & gs or gt & gr or gs & gr:
-        raise ValueError("split manifest leaks: a topology group appears on "
-                         "more than one side")
+    # Whichever sides this manifest carries: the gate side is checked exactly
+    # like the others when present, and silently absent when it is not.
+    present = [nm for nm in SIDE_NAMES if getattr(manifest, nm)]
+    gsets = {nm: set(np.unique(
+        bank.groups[np.asarray(getattr(manifest, nm), dtype=np.int64)]).tolist())
+        for nm in present}
+    for i, a in enumerate(present):
+        for b in present[i + 1:]:
+            if gsets[a] & gsets[b]:
+                raise ValueError(
+                    "split manifest leaks: a topology group appears on both "
+                    "the %r and %r sides" % (a, b))
 
 
 def subsample_groups(bank: Bank,
@@ -453,8 +535,17 @@ def shape_report(bank: Bank,
                         bank.meta.get("duplication_factor", float("nan"))))
     if manifest is not None:
         s = manifest.sizes()
-        lines.append("  split (rows)        : train %d / sel %d / rep %d"
-                     % (s["train"], s["sel"], s["rep"]))
+        if "gate" in s:
+            lines.append("  split (rows)        : train %d / sel %d / "
+                         "gate %d / rep %d"
+                         % (s["train"], s["sel"], s["gate"], s["rep"]))
+            lines.append("  split roles         : sel RANKS, gate GATES, "
+                         "rep reports (touched once)")
+        else:
+            lines.append("  split (rows)        : train %d / sel %d / rep %d"
+                         % (s["train"], s["sel"], s["rep"]))
+            lines.append("  split roles         : sel BOTH ranks and gates "
+                         "(three-way split; the gate is anti-conservative)")
         lines.append("  split hash          : %s" % manifest.hash())
     lines.append("----------------------------------------------------------------")
     return "\n".join(lines)

@@ -196,6 +196,16 @@ def cmd_freeze_split(args: argparse.Namespace) -> int:
                              min_rows_per_side=args.min_rows_per_side)
     os.makedirs(args.out_dir, exist_ok=True)
     TD.save_split(manifest, os.path.join(args.out_dir, SPLIT_FILE))
+    if manifest.has_gate_split:
+        print("[split] four-way: `sel` ranks, `gate` gates, `rep` reports "
+              "(touched once).", flush=True)
+    else:
+        print("[split] three-way: `sel` both ranks AND gates. The finalist "
+              "gate is then anti-conservative -- the candidate's score on "
+              "`sel` is a maximum over the whole search, and a null "
+              "calibrated for a single configuration understates the "
+              "false-pass rate. Re-freeze with four fractions to separate "
+              "them (S4.2).", flush=True)
 
     floor = TS.prior_floor(bank.contract.bounds_theta)
     space = TSR.default_space(bank.p, bank.embedding_dim,
@@ -674,17 +684,35 @@ def cmd_finalists(args: argparse.Namespace) -> int:
     seeds = seeds[:M]
 
     train_idx = np.asarray(manifest.train, dtype=np.int64)
-    sel_idx = np.asarray(manifest.sel, dtype=np.int64)
     z_tr, th_tr = bank.z[train_idx], bank.theta[train_idx]
-    z_se, th_se = bank.z[sel_idx], bank.theta[sel_idx]
+
+    # Rank on `sel` (the ledger NLL that produced `top`), gate on `gate`.
+    # Scoring the finalists again on `sel` would compare a maximum over the
+    # whole search against a null calibrated for a single configuration; the
+    # fourth split makes the gate statistic independent of the selection.
+    # HANDOFF_DELTA_MIN_PER_CONFIG_v1 S4.2. A three-way manifest still runs,
+    # with the bias stated rather than hidden.
+    rank_split = "sel"
+    gate_split = "gate" if manifest.has_gate_split else "sel"
+    gate_idx = np.asarray(manifest.side(gate_split), dtype=np.int64)
+    z_ga, th_ga = bank.z[gate_idx], bank.theta[gate_idx]
+    if not manifest.has_gate_split:
+        print("[warn] this manifest is three-way, so the finalists are "
+              "ranked AND gated on `sel`. The gate verdict is then "
+              "anti-conservative by an unmeasured amount (winner's curse "
+              "over %d search trials): report it as such, or re-freeze the "
+              "split with four fractions." % len(search), flush=True)
 
     rng = np.random.default_rng(int(args.calib_seed))
-    n_calib = min(int(args.n_calib), z_se.shape[0])
-    calib = np.sort(rng.choice(z_se.shape[0], size=n_calib, replace=False))
-    z_cal, th_cal = z_se[calib], th_se[calib]
+    n_calib = min(int(args.n_calib), z_ga.shape[0])
+    calib = np.sort(rng.choice(z_ga.shape[0], size=n_calib, replace=False))
+    z_cal, th_cal = z_ga[calib], th_ga[calib]
 
     print("[finalists] %d candidate(s); M=%d; delta_min=%.4f; n_calib=%d"
           % (len(top), M, delta_min, n_calib), flush=True)
+    print("[finalists] ranked on %r (%d rows), gated on %r (%d rows)"
+          % (rank_split, len(manifest.sel), gate_split, gate_idx.size),
+          flush=True)
 
     out: List[Dict[str, Any]] = []
     for r in top:
@@ -699,13 +727,14 @@ def cmd_finalists(args: argparse.Namespace) -> int:
                                                contract=bank.contract)
         ens = TT.build_ensemble(posteriors)
 
-        member_lp, mix_lp = TT.evaluate_log_probs(posteriors, th_se, z_se,
+        member_lp, mix_lp = TT.evaluate_log_probs(posteriors, th_ga, z_ga,
                                                   ensemble=ens)
         score = TS.score_from_log_probs(mix_lp, bank.contract.bounds_theta,
                                         member_log_probs=member_lp,
                                         n_members=M, n_boot=int(args.n_boot),
                                         seed=int(args.boot_seed))
-        print("[finalist] full-M score: %s" % score.summary(), flush=True)
+        print("[finalist] full-M score on the %r split: %s"
+              % (gate_split, score.summary()), flush=True)
 
         import npe_diagnostics as D
         samples = D.sample_posteriors(ens, z_cal, n_draws=int(args.n_draws))
@@ -743,6 +772,9 @@ def cmd_finalists(args: argparse.Namespace) -> int:
             "probe_nll": r.nll, "probe_n_members": r.n_members,
             "full_nll": score.nll, "full_delta": score.delta,
             "full_delta_ci_lo": score.delta_ci_lo,
+            "rank_split": rank_split, "gate_split": gate_split,
+            "gate_split_rows": int(gate_idx.size),
+            "gate_independent_of_selection": bool(manifest.has_gate_split),
             "n_members": M, "seeds": seeds,
             "gates": battery.to_dict(),
             "contraction": {"param_names": list(contraction.param_names),
@@ -882,8 +914,9 @@ def cmd_report(args: argparse.Namespace) -> int:
                                     seed=int(args.boot_seed))
     print("\n[report] REPORT SPLIT (touched once): %s" % score.summary(),
           flush=True)
-    print("[report] selection split, for comparison: NLL %.4f gain %.4f"
-          % (chosen["full_nll"], chosen["full_delta"]), flush=True)
+    print("[report] %r split, for comparison: NLL %.4f gain %.4f"
+          % (chosen.get("gate_split", "sel"), chosen["full_nll"],
+             chosen["full_delta"]), flush=True)
 
     overlap = None
     if args.real:
@@ -943,8 +976,15 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--no-dedup", action="store_true",
                    help="do NOT deduplicate on theta (not recommended)")
     q.add_argument("--max-rows", type=int, default=None)
-    q.add_argument("--fractions", type=float, nargs=3,
-                   default=[0.8, 0.1, 0.1], metavar=("TRAIN", "SEL", "REP"))
+    q.add_argument("--fractions", type=float, nargs="+",
+                   default=[0.8, 0.1, 0.1], metavar="F",
+                   help="three fractions TRAIN SEL REP, or four "
+                        "TRAIN SEL GATE REP. With four, the search ranks on "
+                        "`sel` and the gates run on `gate`, so the gate "
+                        "statistic is independent of the quantity that "
+                        "selected the finalist "
+                        "(HANDOFF_DELTA_MIN_PER_CONFIG_v1 S4.2). Recommended "
+                        "four-way value: 0.8 0.07 0.07 0.06")
     q.add_argument("--split-seed", type=int, default=0)
     q.add_argument("--loader-seed", type=int, default=0)
     q.add_argument("--min-groups-per-side", type=int, default=5)
