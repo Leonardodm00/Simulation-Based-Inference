@@ -118,7 +118,8 @@ note "python  : $PY"
 encoding_guard() {
     "$PY" - npe_contract.py npe_model.py gmm_benchmark.py \
               smoke_test_npe.py smoke_test_gmm.py npe_diagnostics.py \
-              smoke_test_diagnostics.py -- check_env.py << 'PYEOF'
+              smoke_test_diagnostics.py -- check_env.py \
+              bootstrap_paired.py smoke_test_bootstrap_paired.py << 'PYEOF'
 import sys
 
 # Arguments before "--" are required; after it, optional. A missing optional
@@ -167,6 +168,7 @@ compile_check() {
     local files="npe_contract.py npe_model.py gmm_benchmark.py npe_diagnostics.py"
     files="$files smoke_test_npe.py smoke_test_gmm.py smoke_test_diagnostics.py"
     [ -f check_env.py ] && files="$files check_env.py"
+    [ -f bootstrap_paired.py ] && files="$files bootstrap_paired.py smoke_test_bootstrap_paired.py"
     # shellcheck disable=SC2086
     "$PY" -m py_compile $files && note "all present modules compile"
 }
@@ -214,6 +216,19 @@ REG_ARGS=()
 # No --fast variant: R0-R8 score against exact analytic posteriors and run
 # in well under a minute, same as the diagnostics suite.
 stage "suite: region extraction (R0-R8)" "$PY" smoke_test_regions.py "${REG_ARGS[@]}"
+
+if [ -f smoke_test_bootstrap_paired.py ]; then
+    BP_ARGS=()
+    [ -n "$SELECTOR" ] && BP_ARGS+=(-k "$SELECTOR")
+    # Pure numpy, no training: B1-B12 run in a few seconds. B13 is a coverage
+    # rate test over 300 replicate datasets (the 57%-vs-93% result of plan
+    # S2.4a) and is skipped under --fast.
+    [ -z "$FAST" ] && BP_ARGS+=(--full)
+    stage "suite: paired bootstrap (B1-B13)" "$PY" smoke_test_bootstrap_paired.py "${BP_ARGS[@]}"
+else
+    note ""
+    note "SKIP: smoke_test_bootstrap_paired.py not present"
+fi
 
 # ---------------------------------------------------------------------------
 hdr "summary"
