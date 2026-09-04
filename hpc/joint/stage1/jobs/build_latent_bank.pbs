@@ -1,0 +1,100 @@
+#!/bin/bash
+#PBS -N build_latent_bank
+#PBS -l select=1:ncpus=2:mem=8gb
+#PBS -l walltime=02:00:00
+#PBS -j oe
+#
+# One shard per array element. Submit with, e.g.
+#
+#   qsub -J 0-31 -v ARM=S,OUT_DIR=/path/to/bank jobs/build_latent_bank.pbs
+#
+# Dry run first (no allocation needed):
+#
+#   DRYRUN=1 ARM=S OUT_DIR=/tmp/bank PBS_ARRAY_INDEX=0 bash jobs/build_latent_bank.pbs
+#
+# Expected output of a correct probe run is printed by the Python script:
+# "rows written : <n_traces * n_windows>" and a distinct-realisations count
+# equal to the number of WELLS, not the number of donors.
+
+set -euo pipefail
+
+# ---- self-locate; never trust the CWD --------------------------------------
+# Under qsub the script is copied to a spool directory, so BASH_SOURCE is
+# useless there and PBS_O_WORKDIR is authoritative. Interactively it is the
+# other way round. Accept a candidate only if a known file is present.
+REPO=""
+for cand in "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+            "${PBS_O_WORKDIR:-}"; do
+  if [ -n "$cand" ] && [ -f "$cand/build_latent_bank.py" ]; then
+    REPO="$cand"
+    break
+  fi
+done
+if [ -z "$REPO" ]; then
+  echo "FATAL: could not locate the repo. Candidates tried:" >&2
+  echo "  dirname(BASH_SOURCE)/..: $(dirname "${BASH_SOURCE[0]}")/.." >&2
+  echo "  PBS_O_WORKDIR         : ${PBS_O_WORKDIR:-<unset>}" >&2
+  exit 2
+fi
+cd "$REPO"
+
+# ---- defaults; ':=' never overrides an explicit value ----------------------
+: "${ARM:=S}"
+: "${OUT_DIR:=}"
+: "${N_TRACES:=64}"
+: "${WELLS_PER_DONOR:=2}"
+: "${N_WINDOWS:=8}"
+: "${T_WIN:=60.0}"
+: "${FS:=50.0}"
+: "${PI:=0.0}"
+: "${GAP_MODES:=range_shift}"
+: "${N_PER_THETA:=2}"
+: "${PROVIDER:=reference}"
+: "${SEED:=0}"
+: "${MAX_RECORDS:=0}"
+: "${DRYRUN:=0}"
+: "${ENV_NAME:=sbi_env}"
+
+if [ -z "$OUT_DIR" ]; then
+  echo "FATAL: OUT_DIR is not set. Pass it with -v OUT_DIR=..." >&2
+  exit 2
+fi
+
+IDX="${PBS_ARRAY_INDEX:-0}"
+
+# ---- conda: the hook must run first, or activate fails silently ------------
+if [ "$DRYRUN" != "1" ]; then
+  eval "$(conda shell.bash hook)"
+  conda activate "$ENV_NAME"
+fi
+PY="$(command -v python3)"
+echo "interpreter      : $PY"
+echo "conda env        : ${CONDA_DEFAULT_ENV:-none}"
+echo "repo             : $REPO"
+echo "shard index      : $IDX"
+
+DRY_FLAG=""
+if [ "$DRYRUN" = "1" ]; then
+  DRY_FLAG="--dry-run"
+fi
+
+mkdir -p "$OUT_DIR"
+
+"$PY" build_latent_bank.py \
+  --out-dir "$OUT_DIR" \
+  --arm "$ARM" \
+  --shard-index "$IDX" \
+  --n-traces "$N_TRACES" \
+  --wells-per-donor "$WELLS_PER_DONOR" \
+  --n-windows "$N_WINDOWS" \
+  --T-win "$T_WIN" \
+  --fs "$FS" \
+  --pi "$PI" \
+  --gap-modes "$GAP_MODES" \
+  --n-per-theta "$N_PER_THETA" \
+  --provider "$PROVIDER" \
+  --seed "$SEED" \
+  --max-records "$MAX_RECORDS" \
+  $DRY_FLAG
+
+echo "DONE shard $IDX"
