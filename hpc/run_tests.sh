@@ -249,9 +249,22 @@ if [ -f joint/stage4/smoke_test_joint_space.py ]; then
     # through SBI_HPC_DIR. Default SBI_HPC_DIR to where we already are, so
     # J26 does not skip merely because the caller did not know to set it.
     export SBI_HPC_DIR="${SBI_HPC_DIR:-$(pwd)}"
+    # Three distinct failures, three different fixes. The cluster run of
+    # 2026-09-07 hit the middle one -- the $HOME/dsn_main symlink was gone --
+    # and the suites reported it as "unset", which sent the diagnosis the
+    # wrong way for a cycle.
     if [ -z "${DSN_MAIN_DIR:-}" ]; then
         note "  NOTE: DSN_MAIN_DIR unset -- J23/J35 SKIP; J20-J22/J26/J29 narrow."
         note "        Those are the inactive-coordinate clauses; set it."
+    elif [ ! -d "${DSN_MAIN_DIR}" ]; then
+        note "  NOTE: DSN_MAIN_DIR=${DSN_MAIN_DIR} DOES NOT EXIST."
+        note "        A deleted symlink looks exactly like this. Recreate"
+        note "        it with ln -s pointing at the DSN repo Main directory"
+        note "        (the real path contains a space, which is why the"
+        note "        symlink exists at all: qsub -v cannot carry it)."
+    elif [ ! -f "${DSN_MAIN_DIR}/condition_space.py" ]; then
+        note "  NOTE: ${DSN_MAIN_DIR} has no condition_space.py -- that DSN"
+        note "        checkout predates it. git pull the DSN repo."
     fi
     stage "suite: joint space (J20-J35)" "$PY" \
           joint/stage4/smoke_test_joint_space.py "${JS_ARGS[@]}"

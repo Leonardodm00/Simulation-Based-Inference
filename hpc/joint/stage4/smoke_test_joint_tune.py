@@ -72,17 +72,38 @@ def check(cond: bool, msg: str) -> None:
         raise AssertionError(msg)
 
 
-def _dsn() -> bool:
+def _dsn_status() -> str:
+    """Why the DSN is or is not reachable. Empty string means it is.
+
+    Three situations need three different fixes and were all reported as
+    "unset" before: the variable genuinely unset, set to a path that does
+    not exist (a deleted symlink -- what actually happened on the cluster,
+    2026-09-07), and set to a real directory whose checkout predates
+    condition_space.py. Kept identical to the copy in
+    smoke_test_joint_space.py rather than shared, so neither suite has to
+    import the other to run standalone.
+    """
     main = os.environ.get("DSN_MAIN_DIR", "")
     if not main:
-        return False
+        return "DSN_MAIN_DIR unset"
+    if not os.path.isdir(main):
+        return ("DSN_MAIN_DIR=%r does not exist (a deleted symlink looks "
+                "exactly like this)" % main)
+    if not os.path.isfile(os.path.join(main, "condition_space.py")):
+        return ("DSN_MAIN_DIR=%r has no condition_space.py -- that checkout "
+                "predates it; git pull the DSN repo" % main)
     if main not in sys.path:
         sys.path.insert(0, main)
     try:
         import condition_space  # noqa: F401
-        return True
-    except ImportError:
-        return False
+        return ""
+    except ImportError as exc:
+        return "condition_space present at %r but will not import (%s)" % (
+            main, exc)
+
+
+def _dsn() -> bool:
+    return _dsn_status() == ""
 
 
 def _runner_parser():
@@ -228,7 +249,7 @@ def j29_no_axis_is_dropped_silently() -> str:
           % sorted(set(JS.JOINT_KNOB_ORDER) - covered))
 
     if not _dsn():
-        raise Skip("DSN_MAIN_DIR not set; the injection needs an S-A2 config")
+        raise Skip("%s; the injection needs an S-A2 config" % _dsn_status())
 
     # loss_type must be "triplet" here: under "joint"/"joint_sep" the margin
     # is INACTIVE by A(l) and canonicalisation pins it to 0.2, so a dropped
@@ -620,7 +641,9 @@ def main() -> int:
 
     ids = [t for t in TESTS if args.pattern is None or args.pattern in t]
     print("=" * 72)
-    print("smoke_test_joint_tune.py -- %d test(s)" % len(ids))
+    print("smoke_test_joint_tune.py -- %d test(s)%s"
+          % (len(ids), "" if _dsn() else
+             "   [%s -- DSN clauses will SKIP]" % _dsn_status()))
     print("=" * 72)
     n_pass = n_fail = n_skip = 0
     for tid in ids:
