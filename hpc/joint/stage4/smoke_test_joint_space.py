@@ -52,7 +52,15 @@ from typing import Callable, Dict, List, Tuple
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _HERE)
+# stage4 sits at <hpc>/joint/stage4, so the tuning stack is two levels up.
+# Resolving it here rather than relying on SBI_HPC_DIR being exported keeps
+# J26 from SKIPPING silently -- it is the test that proves the GP can
+# propose joint configurations at all, and a skip reads like a pass in the
+# summary line.
+for _p in (_HERE, os.path.abspath(os.path.join(_HERE, "..", "..")),
+           os.environ.get("SBI_HPC_DIR", "")):
+    if _p and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import joint_space as JS  # noqa: E402
 
@@ -440,11 +448,11 @@ def j26_optimiser_adapter() -> str:
         import skopt  # noqa: F401
     except ImportError as exc:
         raise Skip("skopt not installed (%s)" % exc)
-    sys.path.insert(0, os.environ.get("SBI_HPC_DIR", ""))
     try:
         import npe_tune_search as TSR
     except ImportError as exc:
-        raise Skip("npe_tune_search not importable; set SBI_HPC_DIR (%s)" % exc)
+        raise Skip("npe_tune_search not importable from %s or SBI_HPC_DIR (%s)"
+                   % (os.path.abspath(os.path.join(_HERE, "..", "..")), exc))
 
     spec = _spec()
     names = ["S-A1", "S-A5"] + (["S-A2"] if _dsn_available() else [])
