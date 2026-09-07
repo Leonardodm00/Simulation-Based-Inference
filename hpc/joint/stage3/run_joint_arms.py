@@ -227,6 +227,39 @@ def build_parser():
     p.add_argument("--num-transforms", type=int, default=3)
     p.add_argument("--num-bins", type=int, default=8)
     p.add_argument("--embedding-size", type=int, default=10)
+    # [CHANGE Stage 4] Encoder axes, previously hardcoded inside
+    # make_backbone. They are searched axes in JOINT_KNOB_ORDER (plan S5.1),
+    # so the tuner cannot reach them unless they are flags. Defaults are the
+    # values make_backbone used before, so every Stage 3 invocation that does
+    # not pass them behaves exactly as it did. Regression: R0e.
+    p.add_argument("--depth-exponent", type=int, default=3)
+    p.add_argument("--width-multiplier", type=float, default=2.0)
+    p.add_argument("--block-family", type=int, default=0, choices=(0, 1),
+                   help="0 = ResNet, 1 = ResNeXt")
+    p.add_argument("--head-fusion", type=int, default=0, choices=(0, 1),
+                   help="0 = last stage only, 1 = fuse all stages")
+    p.add_argument("--dropout", type=float, default=0.0)
+    # [CHANGE Stage 4] The DSN loss composition, previously fixed at
+    # DSNLossConfig()'s defaults. These are searched axes of
+    # JOINT_KNOB_ORDER (plan S5.1), so campaign S-A2 cannot run at all
+    # unless they are flags. Every default below is DSNLossConfig's current
+    # default, so an invocation that passes none of them builds exactly the
+    # loss Stage 3 built before. Regression: R0g.
+    p.add_argument("--loss-type", default="joint_sep",
+                   choices=("triplet", "joint", "joint_sep"))
+    p.add_argument("--mining-strategy", default="easy_pos_semihard_neg",
+                   choices=("hard", "easy_positive", "easy_pos_semihard_neg"))
+    p.add_argument("--margin", type=float, default=0.2)
+    p.add_argument("--angular-alpha-deg", type=float, default=18.0)
+    p.add_argument("--lambda-sep", type=float, default=0.1)
+    p.add_argument("--sep-warmup-frac", type=float, default=0.0)
+    p.add_argument("--strict-semihard", type=int, default=1, choices=(0, 1))
+    p.add_argument("--one-minus-beta1", type=float, default=0.1,
+                   help="Adam beta1 = 1 - this. Parameterised as (1 - beta) "
+                        "because beta1 lives at the top of [0, 1) and a "
+                        "uniform search over beta1 spends almost every draw "
+                        "in a region where the optimiser barely differs. "
+                        "Default 0.1 gives beta1 = 0.9, AdamW's own default.")
     p.add_argument("--warm-start-ckpt", default=None,
                    help="A0 checkpoint, for arm A3")
     p.add_argument("--dsn-main-dir", default=None)
@@ -243,18 +276,36 @@ def load_arm(pattern):
     return arrays, sidecar, paths
 
 
-def make_backbone(W, E, dsn_main_dir, seed):
-    """The real DSN backbone if available, else a small GroupNorm CNN."""
+def make_backbone(W, E, dsn_main_dir, seed, encoder=None):
+    """The real DSN backbone if available, else a small GroupNorm CNN.
+
+    `encoder` is an optional dict of the searched encoder axes
+    (depth_exponent, width_multiplier, block_family, head_fusion, dropout).
+    Omitted keys keep the values this function used before Stage 4 made them
+    searchable, so an existing caller is unaffected. The fallback backbone
+    ignores them: it exists so the bench runs without the DSN repo at all,
+    and a fallback that pretended to honour an architecture axis would make
+    a search over that axis look meaningful when it was not.
+    """
     torch.manual_seed(int(seed))
+    enc = dict(encoder or {})
     d = dsn_main_dir or os.environ.get("DSN_MAIN_DIR")
     if d and os.path.isfile(os.path.join(d, "backbone.py")):
         if d not in sys.path:
             sys.path.insert(0, d)
         from backbone import BackboneConfig, build_backbone
-        return build_backbone(BackboneConfig(depth_exponent=3,
-                                             width_multiplier=2.0,
-                                             stem_width=16,
-                                             embedding_size=E)), "dsn"
+        return build_backbone(BackboneConfig(
+            depth_exponent=int(enc.get("depth_exponent", 3)),
+            width_multiplier=float(enc.get("width_multiplier", 2.0)),
+            block_family=int(enc.get("block_family", 0)),
+            head_fusion=bool(int(enc.get("head_fusion", 0))),
+            dropout=float(enc.get("dropout", 0.0)),
+            stem_width=16,
+            embedding_size=E)), "dsn"
+    if enc:
+        print("[warn] the fallback backbone ignores the encoder axes %s: a "
+              "search over them means nothing without the DSN repo. Set "
+              "DSN_MAIN_DIR." % sorted(enc), flush=True)
     import torch.nn as nn
 
     class SmallBackbone(nn.Module):
@@ -352,14 +403,49 @@ def main(argv=None):
         # barely started when its encoder was frozen.
         total = (args.encoder_steps if cfg_arm["freeze_encoder"]
                  else args.epochs * args.steps_per_epoch)
+        # The legality projection is applied HERE rather than trusted from
+        # the caller: (mining, loss, strict) has illegal combinations, and an
+        # unprojected triple would silently train a different cell than the
+        # one recorded. project_condition is idempotent, so applying it to an
+        # already-legal triple is free.
+        mining, loss_type = str(args.mining_strategy), str(args.loss_type)
+        strict = bool(int(args.strict_semihard))
+        # condition_space lives in the DSN repo, which nothing has put on
+        # sys.path yet at this point (make_backbone and build_dsn_loss do so
+        # later). Resolve it here, the same way they do.
+        _dsn_dir = args.dsn_main_dir or os.environ.get("DSN_MAIN_DIR")
+        if _dsn_dir and _dsn_dir not in sys.path:
+            sys.path.insert(0, _dsn_dir)
+        try:
+            import condition_space as _CS
+            mining, loss_type, strict = _CS.project_condition(
+                mining, loss_type, strict)
+        except ImportError:
+            print("[warn] condition_space unavailable: the (mining, loss, "
+                  "strict) triple is NOT legality-projected. Set "
+                  "DSN_MAIN_DIR.", flush=True)
+        loss_cfg = DSNLossConfig(loss_type=loss_type,
+                                 mining_strategy=mining,
+                                 strict_semihard=strict,
+                                 margin=float(args.margin),
+                                 angular_alpha_deg=float(args.angular_alpha_deg),
+                                 lambda_sep=float(args.lambda_sep),
+                                 sep_warmup_frac=float(args.sep_warmup_frac))
+        print("[dsn-loss] %s" % loss_cfg.to_dict(), flush=True)
         dsn_loss_fn = build_dsn_loss(n_classes, total_steps=total,
-                                     cfg=DSNLossConfig(),
+                                     cfg=loss_cfg,
                                      dsn_main_dir=args.dsn_main_dir)
 
     if cfg_arm["fixed_summary"]:
         backbone, bb_kind = FixedStatsSummary(), "fixed-stats"
     else:
-        backbone, bb_kind = make_backbone(W, E, args.dsn_main_dir, args.seed)
+        backbone, bb_kind = make_backbone(
+            W, E, args.dsn_main_dir, args.seed,
+            encoder={"depth_exponent": args.depth_exponent,
+                     "width_multiplier": args.width_multiplier,
+                     "block_family": args.block_family,
+                     "head_fusion": args.head_fusion,
+                     "dropout": args.dropout})
 
     if cfg_arm["freeze_encoder"] and cfg_arm["dsn_domain"] is not None:
         src = real if cfg_arm["dsn_domain"] == "real" else sim
@@ -429,7 +515,8 @@ def main(argv=None):
                        lr=args.lr, weight_decay=args.weight_decay,
                        lambda_dsn=cfg_arm["lambda_dsn"],
                        lambda_rep=cfg_arm["lambda_rep"], patience=99,
-                       rho_grad_probe=cfg_arm["lambda_dsn"] > 0)
+                       rho_grad_probe=cfg_arm["lambda_dsn"] > 0,
+                       beta1=1.0 - float(args.one_minus_beta1))
 
     history = train_joint(model, batcher, tcfg,
                           val_theta=theta[se] if se.sum() else None,

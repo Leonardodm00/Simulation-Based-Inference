@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -59,12 +59,40 @@ __all__ = [
     "EscalationVerdict",
     "escalation_verdict",
     "convergence_trace",
+    "SpaceAdapter",
+    "NPE_ADAPTER",
 ]
 
 # Order is fixed and load-bearing: a skopt point is a positional list, so the
 # mapping between a point and a configuration is this tuple and nothing else.
 KNOB_ORDER = ("hidden_features", "num_transforms", "num_bins",
               "learning_rate", "training_batch_size")
+
+
+@dataclass
+class SpaceAdapter:
+    """How the optimiser talks to ONE search space.
+
+    Everything in this module that is space-specific goes through here:
+    building the skopt dimensions, converting between a positional point and
+    a configuration dict, the identity used to detect duplicates, and which
+    axes count as "on the boundary". The optimiser mechanics -- stateless
+    Optimizer rebuilt from the ledger each round, constant-liar batching,
+    the three-condition escalation rule -- are the same for every space and
+    are written once.
+
+    The default is `NPE_ADAPTER`, the flow-only space of KNOB_ORDER, so
+    every existing call keeps its behaviour unchanged. Stage 4's joint space
+    supplies its own through `joint_space.adapter(campaign, spec)` rather
+    than by copying this module.
+    """
+
+    name: str
+    dimensions: Callable[[Any], List[Any]]
+    config_from_point: Callable[[Sequence[Any]], Dict[str, Any]]
+    point_from_config: Callable[[Dict[str, Any]], List[Any]]
+    config_key: Callable[[Dict[str, Any]], Any]
+    boundary_axes: Callable[[Dict[str, Any], Any], List[str]]
 
 
 @dataclass
@@ -172,7 +200,8 @@ def build_optimizer(spec: SpaceSpec,
                     n_initial_points: int,
                     seed: int = 0,
                     noise: Optional[float] = None,
-                    observations: Optional[Sequence[Tuple[Dict[str, Any], float]]] = None):
+                    observations: Optional[Sequence[Tuple[Dict[str, Any], float]]] = None,
+                    adapter: Optional[SpaceAdapter] = None):
     """Construct an Optimizer and replay any recorded observations.
 
     Parameters
@@ -188,8 +217,9 @@ def build_optimizer(spec: SpaceSpec,
     """
     from skopt import Optimizer
 
+    ad = adapter or NPE_ADAPTER
     opt = Optimizer(
-        dimensions=space_dimensions(spec),
+        dimensions=ad.dimensions(spec),
         base_estimator="GP",
         n_initial_points=int(n_initial_points),
         acq_func="EI",
@@ -207,7 +237,7 @@ def build_optimizer(spec: SpaceSpec,
             pass
 
     if observations:
-        xs = [point_from_config(cfg) for cfg, _ in observations]
+        xs = [ad.point_from_config(cfg) for cfg, _ in observations]
         ys = [float(y) for _, y in observations]
         if xs:
             opt.tell(xs, ys)
@@ -221,7 +251,8 @@ def propose(spec: SpaceSpec,
             seed: int = 0,
             noise: Optional[float] = None,
             exclude: Optional[Sequence[Dict[str, Any]]] = None,
-            max_resample: int = 20) -> List[Dict[str, Any]]:
+            max_resample: int = 20,
+            adapter: Optional[SpaceAdapter] = None) -> List[Dict[str, Any]]:
     """Return n_points fresh configurations, warm-started from observations.
 
     `exclude` lists configurations already proposed but not yet evaluated
@@ -230,10 +261,11 @@ def propose(spec: SpaceSpec,
     surrogate is confident, and an accepted duplicate is merely a wasted job,
     which the trial-id check upstream will in any case detect.
     """
+    ad = adapter or NPE_ADAPTER
     opt = build_optimizer(spec, n_initial_points=n_initial_points, seed=seed,
-                          noise=noise, observations=observations)
-    excl = {_config_key(c) for c in (exclude or [])}
-    excl |= {_config_key(c) for c, _ in observations}
+                          noise=noise, observations=observations, adapter=ad)
+    excl = {ad.config_key(c) for c in (exclude or [])}
+    excl |= {ad.config_key(c) for c, _ in observations}
 
     out: List[Dict[str, Any]] = []
     tries = 0
@@ -245,8 +277,8 @@ def propose(spec: SpaceSpec,
             points = [points]
         fresh = []
         for pt in points:
-            cfg = config_from_point(pt)
-            key = _config_key(cfg)
+            cfg = ad.config_from_point(pt)
+            key = ad.config_key(cfg)
             if key in excl:
                 continue
             excl.add(key)
@@ -272,6 +304,35 @@ def _config_key(config: Dict[str, Any]) -> Tuple:
         else:
             key.append(v)
     return tuple(key)
+
+
+def _npe_boundary_axes(config: Dict[str, Any], spec: SpaceSpec) -> List[str]:
+    """Which searched axes of the flow-only space sit on their range edge."""
+    on_edge: List[str] = []
+    for name, (lo, hi) in (("hidden_features", spec.hidden_features),
+                           ("num_transforms", spec.num_transforms),
+                           ("num_bins", spec.num_bins)):
+        val = config.get(name)
+        if val is None:
+            continue
+        if int(val) <= int(lo) or int(val) >= int(hi):
+            on_edge.append(name)
+    lr = config.get("learning_rate")
+    if lr is not None:
+        lo, hi = spec.learning_rate
+        if float(lr) <= lo * (1.0 + 1e-6) or float(lr) >= hi * (1.0 - 1e-6):
+            on_edge.append("learning_rate")
+    return on_edge
+
+
+NPE_ADAPTER = SpaceAdapter(
+    name="npe_flow_only",
+    dimensions=space_dimensions,
+    config_from_point=config_from_point,
+    point_from_config=point_from_config,
+    config_key=_config_key,
+    boundary_axes=_npe_boundary_axes,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +373,8 @@ def escalation_verdict(observations: Sequence[Tuple[Dict[str, Any], float]],
                        spec: SpaceSpec,
                        tau_stop: float,
                        window: Optional[int] = None,
-                       boundary_tol: float = 1e-6) -> EscalationVerdict:
+                       boundary_tol: float = 1e-6,
+                       adapter: Optional[SpaceAdapter] = None) -> EscalationVerdict:
     """Apply the three-condition rule of the protocol, S3.7.
 
     Escalate if ANY of:
@@ -358,21 +420,8 @@ def escalation_verdict(observations: Sequence[Tuple[Dict[str, Any], float]],
                 "evaluations, more than tau_stop=%.4f"
                 % (v.recent_improvement, w, tau_stop))
 
-    on_edge = []
-    cfg = v.best_config
-    for name, (lo, hi) in (("hidden_features", spec.hidden_features),
-                           ("num_transforms", spec.num_transforms),
-                           ("num_bins", spec.num_bins)):
-        val = cfg.get(name)
-        if val is None:
-            continue
-        if int(val) <= int(lo) or int(val) >= int(hi):
-            on_edge.append(name)
-    lr = cfg.get("learning_rate")
-    if lr is not None:
-        lo, hi = spec.learning_rate
-        if float(lr) <= lo * (1.0 + 1e-6) or float(lr) >= hi * (1.0 - 1e-6):
-            on_edge.append("learning_rate")
+    ad = adapter or NPE_ADAPTER
+    on_edge = ad.boundary_axes(v.best_config, spec)
     if on_edge:
         v.on_boundary = on_edge
         v.escalate = True

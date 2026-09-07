@@ -32,6 +32,7 @@ for _p in (os.path.join(_HERE, "..", "stage1"), os.path.join(_HERE, "..", "stage
 from joint_diagnostics import (effective_rank, information_gain,  # noqa: E402
                                p_eff_from_spectrum_result,
                                per_axis_contraction, spectrum_is_estimable)
+import run_joint_arms as RJA  # noqa: E402
 from run_joint_arms import ARMS, FixedStatsSummary, arm_config, grouped_split  # noqa: E402
 
 RESULTS = []
@@ -88,6 +89,40 @@ def test_r1():
     except ValueError:
         caught = True
     ok("R1f an unknown arm raises", caught, "no silent default")
+
+    # [CHANGE Stage 4] The five encoder axes became flags so the joint tuner
+    # can reach them. Their DEFAULTS must reproduce what make_backbone
+    # hardcoded before, or every Stage 3 number already recorded silently
+    # refers to a different architecture than a re-run would build.
+    d = vars(RJA.build_parser().parse_args(
+        ["--arm", "A1", "--sim-shards", "x", "--out-dir", "y"]))
+    ok("R0e encoder flags default to the pre-Stage-4 hardcoded values",
+       (d["depth_exponent"] == 3 and abs(d["width_multiplier"] - 2.0) < 1e-12
+        and d["block_family"] == 0 and d["head_fusion"] == 0
+        and abs(d["dropout"]) < 1e-12),
+       "defaults moved: %r" % {k: d[k] for k in
+                               ("depth_exponent", "width_multiplier",
+                                "block_family", "head_fusion", "dropout")})
+    ok("R0f make_backbone accepts an encoder override",
+       "encoder" in RJA.make_backbone.__code__.co_varnames,
+       "the tuner needs to pass the searched encoder axes")
+    # [CHANGE Stage 4] The DSN-loss flags must default to DSNLossConfig()'s
+    # defaults, or a flagless Stage 3 run builds a different loss than it did
+    # before the flags existed. Read from the adapter, not from a literal.
+    from dsn_loss_adapter import DSNLossConfig
+    base = DSNLossConfig().to_dict()
+    moved = {k: (d[k], base[k]) for k in
+             ("loss_type", "mining_strategy", "margin", "angular_alpha_deg",
+              "lambda_sep", "sep_warmup_frac") if d[k] != base[k]}
+    if bool(d["strict_semihard"]) != bool(base["strict_semihard"]):
+        moved["strict_semihard"] = (d["strict_semihard"],
+                                    base["strict_semihard"])
+    ok("R0g DSN-loss flags default to DSNLossConfig() defaults",
+       not moved, "defaults moved: %r" % moved)
+    ok("R0h beta1 default reproduces AdamW's",
+       abs((1.0 - d["one_minus_beta1"]) - 0.9) < 1e-12,
+       "one_minus_beta1 default %r gives beta1 %r"
+       % (d["one_minus_beta1"], 1.0 - d["one_minus_beta1"]))
 
 
 # ---------------------------------------------------------------------------

@@ -121,7 +121,10 @@ encoding_guard() {
               smoke_test_diagnostics.py -- check_env.py \
               bootstrap_paired.py smoke_test_bootstrap_paired.py \
               npe_tune.py npe_tune_data.py npe_tune_gates.py \
-              smoke_test_tune.py << 'PYEOF'
+              smoke_test_tune.py joint/stage4/joint_space.py \
+              joint/stage4/smoke_test_joint_space.py \
+              joint/stage4/npe_tune_joint.py \
+              joint/stage4/smoke_test_joint_tune.py << 'PYEOF'
 import sys
 
 # Arguments before "--" are required; after it, optional. A missing optional
@@ -172,6 +175,7 @@ compile_check() {
     [ -f check_env.py ] && files="$files check_env.py"
     [ -f bootstrap_paired.py ] && files="$files bootstrap_paired.py smoke_test_bootstrap_paired.py"
     [ -f npe_tune.py ] && files="$files npe_tune.py npe_tune_data.py npe_tune_gates.py smoke_test_tune.py"
+    [ -f joint/stage4/joint_space.py ] && files="$files joint/stage4/joint_space.py joint/stage4/smoke_test_joint_space.py joint/stage4/npe_tune_joint.py joint/stage4/smoke_test_joint_tune.py"
     # shellcheck disable=SC2086
     "$PY" -m py_compile $files && note "all present modules compile"
 }
@@ -231,6 +235,37 @@ if [ -f smoke_test_tune.py ]; then
 else
     note ""
     note "SKIP: smoke_test_tune.py not present"
+fi
+
+if [ -f joint/stage4/smoke_test_joint_space.py ]; then
+    JS_ARGS=()
+    [ -n "$SELECTOR" ] && JS_ARGS+=(-k "$SELECTOR")
+    # Pure bookkeeping: no torch, no training, seconds. J23, J35 and parts
+    # of J20/J21/J22/J26/J29 need the DSN's condition_space and SKIP or
+    # narrow unless DSN_MAIN_DIR is set; J25/J26/J31 need skopt. Set
+    # DSN_MAIN_DIR before this runs or the clause that matters most
+    # (inactive-coordinate canonicalisation) is not exercised.
+    # The suite reaches the DSN through DSN_MAIN_DIR and this directory
+    # through SBI_HPC_DIR. Default SBI_HPC_DIR to where we already are, so
+    # J26 does not skip merely because the caller did not know to set it.
+    export SBI_HPC_DIR="${SBI_HPC_DIR:-$(pwd)}"
+    if [ -z "${DSN_MAIN_DIR:-}" ]; then
+        note "  NOTE: DSN_MAIN_DIR unset -- J23/J35 SKIP; J20-J22/J26/J29 narrow."
+        note "        Those are the inactive-coordinate clauses; set it."
+    fi
+    stage "suite: joint space (J20-J35)" "$PY" \
+          joint/stage4/smoke_test_joint_space.py "${JS_ARGS[@]}"
+    if [ -f joint/stage4/smoke_test_joint_tune.py ]; then
+        # The tuner suite drives run_joint_arms only through its argv, which
+        # it round-trips against that script's OWN parser (extracted by AST),
+        # so it needs no torch. J29 needs the DSN for an S-A2 config; J31
+        # needs skopt.
+        stage "suite: joint tuner (J28-J36)" "$PY" \
+              joint/stage4/smoke_test_joint_tune.py "${JS_ARGS[@]}"
+    fi
+else
+    note ""
+    note "SKIP: joint/stage4/smoke_test_joint_space.py not present"
 fi
 
 if [ -f smoke_test_bootstrap_paired.py ]; then

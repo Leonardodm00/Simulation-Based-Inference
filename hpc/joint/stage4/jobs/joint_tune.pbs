@@ -1,0 +1,140 @@
+#!/bin/bash
+#PBS -N joint_tune
+#PBS -l select=1:ncpus=4:mem=16gb
+#PBS -l walltime=08:00:00
+#PBS -j oe
+#
+# One array element per PENDING spec of one campaign. The index selects a
+# pending trial id from the sorted listing of
+#
+#     ${RESULTS_DIR}/${CAMPAIGN}/pending/*.json
+#
+# so element k evaluates the k-th pending trial. The listing is taken ONCE,
+# at the top of the element, and sorted: an element must not race another
+# element's removal of a pending file.
+#
+# Dry run first (no allocation, no training, no writes):
+#
+#   DRYRUN=1 CAMPAIGN=S-A1 RESULTS_DIR=/path/tune SIM_SHARDS='/path/S/*.npz' \
+#   OUT_DIR=/path/runs PBS_ARRAY_INDEX=0 bash jobs/joint_tune.pbs
+#
+# Then ONE element for real, then the array:
+#
+#   qsub -J 0-7 -v CAMPAIGN=S-A1,RESULTS_DIR=...,SIM_SHARDS=...,OUT_DIR=... \
+#        jobs/joint_tune.pbs
+#
+# Expected output of a correct element: the resolved argv, then the runner's
+# own output, then "[evaluate] nll=... wrote ...". An element that prints
+# "pending index N out of range" is a stale array range, not a failure: the
+# pending set shrank because other elements consumed it.
+#
+# THE PENDING SET IS THE INDEX MAP. Running `propose` again mid-array
+# renumbers the elements, so a resubmission of "the failed elements" would
+# evaluate different configurations. Propose, then submit, then wait.
+
+set -euo pipefail
+
+# Self-locate: stage4 is the directory holding npe_tune_joint.py. Try the
+# script's own location first, then PBS_O_WORKDIR, and fail loudly with both
+# candidates rather than guessing.
+STAGE4=""
+for cand in "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+            "${PBS_O_WORKDIR:-}"; do
+    if [ -n "$cand" ] && [ -f "$cand/npe_tune_joint.py" ]; then
+        STAGE4="$cand"; break
+    fi
+done
+if [ -z "$STAGE4" ]; then
+    echo "FATAL: could not locate stage4. Candidates tried:" >&2
+    echo "  dirname(BASH_SOURCE)/..: $(dirname "${BASH_SOURCE[0]}")/.." >&2
+    echo "  PBS_O_WORKDIR         : ${PBS_O_WORKDIR:-<unset>}" >&2
+    exit 2
+fi
+cd "$STAGE4"
+
+: "${CAMPAIGN:=S-A1}"
+: "${RESULTS_DIR:=}"
+: "${SIM_SHARDS:=}"
+: "${REAL_SHARDS:=}"
+: "${OUT_DIR:=}"
+: "${EPOCHS:=10}"
+: "${STEPS_PER_EPOCH:=25}"
+: "${SEED:=0}"
+: "${TAG:=}"
+: "${SPLIT_HASH:=}"
+: "${CONTRACT_DIGEST:=}"
+: "${P:=26}"
+: "${EMBEDDING_DIM:=12}"
+: "${D_THETA:=26}"
+: "${DRYRUN:=0}"
+: "${PYBIN:=python}"
+
+MISSING=""
+[ -z "$RESULTS_DIR" ] && MISSING="$MISSING RESULTS_DIR"
+[ -z "$SIM_SHARDS" ]  && MISSING="$MISSING SIM_SHARDS"
+[ -z "$OUT_DIR" ]     && MISSING="$MISSING OUT_DIR"
+if [ -n "$MISSING" ]; then
+    echo "FATAL: required variable(s) unset:$MISSING" >&2
+    echo "  pass with -v NAME=value, or export before a local dry run" >&2
+    exit 2
+fi
+
+IDX="${PBS_ARRAY_INDEX:-0}"
+PENDING_DIR="${RESULTS_DIR}/${CAMPAIGN}/pending"
+if [ ! -d "$PENDING_DIR" ]; then
+    echo "FATAL: no pending directory at $PENDING_DIR" >&2
+    echo "  run: $PYBIN npe_tune_joint.py propose --campaign $CAMPAIGN ..." >&2
+    exit 2
+fi
+
+# One listing, sorted, taken once.
+IDS=()
+while IFS= read -r f; do
+    b="$(basename "$f")"
+    IDS+=("${b%.json}")
+done < <(find "$PENDING_DIR" -maxdepth 1 -name '*.json' | sort)
+
+N=${#IDS[@]}
+if [ "$N" -eq 0 ]; then
+    echo "FATAL: $PENDING_DIR holds no pending specs" >&2
+    exit 2
+fi
+if [ "$IDX" -ge "$N" ]; then
+    echo "pending index $IDX out of range (only $N pending). Stale array"
+    echo "range, not a failure: the pending set shrank."
+    exit 0
+fi
+TRIAL="${IDS[$IDX]}"
+
+echo "=========================================================="
+echo "campaign     : $CAMPAIGN"
+echo "array index  : $IDX of $N pending"
+echo "trial id     : $TRIAL"
+echo "results dir  : $RESULTS_DIR"
+echo "out dir      : $OUT_DIR"
+echo "host         : $(hostname)"
+echo "dry run      : $DRYRUN"
+echo "=========================================================="
+
+ARGS=(npe_tune_joint.py evaluate
+      --campaign "$CAMPAIGN"
+      --results-dir "$RESULTS_DIR"
+      --pending-id "$TRIAL"
+      --sim-shards "$SIM_SHARDS"
+      --out-dir "$OUT_DIR"
+      --seed "$SEED"
+      --epochs "$EPOCHS"
+      --steps-per-epoch "$STEPS_PER_EPOCH"
+      --p "$P"
+      --embedding-dim "$EMBEDDING_DIM"
+      --d-theta "$D_THETA")
+[ -n "$REAL_SHARDS" ]     && ARGS+=(--real-shards "$REAL_SHARDS")
+[ -n "$SPLIT_HASH" ]      && ARGS+=(--split-hash "$SPLIT_HASH")
+[ -n "$CONTRACT_DIGEST" ] && ARGS+=(--contract-digest "$CONTRACT_DIGEST")
+[ -n "$TAG" ]             && ARGS+=(--tag "$TAG")
+[ -n "${DSN_MAIN_DIR:-}" ] && ARGS+=(--dsn-main-dir "$DSN_MAIN_DIR")
+[ -n "${SBI_HPC_DIR:-}" ]  && ARGS+=(--sbi-hpc-dir "$SBI_HPC_DIR")
+[ "$DRYRUN" != "0" ]      && ARGS+=(--dry-run)
+
+echo "+ $PYBIN ${ARGS[*]}"
+"$PYBIN" "${ARGS[@]}"

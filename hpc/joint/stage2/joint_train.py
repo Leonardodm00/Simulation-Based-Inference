@@ -40,7 +40,8 @@ __all__ = ["TrainConfig", "gradient_cosine", "train_joint", "evaluate_npe"]
 class TrainConfig(object):
     def __init__(self, epochs=20, steps_per_epoch=50, lr=5e-4,
                  weight_decay=0.0, grad_clip=5.0, lambda_dsn=0.0,
-                 lambda_rep=0.0, patience=5, rho_grad_probe=True):
+                 lambda_rep=0.0, patience=5, rho_grad_probe=True,
+                 beta1=0.9, beta2=0.999):
         self.epochs = int(epochs)
         self.steps_per_epoch = int(steps_per_epoch)
         self.lr = float(lr)
@@ -50,6 +51,17 @@ class TrainConfig(object):
         self.lambda_rep = float(lambda_rep)
         self.patience = int(patience)
         self.rho_grad_probe = bool(rho_grad_probe)
+        # [CHANGE Stage 4] The betas were left at AdamW's defaults, so
+        # one_minus_beta1 -- a searched axis of JOINT_KNOB_ORDER -- could not
+        # reach the optimiser. A search over an axis that never reaches the
+        # trainer reads as "this axis does not matter" in the partial
+        # dependence, which is the worst kind of null result: confidently
+        # wrong. Defaults reproduce AdamW's, so nothing already run moves.
+        self.beta1 = float(beta1)
+        self.beta2 = float(beta2)
+        if not (0.0 <= self.beta1 < 1.0 and 0.0 <= self.beta2 < 1.0):
+            raise ValueError("betas must lie in [0, 1), got (%g, %g)"
+                             % (self.beta1, self.beta2))
 
     def to_dict(self):
         return dict(self.__dict__)
@@ -130,7 +142,9 @@ def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
         raise RuntimeError("no trainable parameters; every arm must train "
                            "something (the flow at minimum)")
     opt = torch.optim.AdamW(trainable, lr=cfg.lr,
-                            weight_decay=cfg.weight_decay)
+                            weight_decay=cfg.weight_decay,
+                            betas=(getattr(cfg, "beta1", 0.9),
+                                   getattr(cfg, "beta2", 0.999)))
     total_steps = max(1, cfg.epochs * cfg.steps_per_epoch)
     step = 0
     best, best_epoch, best_state = math.inf, -1, None
