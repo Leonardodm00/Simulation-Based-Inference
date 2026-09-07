@@ -31,6 +31,7 @@ ASCII-only by policy (HPC transfer safety).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -48,7 +49,7 @@ import npe_tune_score as TS
 import npe_tune_search as TSR
 
 FAST_TESTS = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8",
-              "S9", "S10", "S14", "S15", "S16")
+              "S9", "S10", "S14", "S15", "S16", "S18", "S19", "S20", "S21")
 FULL_TESTS = ("S11", "S12", "S13", "S17")
 
 
@@ -732,6 +733,265 @@ def test_S12_mixture_matches_ensemble() -> str:
 # Runner
 # ---------------------------------------------------------------------------
 
+
+def test_S18_four_way_split() -> str:
+    """S18: the four-way split deals a gate side like any other -- disjoint,
+    covering, reproducible, tamper-evident -- and the accessors name it."""
+    bank = _fake_bank(n=2000, n_groups=40, seed=3)
+    fr = (0.76, 0.08, 0.08, 0.08)
+    man = TD.make_split(bank, fractions=fr, seed=0,
+                        min_groups_per_side=2, min_rows_per_side=20)
+
+    assert man.version == 2, man.version
+    assert man.has_gate_split and len(man.gate) > 0
+    assert "gate" in man.sizes()
+
+    sides = {nm: set(bank.groups[np.asarray(getattr(man, nm))].tolist())
+             for nm in TD.SIDE_NAMES_4}
+    names = list(TD.SIDE_NAMES_4)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            assert not (sides[a] & sides[b]), "groups leak: %s/%s" % (a, b)
+    total = sum(len(getattr(man, nm)) for nm in names)
+    assert total == bank.n, (total, bank.n)
+    rows = [len(getattr(man, nm)) for nm in names]
+    assert len(set(map(id, [man.train, man.sel, man.gate, man.rep]))) == 4
+
+    # The deal follows the requested fractions only to within a group's
+    # worth of rows, because groups are never divided. The three small sides
+    # are each within one largest-group of quota; `train` absorbs the
+    # accumulated remainder and is checked as exactly that. With few, large
+    # groups an 8% side is only 2-3 groups, so the realised fraction is
+    # coarse -- worth knowing before choosing four-way fractions on a bank
+    # with few topology draws.
+    biggest = max(int(np.sum(bank.groups == g)) for g in np.unique(bank.groups))
+    dev = {nm: len(getattr(man, nm)) - f * bank.n for nm, f in zip(names, fr)}
+    for nm in ("sel", "gate", "rep"):
+        assert abs(dev[nm]) <= biggest, (nm, dev[nm], biggest)
+    assert abs(dev["train"] + dev["sel"] + dev["gate"] + dev["rep"]) < 1e-6, \
+        "the deviations must cancel: the sides cover the bank exactly"
+
+    TD.check_split(bank, man)                      # leak check covers 4 sides
+    assert man.side("gate") == man.gate
+    try:
+        man.side("nonesuch")
+        raise AssertionError("an unknown side name must be refused")
+    except ValueError:
+        pass
+
+    again = TD.make_split(bank, fractions=fr, seed=0, min_groups_per_side=2,
+                          min_rows_per_side=20)
+    assert again.hash() == man.hash(), "same seed must give the same split"
+
+    tmp = tempfile.mkdtemp()
+    try:
+        path = TD.save_split(man, os.path.join(tmp, "split4.json"))
+        back = TD.load_split(path)
+        assert back.hash() == man.hash() and back.gate == man.gate
+        with open(path, "r", encoding="ascii") as fh:
+            d = json.load(fh)
+        d["gate"] = d["gate"][:-1]                 # tamper with the new side
+        with open(path, "w", encoding="ascii") as fh:
+            json.dump(d, fh)
+        try:
+            TD.load_split(path)
+            raise AssertionError("an edited gate side must be refused")
+        except ValueError:
+            pass
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    rep = TD.shape_report(bank, man)
+    assert "gate" in rep and "sel RANKS" in rep, rep
+    return ("4 sides %s rows (max side deviation %d rows vs largest group "
+            "%d), disjoint, tamper-evident on `gate`"
+            % ("/".join(str(r) for r in rows),
+               int(max(abs(v) for v in dev.values())), biggest))
+
+
+def test_S19_three_way_hash_is_unchanged() -> str:
+    """S19: adding the gate side did not move any existing hash.
+
+    A version-1 manifest must (i) still be produced by three fractions,
+    (ii) hash to the value the pre-gate code computed -- i.e. over a payload
+    with no `gate` key at all -- and (iii) load from a JSON file that has no
+    `gate` key, with its recorded hash still verifying. Without this, every
+    frozen split on disk would silently become unloadable.
+    """
+    bank = _fake_bank(n=1200, n_groups=30, seed=5)
+    man = TD.make_split(bank, fractions=(0.8, 0.1, 0.1), seed=0,
+                        min_groups_per_side=2, min_rows_per_side=20)
+    assert man.version == 1 and man.gate == [] and not man.has_gate_split
+    assert man.sizes() == {"train": len(man.train), "sel": len(man.sel),
+                           "rep": len(man.rep)}, "no gate key in a 3-way size"
+
+    # The hash the PRE-CHANGE implementation would have produced: the full
+    # dataclass payload, with no `gate` key. Computed here independently of
+    # the module rather than by calling it.
+    payload = man.to_dict()
+    payload.pop("gate")
+    expect = hashlib.sha256(json.dumps(payload, sort_keys=True,
+                                       separators=(",", ":")).encode("ascii")
+                            ).hexdigest()[:16]
+    assert man.hash() == expect, "a three-way hash moved: %s != %s" % (
+        man.hash(), expect)
+
+    # A file written before the gate side existed still loads and verifies.
+    tmp = tempfile.mkdtemp()
+    try:
+        path = os.path.join(tmp, "old_split.json")
+        legacy = man.to_dict()
+        legacy.pop("gate")
+        legacy["_hash"] = expect
+        with open(path, "w", encoding="ascii") as fh:
+            json.dump(legacy, fh, indent=2, sort_keys=True)
+        back = TD.load_split(path)
+        assert back.gate == [] and back.version == 1
+        assert back.hash() == expect
+        try:
+            back.side("gate")
+            raise AssertionError("side('gate') must refuse a 3-way manifest")
+        except ValueError as exc:
+            assert "three-way" in str(exc), exc
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # Guards on the fraction count and on an inconsistent version.
+    for bad in ((0.8, 0.2), (0.7, 0.1, 0.1, 0.05, 0.05), (0.8, 0.1, 0.2)):
+        try:
+            TD.make_split(bank, fractions=bad, seed=0, min_groups_per_side=2,
+                          min_rows_per_side=20)
+            raise AssertionError("fractions %r must be refused" % (bad,))
+        except ValueError:
+            pass
+    bad_man = TD.make_split(bank, fractions=(0.8, 0.1, 0.1), seed=0,
+                            min_groups_per_side=2, min_rows_per_side=20)
+    bad_man.gate = [1, 2, 3]                       # v1 + a gate side
+    try:
+        bad_man.hash()
+        raise AssertionError("a v1 manifest with a gate side must be refused")
+    except ValueError:
+        pass
+    return "v1 hash %s stable; legacy file loads; guards fire" % man.hash()
+
+
+def test_S20_control_pvalue_is_calibrated() -> str:
+    """S20 (= J19 of HANDOFF_DELTA_MIN_PER_CONFIG_v1): under the null the
+    per-finalist p-value is uniform, and Holm controls the family-wise error.
+
+    Null: the candidate learned NOTHING, so its gain and its controls' gains
+    are draws from one common Gaussian. Pure numpy plus scipy's t; no
+    training. If p_j is uniform on [0, 1] under this null, then rejecting at
+    alpha has false-pass rate alpha -- which is the whole claim.
+    """
+    from scipy import stats as _st
+
+    rng = np.random.default_rng(0)
+    R = 4000
+    detail = []
+    for n_ctrl in (3, 5, 10):
+        for n_s in (1, 3):
+            ps = np.empty(R)
+            for r in range(R):
+                ctrl = rng.normal(0.0, 1.0, n_ctrl)
+                delta = float(np.mean(rng.normal(0.0, 1.0, n_s)))
+                _, ps[r] = TG.control_pvalue(delta, ctrl, n_seeds=n_s)
+            assert np.all(np.isfinite(ps)), "p must be defined for n_ctrl >= 2"
+            ks = _st.kstest(ps, "uniform").pvalue
+            assert ks > 0.01, ("p is not uniform at n_ctrl=%d n_s=%d "
+                               "(KS p=%.4g)" % (n_ctrl, n_s, ks))
+            rate = float(np.mean(ps < 0.05))
+            assert abs(rate - 0.05) < 0.012, (n_ctrl, n_s, rate)
+            detail.append("n_ctrl=%d n_s=%d: KS p=%.2f rate=%.3f"
+                          % (n_ctrl, n_s, ks, rate))
+
+    # Holm across K finalists controls the FAMILY-WISE error: with every
+    # finalist null, the chance that ANY is rejected stays at or below alpha.
+    K, n_ctrl, alpha, R2 = 4, 5, 0.05, 3000
+    any_rej_holm = 0
+    any_rej_raw = 0
+    for r in range(R2):
+        cands = []
+        for k in range(K):
+            ctrl = rng.normal(0.0, 1.0, n_ctrl)
+            cands.append(dict(name="c%d" % k, n_seeds=1,
+                              delta=float(rng.normal(0.0, 1.0)),
+                              control_deltas=ctrl))
+        v = TG.per_finalist_control_verdicts(cands, alpha=alpha,
+                                             floor=-np.inf)
+        any_rej_holm += int(any(x.rejected for x in v))
+        any_rej_raw += int(any(x.pvalue < alpha for x in v))
+    fwer_holm = any_rej_holm / R2
+    fwer_raw = any_rej_raw / R2
+    assert fwer_holm <= alpha + 0.015, "Holm FWER %.3f" % fwer_holm
+    assert fwer_raw > alpha + 0.05, ("uncorrected FWER %.3f should be far "
+                                     "above alpha -- if it is not, this test "
+                                     "is not exercising the multiplicity"
+                                     % fwer_raw)
+    detail.append("K=%d FWER: Holm %.3f vs uncorrected %.3f (alpha %.2f)"
+                  % (K, fwer_holm, fwer_raw, alpha))
+    return "; ".join(detail)
+
+
+def test_S21_mean_plus_3sd_is_not_a_tail() -> str:
+    """S21 (= J19's point): `mean + 3 sd` does NOT achieve its nominal rate
+    at small n_ctrl, which is why the statistic was changed.
+
+    THIS TEST IS THE JUSTIFICATION FOR THE CHANGE. If someone reverts
+    `control_pvalue` to a k-sigma threshold, this must fail loudly.
+
+    Under the null, a 3-sigma threshold "means" a false-pass rate near
+    1.3e-3 one-sided. With n_ctrl small, s is a poor estimate of sigma and
+    the realised rate is orders of magnitude larger. The exact null rate is
+    computable: mean + 3s is exceeded by an independent draw x when
+    (x - mean)/(s sqrt(1 + 1/n)) > 3 sqrt(n)/sqrt(n + 1), i.e. with
+    probability P[T_{n-1} > 3 sqrt(n/(n+1))].
+    """
+    from scipy import stats as _st
+
+    rng = np.random.default_rng(1)
+    R = 200000
+    rows, factors = [], []
+    for n_ctrl in (3, 5, 10):
+        ctrl = rng.normal(0.0, 1.0, size=(R, n_ctrl))
+        x = rng.normal(0.0, 1.0, size=R)
+        thr = ctrl.mean(axis=1) + 3.0 * ctrl.std(axis=1, ddof=1)
+        realised = float(np.mean(x > thr))
+        exact = float(_st.t.sf(3.0 * np.sqrt(n_ctrl / (n_ctrl + 1.0)),
+                               df=n_ctrl - 1))
+        nominal = float(_st.norm.sf(3.0))          # 1.35e-3
+        assert abs(realised - exact) < 4.0 * np.sqrt(exact * (1 - exact) / R) \
+            + 1e-4, (n_ctrl, realised, exact)
+        rows.append("n_ctrl=%d: %.2e (exact %.2e) = %.0fx nominal %.1e"
+                    % (n_ctrl, realised, exact, realised / nominal, nominal))
+        factors.append(realised / nominal)
+
+    # The inflation shrinks as n_ctrl grows (it is a t-vs-normal tail), so
+    # the bound is stated where the procedure actually operates. n_ctrl = 5
+    # is the proposed default and n_ctrl = 3 the smallest defensible value;
+    # in that regime the 3-sigma rule is more than an order of magnitude
+    # off its nominal rate. At n_ctrl = 10 it is still ~7x, but a test that
+    # demanded a large factor THERE would be asserting something that
+    # becomes false as n_ctrl grows, which is not the claim being made.
+    assert factors[0] > 20.0 and factors[1] > 10.0, (
+        "at n_ctrl=3 and 5 the 3-sigma rule must be >20x and >10x its "
+        "nominal rate; got %.1fx and %.1fx. If this no longer holds, "
+        "re-derive before trusting any k-sigma threshold." % (factors[0],
+                                                              factors[1]))
+    assert factors[0] > factors[1] > factors[2], (
+        "the inflation must shrink with n_ctrl: %s" % factors)
+
+    # And the same data under the t p-value hits its nominal rate exactly.
+    n_ctrl = 5
+    ctrl = rng.normal(0.0, 1.0, size=(20000, n_ctrl))
+    x = rng.normal(0.0, 1.0, size=20000)
+    ps = np.array([TG.control_pvalue(x[i], ctrl[i], n_seeds=1)[1]
+                   for i in range(x.size)])
+    rate = float(np.mean(ps < 1.35e-3))
+    assert rate < 4e-3, "the t route should hit its nominal rate, got %.2e" % rate
+    rows.append("t route at the same nominal 1.35e-3: %.2e" % rate)
+    return "; ".join(rows)
+
 TESTS: Dict[str, Tuple[str, Callable[[], str]]] = {
     "S1": ("prior floor is exact; prior estimator gains zero", test_S1_prior_floor),
     "S2": ("information gain: sign and ordering", test_S2_information_gain_positive),
@@ -750,6 +1010,10 @@ TESTS: Dict[str, Tuple[str, Callable[[], str]]] = {
     "S15": ("NEGATIVE PATH: mode recovery rejects a dropped mode", test_S15_mode_recovery_detects_a_dropped_mode),
     "S16": ("benchmark MC floor and BenchmarkContract wiring", test_S16_benchmark_floor_and_contract),
     "S17": ("[needs torch] picklable prior replica == benchmark prior", test_S17_benchmark_prior_matches),
+    "S18": ("four-way split: gate side dealt, disjoint, tamper-evident", test_S18_four_way_split),
+    "S19": ("three-way hashes unchanged; legacy manifests still load", test_S19_three_way_hash_is_unchanged),
+    "S20": ("per-finalist control p is uniform; Holm controls FWER", test_S20_control_pvalue_is_calibrated),
+    "S21": ("JUSTIFIES THE CHANGE: mean+3sd misses its nominal rate", test_S21_mean_plus_3sd_is_not_a_tail),
 }
 
 

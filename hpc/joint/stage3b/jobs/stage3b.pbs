@@ -1,0 +1,80 @@
+#!/bin/bash
+#PBS -N stage3b
+#PBS -l select=1:ncpus=2:mem=8gb
+#PBS -l walltime=00:30:00
+#PBS -j oe
+#
+# Stage 3b needs no training and no new simulation: it consumes the Stage 3
+# run directory plus the two banks. Half an hour is generous.
+#
+# Dry run first (says what is computable and what is missing, computes nothing):
+#
+#   DRYRUN=1 RUNS_DIR=/path/to/stage3/runs bash jobs/stage3b.pbs
+#
+# Then:
+#
+#   qsub -v RUNS_DIR=...,SIM_SHARDS='...',REAL_SHARDS='...',OUT=... jobs/stage3b.pbs
+#
+# Expected output of a correct run: a decomposition table whose `residual`
+# column is 1e-16 or smaller on EVERY seed. eq. (9) is an algebraic identity,
+# so a non-zero residual means the three arms were not scored on the same rows
+# and nothing else in the report can be read.
+
+set -euo pipefail
+
+REPO=""
+for cand in "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+            "${PBS_O_WORKDIR:-}"; do
+  if [ -n "$cand" ] && [ -f "$cand/run_stage3b.py" ]; then
+    REPO="$cand"; break
+  fi
+done
+if [ -z "$REPO" ]; then
+  echo "FATAL: could not locate stage3b. Candidates tried:" >&2
+  echo "  dirname(BASH_SOURCE)/..: $(dirname "${BASH_SOURCE[0]}")/.." >&2
+  echo "  PBS_O_WORKDIR         : ${PBS_O_WORKDIR:-<unset>}" >&2
+  exit 2
+fi
+cd "$REPO"
+
+: "${RUNS_DIR:=}"
+: "${SIM_SHARDS:=}"
+: "${REAL_SHARDS:=}"
+: "${PROBE_CKPT:=}"
+: "${BOOTSTRAP_DIR:=}"
+: "${OUT:=stage3b_report.md}"
+: "${OUT_JSON:=}"
+: "${MAX_PROBE_ROWS:=512}"
+: "${ENV_NAME:=sbi_env}"
+: "${DRYRUN:=0}"
+
+if [ -z "$RUNS_DIR" ]; then
+  echo "FATAL: RUNS_DIR is not set (-v RUNS_DIR=/path/to/stage3/runs)" >&2
+  exit 2
+fi
+
+if [ "$DRYRUN" != "1" ]; then
+  eval "$(conda shell.bash hook)"
+  conda activate "$ENV_NAME"
+fi
+PY="$(command -v python3)"
+echo "interpreter      : $PY"
+echo "conda env        : ${CONDA_DEFAULT_ENV:-none}"
+echo "repo             : $REPO"
+echo "runs dir         : $RUNS_DIR"
+
+EXTRA=()
+[ -n "$SIM_SHARDS" ]   && EXTRA+=(--sim-shards "$SIM_SHARDS")
+[ -n "$REAL_SHARDS" ]  && EXTRA+=(--real-shards "$REAL_SHARDS")
+[ -n "$PROBE_CKPT" ]   && EXTRA+=(--probe-ckpt "$PROBE_CKPT")
+[ -n "$BOOTSTRAP_DIR" ] && EXTRA+=(--bootstrap-dir "$BOOTSTRAP_DIR")
+[ -n "$OUT_JSON" ]     && EXTRA+=(--out-json "$OUT_JSON")
+[ "$DRYRUN" = "1" ]    && EXTRA+=(--dry-run)
+
+"$PY" run_stage3b.py \
+  --runs-dir "$RUNS_DIR" \
+  --max-probe-rows "$MAX_PROBE_ROWS" \
+  --out "$OUT" \
+  "${EXTRA[@]}"
+
+echo "DONE stage3b"

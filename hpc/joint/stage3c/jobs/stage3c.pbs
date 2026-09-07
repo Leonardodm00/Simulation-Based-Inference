@@ -1,0 +1,101 @@
+#!/bin/bash
+#PBS -N stage3c
+#PBS -l select=1:ncpus=4:mem=16gb
+#PBS -l walltime=04:00:00
+#PBS -j oe
+#
+# Stage 3c runs the floors, the aliasing test and the stratification ON THE
+# BENCH, where nu, G and theta are all known. It exits NON-ZERO when a gate
+# fails -- that is the point of the stage, not a malfunction.
+#
+# Dry run first:
+#
+#   DRYRUN=1 CKPT=/path/A1_seed0_ckpt.pt SIM_SHARDS='/path/S/*.npz' \
+#   OUT_DIR=/tmp/s3c bash jobs/stage3c.pbs
+#
+# Then:
+#
+#   qsub -v CKPT=...,SIM_SHARDS=...,OUT_DIR=...,KERNEL_AXES=...,SPREAD_AXES=... \
+#        jobs/stage3c.pbs
+#
+# Expected output of a correct bench run: three gate results printed as
+# "gates: {...}". The stage is PASSED only when none is False. Applying the
+# machinery to real data afterwards requires passing the resulting
+# stage3c_validation.json back in via VALIDATION, with ALLOW_REAL=1.
+
+set -euo pipefail
+
+REPO=""
+for cand in "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+            "${PBS_O_WORKDIR:-}"; do
+  if [ -n "$cand" ] && [ -f "$cand/run_stage3c.py" ]; then
+    REPO="$cand"; break
+  fi
+done
+if [ -z "$REPO" ]; then
+  echo "FATAL: could not locate stage3c. Candidates tried:" >&2
+  echo "  dirname(BASH_SOURCE)/..: $(dirname "${BASH_SOURCE[0]}")/.." >&2
+  echo "  PBS_O_WORKDIR         : ${PBS_O_WORKDIR:-<unset>}" >&2
+  exit 2
+fi
+cd "$REPO"
+
+: "${CKPT:=}"
+: "${SIM_SHARDS:=}"
+: "${OUT_DIR:=}"
+: "${KERNEL_AXES:=}"
+: "${SPREAD_AXES:=}"
+: "${N_FLOOR_DRAWS:=48}"
+: "${N_POST_DRAWS:=128}"
+: "${FD_SEEDS:=3}"
+: "${FD_STEP:=0.02}"
+: "${SEED:=0}"
+: "${ALLOW_REAL:=0}"
+: "${VALIDATION:=}"
+: "${ENV_NAME:=sbi_env}"
+: "${DRYRUN:=0}"
+
+if [ -z "$CKPT" ] || [ -z "$SIM_SHARDS" ] || [ -z "$OUT_DIR" ]; then
+  echo "FATAL: CKPT, SIM_SHARDS and OUT_DIR must all be set" >&2
+  exit 2
+fi
+
+if [ "$DRYRUN" != "1" ]; then
+  eval "$(conda shell.bash hook)"
+  conda activate "$ENV_NAME"
+fi
+PY="$(command -v python3)"
+echo "interpreter      : $PY"
+echo "conda env        : ${CONDA_DEFAULT_ENV:-none}"
+echo "repo             : $REPO"
+
+EXTRA=()
+[ -n "$KERNEL_AXES" ] && EXTRA+=(--kernel-axes "$KERNEL_AXES")
+[ -n "$SPREAD_AXES" ] && EXTRA+=(--spread-axes "$SPREAD_AXES")
+[ -n "$VALIDATION" ]  && EXTRA+=(--validation "$VALIDATION")
+[ "$ALLOW_REAL" = "1" ] && EXTRA+=(--allow-real)
+[ "$DRYRUN" = "1" ]     && EXTRA+=(--dry-run)
+
+mkdir -p "$OUT_DIR"
+
+set +e
+"$PY" run_stage3c.py \
+  --ckpt "$CKPT" \
+  --sim-shards "$SIM_SHARDS" \
+  --out-dir "$OUT_DIR" \
+  --n-floor-draws "$N_FLOOR_DRAWS" \
+  --n-post-draws "$N_POST_DRAWS" \
+  --fd-seeds "$FD_SEEDS" \
+  --fd-step "$FD_STEP" \
+  --seed "$SEED" \
+  "${EXTRA[@]}"
+rc=$?
+set -e
+
+if [ "$rc" -ne 0 ]; then
+  echo "STAGE 3C GATE FAILED (exit $rc). The machinery must NOT be applied to"
+  echo "real data until the bench test passes -- see stage3c_report.md."
+else
+  echo "DONE stage3c -- all gates passed"
+fi
+exit "$rc"
