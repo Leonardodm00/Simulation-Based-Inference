@@ -1,0 +1,83 @@
+#!/bin/bash
+#PBS -N probe_dsn
+#PBS -l select=1:ncpus=4:mem=8gb
+#PBS -l walltime=00:10:00
+#PBS -j oe
+#PBS -o /davinci-1/home/ldellamea/probe_dsn.log
+#
+# Does the DSN code path resolve at run time, on a compute node?
+# No shards, no latent bank, no training. See probe_dsn_runtime.py's docstring.
+#
+# Submit:
+#   qsub jobs/probe_dsn_runtime.pbs
+#
+# Or, overriding anything:
+#   qsub -v PYBIN=...,DSN_MAIN_DIR=...,STAGE4_E=12 jobs/probe_dsn_runtime.pbs
+#
+# PASS CONDITION -- a line that must APPEAR in the log:
+#
+#   [probe] VERDICT: PASS (7/7 checks)
+#
+# Never "no [warn] lines": an absence is also what a crash before the DSN
+# block produces, so it would certify something that was never tested.
+#
+# ENVIRONMENT, and why there is no `conda activate` here
+# ------------------------------------------------------
+# `conda activate` sources every script in the base env's deactivate.d/, which
+# are third-party, root-owned, and not `set -u` clean: on this cluster
+# geotiff-deactivate.sh references _CONDA_SET_GEOTIFF_CSV unguarded and kills
+# the job at activation. Wrapping the activate in `set +u` / `set -u` did NOT
+# fix it here, so this script does not activate at all: it calls the
+# environment's interpreter by absolute path. Nothing foreign is sourced, so
+# there is nothing to be -u-unclean.
+#
+# The trade-off, stated: an env's own activate.d hooks may set library paths
+# (LD_LIBRARY_PATH, MKL/OpenMP thread caps) that a heavy training job needs.
+# For a short diagnostic that is acceptable. Do NOT copy this pattern into a
+# real training job without checking what sbi_env's activate.d actually sets.
+
+set -euo pipefail
+
+: "${PYBIN:=/davinci-1/home/ldellamea/.conda/envs/sbi_env/bin/python}"
+: "${DSN_MAIN_DIR:=$HOME/dsn_main}"
+: "${STAGE4_E:=12}"
+: "${WINDOW:=3000}"
+export DSN_MAIN_DIR
+
+# Self-locate: joint/ is the directory holding probe_dsn_runtime.py. Try the
+# script's own location first, then PBS_O_WORKDIR, and fail loudly with both
+# candidates rather than guessing. qsub copies the script to a spool
+# directory, so BASH_SOURCE alone is not enough.
+JOINT=""
+for cand in "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
+            "${PBS_O_WORKDIR:-}" \
+            "$HOME/SBI/hpc/joint"; do
+    if [ -n "$cand" ] && [ -f "$cand/probe_dsn_runtime.py" ]; then
+        JOINT="$cand"; break
+    fi
+done
+if [ -z "$JOINT" ]; then
+    echo "FATAL: could not locate joint/. Candidates tried:" >&2
+    echo "  dirname(BASH_SOURCE)/..: $(dirname "${BASH_SOURCE[0]}")/.." >&2
+    echo "  PBS_O_WORKDIR         : ${PBS_O_WORKDIR:-<unset>}" >&2
+    echo "  \$HOME/SBI/hpc/joint   : $HOME/SBI/hpc/joint" >&2
+    exit 2
+fi
+cd "$JOINT"
+
+if [ ! -x "$PYBIN" ]; then
+    echo "FATAL: PYBIN is not an executable file: $PYBIN" >&2
+    echo "  pass the right one with -v PYBIN=/path/to/envs/<env>/bin/python" >&2
+    exit 2
+fi
+
+echo "=========================================================="
+echo "host          : $(hostname)"
+echo "joint dir     : $JOINT"
+echo "PYBIN         : $PYBIN"
+echo "DSN_MAIN_DIR  : $DSN_MAIN_DIR"
+echo "=========================================================="
+
+"$PYBIN" probe_dsn_runtime.py \
+    --embedding-size "$STAGE4_E" \
+    --window "$WINDOW"
