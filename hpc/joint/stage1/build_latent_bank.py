@@ -73,10 +73,11 @@ def build_parser():
                    help="comma-separated subset of " + ",".join(GAP_MODES))
     p.add_argument("--n-per-theta", type=int, default=2,
                    help="realisations per theta; >= 2 is what J13b/D17 need")
-    p.add_argument("--provider", choices=("reference", "dsn"),
+    p.add_argument("--provider", choices=("reference", "dsn", "bench"),
                    default="reference")
     p.add_argument("--dsn-main-dir", default=None,
-                   help="overrides $DSN_MAIN_DIR for --provider dsn")
+                   help="overrides $DSN_MAIN_DIR for --provider dsn AND "
+                        "bench (bench imports compute_ifr_trace from there)")
     p.add_argument("--max-records", type=int, default=0,
                    help="cap traces, for a probe run; 0 = no cap")
     p.add_argument("--dry-run", action="store_true",
@@ -85,13 +86,41 @@ def build_parser():
 
 
 def make_provider_and_spec(args):
-    """Return (provider, tag, spec).
+    """Return (provider, tag, spec, scale_convention).
 
     With --provider dsn the bench spec is DERIVED from the DSN LatentSpec
     rather than restated, so the class-centre convention cannot drift between
-    the generator and the prior. With --provider reference it is built from the
-    CLI flags, since there is no generator to agree with.
+    the generator and the prior. With --provider bench the axis set is
+    STRUCTURAL (10 axes, 7 class-bearing -- STAGE_A_BENCH_GENERATOR_SPEC_v1
+    S4), so --n-latent and --n-label-axes are ignored, as the dsn branch
+    already ignores them. With --provider reference it is built from the CLI
+    flags, since there is no generator to agree with.
+
+    `scale_convention` is what the provider ACTUALLY emits, per row of x
+    (O-2, resolved in bench_burst_provider):
+        bench            per_unit_mean   -- trace / n_neurons, the analogue
+                                            of EXTRACTOR_USAGE S4.1 eq. (3)
+        dsn, reference   sum_over_units  -- the undivided population trace
+    [CORRECTION] every earlier sidecar draft declared "per_electrode_mean"
+    unconditionally, which no provider implemented -- the same class of
+    false record as the extractor's "sum_over_electrodes" trap. Truthful
+    per-provider values change the contract digest; no bank exists, so
+    nothing is invalidated.
     """
+    if args.provider == "bench":
+        from bench_burst_provider import (BENCH_AXES, BENCH_LABEL_IDX,
+                                          load_bench_provider)
+        provider = load_bench_provider(args.dsn_main_dir)
+        spec = LatentSBISpec(
+            n_latent=len(BENCH_AXES),
+            label_idx=BENCH_LABEL_IDX,
+            class_centres=simplex_centres(args.n_classes,
+                                          len(BENCH_LABEL_IDX)),
+            tau_ov=args.tau_ov, n_windows_per_trace=args.n_windows,
+            T_win=args.T_win, fs=args.fs, n_neurons=args.n_neurons,
+            seed=args.seed)
+        return provider, "bench", spec, "per_unit_mean"
+
     if args.provider == "dsn":
         from latent_sbi_simulator import (latent_spec_from_dsn,
                                           load_dsn_modules, DSNBurstProvider)
@@ -108,7 +137,8 @@ def make_provider_and_spec(args):
                 "--fs %.6f disagrees with the DSN spec's 1/w_size = %.6f. The "
                 "generator's bin width is authoritative; drop --fs."
                 % (args.fs, spec.fs))
-        return DSNBurstProvider(lbg, gbd, dsn_spec), "dsn", spec
+        return (DSNBurstProvider(lbg, gbd, dsn_spec), "dsn", spec,
+                "sum_over_units")
 
     from smoke_test_latent_sbi import ReferenceBurstProvider
     spec = LatentSBISpec(
@@ -118,7 +148,8 @@ def make_provider_and_spec(args):
         tau_ov=args.tau_ov, n_windows_per_trace=args.n_windows,
         T_win=args.T_win, fs=args.fs, n_neurons=args.n_neurons,
         seed=args.seed)
-    return ReferenceBurstProvider(), "reference-fixture", spec
+    return (ReferenceBurstProvider(), "reference-fixture", spec,
+            "sum_over_units")
 
 
 def main(argv=None):
@@ -149,7 +180,7 @@ def main(argv=None):
         if n_traces == 0:
             raise SystemExit("--max-records is below one donor's worth of wells")
 
-    provider, provider_tag, spec = make_provider_and_spec(args)
+    provider, provider_tag, spec, scale_conv = make_provider_and_spec(args)
     nspec = NuisanceSpec()
     rspec = RealisationSpec(n_per_theta=args.n_per_theta)
     gspec = GapSpec(modes=tuple(m for m in args.gap_modes.split(",") if m),
@@ -229,7 +260,7 @@ def main(argv=None):
         param_names=["phi%d" % k for k in range(spec.n_latent)],
         bounds_theta=[(0.0, 1.0)] * spec.n_latent,
         coord="unit_box", fs=spec.fs, w_size=1.0 / spec.fs, T_win=spec.T_win,
-        W=spec.W, scale_convention="per_electrode_mean",
+        W=spec.W, scale_convention=scale_conv,
         latent_spec=spec.to_dict(), nuisance_spec=nspec.to_dict(),
         realisation_spec=rspec.to_dict(), gap_spec=gspec.to_dict(),
         generator_sha256=provider_tag + ":" + provider_sha256(provider),

@@ -297,6 +297,13 @@ class DSNBurstProvider(BurstProvider):
     Nothing is reimplemented. Smoke test S4 asserts bit-for-bit equality
     against a direct call to those three, and against `window_trace` from
     Sbi-extractor for the windowing.
+
+    Scale (O-2): this provider returns `compute_ifr_trace`'s UNDIVIDED
+    population sum, and deliberately keeps doing so -- S4's bit-for-bit
+    contract pins it, and a DSN bank can never pool with a bench bank
+    anyway. The sidecar records it truthfully as "sum_over_units". The
+    per-unit-mean convention of the real pipeline is implemented by
+    `bench_burst_provider.BenchBurstProvider`; see its docstring.
     """
 
     def __init__(self, lbg, gbd, dsn_spec):
