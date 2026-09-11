@@ -422,30 +422,48 @@ def gate_g3_joint_calibration(theta_true: np.ndarray,
                               alpha: float = 0.05,
                               n_forms: int = 4,
                               coverage_tol: float = 0.05,
+                              gate_on_coverage: bool = False,
                               seed: int = 0) -> GateResult:
-    """G3: expected coverage, data-dependent SBC, and TARP with Z.
+    """G3: data-dependent SBC and TARP with Z. Expected coverage is a
+    reported diagnostic, no longer a gating sub-check.
 
-    Sub-checks, all of which must pass:
+    Gating sub-checks, both of which must pass:
 
-      (i)   expected coverage does not fall below nominal by more than
-            coverage_tol anywhere -- an UNDER-covering posterior is
-            overconfident, which is the failure that matters
-            scientifically; over-coverage is conservative and is allowed;
       (ii)  data-dependent SBC (f = theta^T W z), Holm-Bonferroni over the
             random forms -- the check that actually detects a posterior
             ignoring its conditioner;
       (iii) TARP with Z supplied, so the reference points are a function of
             the observation as the theorem requires.
 
-    Coverage is skipped, with that fact recorded, when the caller could not
-    supply log-densities; the other two still run.
+    Reported but NOT gating:
+
+      (i)   expected coverage. Demoted because it is provably blind exactly
+            where G3 matters: for q(theta|z) = p(theta) the HPD generator
+            loses its z-dependence, so ECP = 1 - alpha at every alpha by
+            construction (Lemos et al. 2023, eq. 20; their Thm. 3 attributes
+            this to the HPD generator not being positionable). Sub-check
+            (iii) is credited with every failure mode (i) catches, so no
+            detection capability is given up. Two further wins: the
+            under-coverage branch below was unreachable in practice (the
+            getattr chains never matched expected_coverage's RankResult, so
+            control always fell to the KS branch and coverage_tol had no
+            effect), and G3 no longer depends on log-densities at all --
+            neither (ii) nor (iii) needs them -- so a battery can no longer
+            report a G3 pass having silently skipped a sub-check.
+
+    Set gate_on_coverage=True to restore the pre-substitution behaviour.
+
+    G2 (marginal SBC) is untouched and remains the only gate that localises
+    a failure to a named parameter axis.
     """
     import npe_diagnostics as D
 
     stats: Dict[str, Any] = {}
     fails: List[str] = []
+    notes: List[str] = []   # recorded, never gating
 
-    # (i) expected coverage
+    # (i) expected coverage -- DIAGNOSTIC ONLY unless gate_on_coverage.
+    stats["coverage_gating"] = bool(gate_on_coverage)
     if log_prob_true is not None and log_prob_samples is not None:
         cov = D.expected_coverage(np.asarray(log_prob_true),
                                   np.asarray(log_prob_samples), seed=seed)
@@ -457,15 +475,20 @@ def gate_g3_joint_calibration(theta_true: np.ndarray,
             deficit = float(np.max(levels - emp))
             stats["coverage_max_deficit"] = deficit
             if deficit > coverage_tol:
-                fails.append("under-coverage by %.3f (tol %.3f)"
-                             % (deficit, coverage_tol))
+                msg = ("under-coverage by %.3f (tol %.3f)"
+                       % (deficit, coverage_tol))
+                (fails if gate_on_coverage else notes).append(msg)
         else:
             ks = float(getattr(cov, "ks_pvalue", float("nan")))
             stats["coverage_ks_pvalue"] = ks
             if np.isfinite(ks) and ks < alpha:
-                fails.append("coverage KS p=%.4f < alpha" % ks)
+                msg = "coverage KS p=%.4f < alpha" % ks
+                (fails if gate_on_coverage else notes).append(msg)
     else:
-        stats["coverage"] = "skipped: log-densities not supplied"
+        # Recorded, not silent: with coverage demoted this is no longer a
+        # skipped GATE, but the absence of the diagnostic should still be
+        # visible in the ledger rather than passed over.
+        stats["coverage"] = "not computed: log-densities not supplied"
 
     # (ii) data-dependent SBC
     dd = D.data_dependent_sbc(theta_true, posterior_samples, np.asarray(Z),
@@ -486,6 +509,16 @@ def gate_g3_joint_calibration(theta_true: np.ndarray,
     stats["tarp_ks_pvalue"] = float(tr.ks_pvalue)
     stats["tarp_reference_mode"] = str(tr.reference_mode)
     stats["tarp_max_deviation"] = float(tr.max_deviation)
+    # Two thresholds coexist: TARPResult.passes uses its own pass_alpha
+    # (0.005) while this gate uses `alpha` (0.05 by default). They can
+    # disagree on the same data in either direction. This gate is
+    # authoritative; the other is recorded so a disagreement is visible in
+    # the ledger instead of latent.
+    stats["tarp_gate_alpha"] = float(alpha)
+    stats["tarp_passes_at_pass_alpha"] = bool(tr.passes)
+    stats["tarp_threshold_disagreement"] = bool(
+        bool(tr.passes) != bool(not (np.isfinite(tr.ks_pvalue)
+                                     and tr.ks_pvalue < alpha)))
     if str(tr.reference_mode).lower().startswith("random"):
         fails.append("TARP fell back to x-independent reference points; the "
                      "theorem's hypothesis is then unmet and the result is "
@@ -493,11 +526,16 @@ def gate_g3_joint_calibration(theta_true: np.ndarray,
     elif np.isfinite(tr.ks_pvalue) and tr.ks_pvalue < alpha:
         fails.append("TARP KS p=%.4f < alpha" % tr.ks_pvalue)
 
+    if notes:
+        stats["non_gating_notes"] = list(notes)
+
     passed = not fails
     return GateResult(
         name="G3_joint_calibration",
         passed=passed,
-        detail=("coverage, data-dependent SBC and TARP all clear"
+        detail=("data-dependent SBC and TARP clear"
+                + ("; coverage diagnostic flagged: " + "; ".join(notes)
+                   if notes else "")
                 if passed else "; ".join(fails)),
         stats=stats,
     )

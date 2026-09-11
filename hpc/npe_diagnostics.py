@@ -578,10 +578,16 @@ class TARPResult:
     max_deviation: float
     reference_mode: str = "random"
     notes: List[str] = field(default_factory=list)
+    #: Threshold used by `passes`. Kept at 0.005 so existing callers
+    #: (npe_plots, smoke_test_diagnostics) are unchanged, but now visible
+    #: rather than hardcoded: G3 gates on its own `alpha` (0.05 by default),
+    #: so `passes` and G3's TARP verdict CAN disagree on the same data.
+    #: G3 records both; pick one deliberately before relying on either.
+    pass_alpha: float = 0.005
 
     @property
     def passes(self) -> bool:
-        return self.ks_pvalue > 0.005
+        return self.ks_pvalue > self.pass_alpha
 
     def summary(self) -> str:
         head = ("  %-26s KS p=%.4f  max|dev|=%.3f  %s  [refs: %s]"
@@ -674,17 +680,28 @@ def tarp(theta_true: np.ndarray, posterior_samples: np.ndarray,
             idx = rng.permutation(n)
             h = max(2, n // 2)
             first, second = idx[:h], idx[h:]
-            r = np.empty_like(theta_true)
+            # NaN-filled, not np.empty_like: a fold skipped by the `continue`
+            # below leaves its rows unwritten, and with np.empty_like those
+            # rows are uninitialised memory used as reference points. The
+            # post-loop guard must therefore test EVERY row, not the last
+            # `fit` left in the loop variable -- with first too small and
+            # second adequate, the old guard passed while r[second] was
+            # garbage.
+            r = np.full_like(theta_true, np.nan, dtype=np.float64)
             for fit, app in ((first, second), (second, first)):
                 if fit.size < p + 1 or app.size == 0:
                     continue
                 A = np.c_[Za[fit], np.ones(fit.size)]
                 coef, *_ = np.linalg.lstsq(A, theta_true[fit], rcond=None)
                 r[app] = np.c_[Za[app], np.ones(app.size)] @ coef
-            if fit.size < p + 1:
+            if not np.all(np.isfinite(r)):
+                n_bad = int(np.sum(~np.all(np.isfinite(r), axis=1)))
                 r = rng.uniform(lo, hi, size=(n, p))
-                notes.append("too few observations to fit an x-dependent "
-                             "readout; fell back to random references")
+                use_x = False
+                notes.append("could not fit an x-dependent readout for %d of "
+                             "%d observations (each half needs at least "
+                             "d_theta+1 = %d rows); fell back to random "
+                             "references" % (n_bad, n, p + 1))
         else:
             r = rng.uniform(lo, hi, size=(n, p))
 
