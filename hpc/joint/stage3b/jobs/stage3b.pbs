@@ -54,8 +54,16 @@ if [ -z "$RUNS_DIR" ]; then
 fi
 
 if [ "$DRYRUN" != "1" ]; then
+  # `set -u` MUST be off across the hook AND the activate. The hook
+  # deactivates the current env, which sources base's deactivate.d/
+  # scripts; those are third-party and not -u clean (confirmed on
+  # davinci: geotiff-deactivate.sh line 5, _CONDA_SET_GEOTIFF_CSV).
+  # Under -u that aborts, conda returns non-zero, and -e kills the job
+  # before a single line of science runs. Restore -u immediately after.
+  set +u
   eval "$(conda shell.bash hook)"
   conda activate "$ENV_NAME"
+  set -u
 fi
 PY="$(command -v python3)"
 echo "interpreter      : $PY"

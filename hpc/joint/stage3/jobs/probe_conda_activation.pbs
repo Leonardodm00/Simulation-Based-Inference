@@ -1,0 +1,46 @@
+#!/bin/bash
+#PBS -N probe_conda_activation
+#PBS -l select=1:ncpus=1:mem=1gb
+#PBS -l walltime=00:05:00
+#PBS -j oe
+#PBS -o /davinci-1/home/ldellamea/probe_conda_activation.log
+#
+# Confirms the conda activation guard survives a GENUINELY FRESH PBS batch
+# shell -- not an already-activated interactive one.
+#
+# Why this is a separate check from anything run so far: `conda activate
+# <env>` always deactivates whatever the CURRENT stack level is first, and
+# it is specifically deactivating FROM BASE that sources the unguarded
+# base/etc/conda/deactivate.d/geotiff-deactivate.sh. Every interactive
+# verification this session -- including the earlier "$-" instrumentation
+# that reported EXIT=0 -- was run from a shell where sbi_env was ALREADY
+# active, so `conda activate sbi_env` deactivated FROM sbi_env, never
+# touched base, and could not have caught this bug even if the fix were
+# wrong. A fresh qsub job is the one shell state that matches what the
+# original failing job (1575002) actually hit.
+#
+# Submit:
+#   qsub jobs/probe_conda_activation.pbs
+#
+# PASS CONDITION -- a line that must APPEAR:
+#   [probe] REACHED, flags=ehuBc, CONDA_SHLVL was <unset or 0>
+
+set -euo pipefail
+
+echo "[probe] host              : $(hostname)"
+echo "[probe] CONDA_SHLVL at start (must be unset/0 -- proves this shell"
+echo "[probe]   was never activated, i.e. this is a genuine fresh-base"
+echo "[probe]   test, not a repeat of the compromised interactive checks)"
+echo "[probe]   -> ${CONDA_SHLVL:-<unset>}"
+echo "[probe] CONDA_DEFAULT_ENV at start (must be unset or 'base')"
+echo "[probe]   -> ${CONDA_DEFAULT_ENV:-<unset>}"
+
+set +u
+eval "$(conda shell.bash hook)"
+conda activate sbi_env
+set -u
+
+echo "[probe] REACHED, flags=$-"
+which python
+python -c "import torch; print('[probe] torch', torch.__version__)"
+echo "[probe] VERDICT: PASS"

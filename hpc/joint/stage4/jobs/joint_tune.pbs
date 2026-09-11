@@ -18,7 +18,12 @@
 #   DRYRUN=1 CAMPAIGN=S-A1 RESULTS_DIR=/path/tune SIM_SHARDS='/path/S/*.npz' \
 #   OUT_DIR=/path/runs PBS_ARRAY_INDEX=0 bash jobs/joint_tune.pbs
 #
-# Then ONE element for real, then the array:
+# Then ONE element for real (no -J; PBS_ARRAY_INDEX picks the pending file):
+#
+#   qsub -v CAMPAIGN=S-A1,RESULTS_DIR=...,SIM_SHARDS=...,OUT_DIR=...,PBS_ARRAY_INDEX=0 \
+#        jobs/joint_tune.pbs
+#
+# Then, and only then, the array:
 #
 #   qsub -J 0-7 -v CAMPAIGN=S-A1,RESULTS_DIR=...,SIM_SHARDS=...,OUT_DIR=... \
 #        jobs/joint_tune.pbs
@@ -67,6 +72,23 @@ cd "$STAGE4"
 : "${EMBEDDING_DIM:=12}"
 : "${D_THETA:=26}"
 : "${DRYRUN:=0}"
+: "${ENV_NAME:=sbi_env}"
+: "${SKIP_CONDA:=0}"
+
+# This script used to rely on PYBIN alone and never activated conda, so a
+# bare `qsub -v CAMPAIGN=...` ran under whatever `python` the job default
+# resolved to and died with ModuleNotFoundError. Activate like the Stage 1/3
+# scripts do. `set -u` MUST be off across BOTH the hook and the activate:
+# the hook deactivates the current env, sourcing base's deactivate.d/
+# scripts, which are third-party and not -u clean (confirmed on davinci:
+# geotiff-deactivate.sh line 5, _CONDA_SET_GEOTIFF_CSV). Under -u that
+# aborts, conda returns non-zero, and -e kills the job at activation.
+if [ "$SKIP_CONDA" != "1" ]; then
+    set +u
+    eval "$(conda shell.bash hook)"
+    conda activate "$ENV_NAME"
+    set -u
+fi
 : "${PYBIN:=python}"
 
 MISSING=""

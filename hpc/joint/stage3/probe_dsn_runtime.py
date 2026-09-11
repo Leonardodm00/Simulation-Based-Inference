@@ -53,8 +53,12 @@ import argparse
 import os
 import sys
 
+# Same sys.path block run_joint_arms.py uses (its lines 48-53), minus the
+# stage1 entry: this probe never touches the latent bank. Living next to
+# run_joint_arms.py is deliberate -- the mirroring risk in the docstring is
+# only manageable if the two files are read together.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-for _p in (os.path.join(_HERE, "stage2"), os.path.join(_HERE, "stage3"), _HERE):
+for _p in (os.path.join(_HERE, "..", "stage2"), _HERE):
     _p = os.path.abspath(_p)
     if _p not in sys.path:
         sys.path.insert(0, _p)

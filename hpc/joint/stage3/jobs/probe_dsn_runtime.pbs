@@ -9,7 +9,7 @@
 # No shards, no latent bank, no training. See probe_dsn_runtime.py's docstring.
 #
 # Submit:
-#   qsub jobs/probe_dsn_runtime.pbs
+#   qsub jobs/probe_dsn_runtime.pbs   # from hpc/joint/stage3
 #
 # Or, overriding anything:
 #   qsub -v PYBIN=...,DSN_MAIN_DIR=...,STAGE4_E=12 jobs/probe_dsn_runtime.pbs
@@ -44,26 +44,26 @@ set -euo pipefail
 : "${WINDOW:=3000}"
 export DSN_MAIN_DIR
 
-# Self-locate: joint/ is the directory holding probe_dsn_runtime.py. Try the
+# Self-locate: stage3/ is the directory holding probe_dsn_runtime.py. Try the
 # script's own location first, then PBS_O_WORKDIR, and fail loudly with both
 # candidates rather than guessing. qsub copies the script to a spool
 # directory, so BASH_SOURCE alone is not enough.
-JOINT=""
+STAGE3=""
 for cand in "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" \
             "${PBS_O_WORKDIR:-}" \
-            "$HOME/SBI/hpc/joint"; do
+            "$HOME/SBI/hpc/joint/stage3"; do
     if [ -n "$cand" ] && [ -f "$cand/probe_dsn_runtime.py" ]; then
-        JOINT="$cand"; break
+        STAGE3="$cand"; break
     fi
 done
-if [ -z "$JOINT" ]; then
-    echo "FATAL: could not locate joint/. Candidates tried:" >&2
+if [ -z "$STAGE3" ]; then
+    echo "FATAL: could not locate stage3/. Candidates tried:" >&2
     echo "  dirname(BASH_SOURCE)/..: $(dirname "${BASH_SOURCE[0]}")/.." >&2
     echo "  PBS_O_WORKDIR         : ${PBS_O_WORKDIR:-<unset>}" >&2
-    echo "  \$HOME/SBI/hpc/joint   : $HOME/SBI/hpc/joint" >&2
+    echo "  \$HOME/SBI/hpc/joint/stage3 : $HOME/SBI/hpc/joint/stage3" >&2
     exit 2
 fi
-cd "$JOINT"
+cd "$STAGE3"
 
 if [ ! -x "$PYBIN" ]; then
     echo "FATAL: PYBIN is not an executable file: $PYBIN" >&2
@@ -73,7 +73,7 @@ fi
 
 echo "=========================================================="
 echo "host          : $(hostname)"
-echo "joint dir     : $JOINT"
+echo "stage3 dir    : $STAGE3"
 echo "PYBIN         : $PYBIN"
 echo "DSN_MAIN_DIR  : $DSN_MAIN_DIR"
 echo "=========================================================="
