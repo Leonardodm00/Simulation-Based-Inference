@@ -21,24 +21,22 @@ Layers, because they are not interchangeable
     pseudo-real arm -- becomes undefined. Shifting the range keeps every
     recorded coordinate inside the box while moving the physics, which is what
     "a range shifted partly outside the simulated prior box" actually means.
-(b) heavy-tailed burst durations -> GENERATOR layer: it changes the burst model
-    itself. This module can only pass an override dict through to the provider;
-    binding it needs the DSN generator's parameter names. See OPEN below.
+(b) heavy-tailed burst durations -> GENERATOR layer: REMOVED 2026-09-09.
+    It was never bound to the generator: `param_overrides` emitted placeholder
+    keys, and `DSNBurstProvider.__call__` raises NotImplementedError on any key
+    it does not recognise -- so selecting it crashed the job rather than
+    degrading. An unimplemented mode listed as available is worse than an
+    absent one. To reinstate it, bind real `BurstParams` field names first,
+    THEN re-add the mode here.
 (c) slow background drift  -> TRACE layer: additive, absent from p_0.
 (d) contaminated windows   -> TRACE layer: a fraction of windows replaced.
-
-OPEN (blocks nothing else): perturbation (b) is emitted as a
-`param_overrides` dict and is a no-op until the provider consumes it. The keys
-below are placeholders and MUST be reconciled against
-`latent_burst_generator.BurstParams` before (b) is used. Everything else in
-this module is complete.
 
 Pure ASCII, LF only. numpy only.
 """
 
 import numpy as np
 
-GAP_MODES = ("range_shift", "heavy_tail", "drift", "contamination")
+GAP_MODES = ("range_shift", "drift", "contamination")
 
 
 class GapSpec(object):
@@ -59,14 +57,11 @@ class GapSpec(object):
         misspecification present only in R.
     contam_frac_max : float
         At pi = 1, this fraction of windows is contaminated.
-    tail_df_min : float
-        At pi = 1, the burst-duration distribution has this many degrees of
-        freedom (smaller = heavier tail). Passed through, not applied here.
     """
 
     def __init__(self, modes=("range_shift",), pi=0.0, shift_max=0.35,
                  drift_amp_max=0.5, drift_period_s=120.0,
-                 contam_frac_max=0.20, tail_df_min=2.5):
+                 contam_frac_max=0.20):
         bad = [m for m in modes if m not in GAP_MODES]
         if bad:
             raise ValueError("unknown gap modes: %r" % (bad,))
@@ -78,7 +73,6 @@ class GapSpec(object):
         self.drift_amp_max = float(drift_amp_max)
         self.drift_period_s = float(drift_period_s)
         self.contam_frac_max = float(contam_frac_max)
-        self.tail_df_min = float(tail_df_min)
 
     @property
     def active(self):
@@ -93,7 +87,6 @@ class GapSpec(object):
             "drift_amp_max": self.drift_amp_max,
             "drift_period_s": self.drift_period_s,
             "contam_frac_max": self.contam_frac_max,
-            "tail_df_min": self.tail_df_min,
         }
 
 
@@ -113,24 +106,20 @@ def free_axis_range_shift(spec):
 
 
 # ---------------------------------------------------------------------------
-# (b) generator layer -- pass-through only, see OPEN in the module docstring
+# (b) generator layer -- intentionally empty, see the module docstring
 # ---------------------------------------------------------------------------
 
 def param_overrides(spec):
-    """Overrides for the burst generator: perturbations (a) and (b).
+    """Overrides for the burst generator: perturbation (a) only.
 
     Returns an empty dict when inactive, so a provider that ignores the
-    argument entirely still behaves correctly at pi = 0.
+    argument entirely still behaves correctly at pi = 0. Perturbation (b) was
+    removed; this function must never emit a key no provider consumes.
     """
     out = {}
     shift = free_axis_range_shift(spec)
     if shift:
         out["free_axis_range_shift"] = shift
-    if spec.active and "heavy_tail" in spec.modes:
-        # Interpolate df from a large value (near-Gaussian) down to tail_df_min.
-        df = (1.0 - spec.pi) * 30.0 + spec.pi * spec.tail_df_min
-        out["burst_duration_dist"] = "student_t"
-        out["burst_duration_df"] = float(df)
     return out
 
 
