@@ -286,6 +286,49 @@ def test_c6():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# C7 -- d17_realisation_audit records and never gates (D17, option (c))
+# ---------------------------------------------------------------------------
+
+def test_c7():
+    from run_stage3c import d17_realisation_audit
+    kernel_idx = [0, 1, 2]
+    theta = np.tile(np.array([[0.2, 0.5, 0.8, 0.3],
+                              [0.4, 0.5, 0.1, 0.9]]), (3, 1))
+
+    # no realisation_id field: the historical-bank case reports, not raises
+    r0 = d17_realisation_audit({"theta": theta}, kernel_idx)
+    ok("C7a missing realisation_id is reported, not raised",
+       r0["available"] is False and "note" in r0 and bool(r0["note"]),
+       "available=False with a note")
+    ok("C7a and carries no passed key",
+       "passed" not in r0,
+       "structurally cannot fail the run")
+
+    # 1 realisation per kernel value: the exact scenario D17 is about
+    sim1 = {"theta": theta,
+            "realisation_id": np.array([7, 9, 7, 9, 7, 9], dtype=np.uint64)}
+    r1 = d17_realisation_audit(sim1, kernel_idx)
+    ok("C7b worst case 1 realisation per kernel value is counted",
+       r1["available"] is True and r1["worst_case_realisations"] == 1
+       and r1["n_kernel_values"] == 2,
+       "worst=1 over 2 kernel values")
+    ok("C7b the D17 scenario itself does not fail",
+       "passed" not in r1,
+       "count of 1 is recorded, not flagged (option (c))")
+
+    # >= 2 realisations: recording is symmetric, a good count is no pass
+    sim2 = {"theta": theta,
+            "realisation_id": np.array([1, 1, 2, 2, 3, 3], dtype=np.uint64)}
+    r2 = d17_realisation_audit(sim2, kernel_idx)
+    ok("C7c worst case >= 2 is counted the same way",
+       r2["available"] is True and r2["worst_case_realisations"] == 3,
+       "worst=3, same code path")
+    ok("C7c and a good count is not a pass either",
+       "passed" not in r2,
+       "recording is symmetric; passing was never the point")
+
+
 def main():
     print("=" * 80)
     print("Smoke test: Stage 3c -- floors, aliasing, stratification, P10")
@@ -296,6 +339,7 @@ def main():
     test_c4()
     test_c5()
     test_c6()
+    test_c7()
     print("-" * 80)
     n_fail = RESULTS.count("FAIL")
     print("%d passed, %d failed, %d skipped"

@@ -37,7 +37,8 @@ for _p in (os.path.join(_HERE, "..", "stage1"), os.path.join(_HERE, "..", "stage
 
 from latent_bank import concat_shards                          # noqa: E402
 from latent_nuisance import NU_COMPONENTS, NuisanceSpec        # noqa: E402
-from latent_realisation import RealisationSpec                 # noqa: E402
+from latent_realisation import (RealisationSpec,               # noqa: E402
+                                distinct_realisations_per_theta)
 from latent_sbi_simulator import LatentSBISpec, prior_log_prob  # noqa: E402
 from aliasing import aliasing_report, jacobian_nu, jacobian_theta  # noqa: E402
 from nuisance_floor import nuisance_floor, validate_against_injected  # noqa: E402
@@ -80,6 +81,52 @@ def build_parser():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--dry-run", action="store_true")
     return p
+
+
+def d17_realisation_audit(sim, kernel_idx):
+    """Count connectivity realisations per kernel-parameter value. D17, (c).
+
+    Informational by construction: the returned dict NEVER contains a
+    `passed` key, and main()'s exit code is built only from validation
+    entries that have one, so this record is structurally unable to fail a
+    run. That is the mechanism, not a convention: D17 was closed as option
+    (c) -- accept the kernel-axis p_eff bias and record it -- so a count of 1
+    (the exact scenario D17 is about) is reported, not flagged, and a count
+    >= 2 is reported the same way, because passing/failing was never the
+    point. See JOINT_DSN_NPE_PLAN_v0_6.md S8 (D17) and
+    HANDOFF_D17_option_c.md.
+
+    Parameters
+    ----------
+    sim : dict of arrays from `concat_shards` -- uses `theta` (n, d_theta)
+        and, when present, `realisation_id` (n,).
+    kernel_idx : sequence of int -- column indices of the kernel-topology
+        axes in theta (the 3 Weibull axes), as parsed from `--kernel-axes`.
+
+    Returns
+    -------
+    dict with `available` (bool) and a human-readable `note`; when
+    `available`, also `worst_case_realisations` (int, the minimum over
+    distinct kernel-axis values), `n_kernel_values` (int) and
+    `kernel_idx` (list). No `passed` key, ever.
+    """
+    if "realisation_id" not in sim:
+        return {"available": False,
+                "note": "sim bank carries no realisation_id field (expected "
+                        "for the historical ANN campaign export); the D17 "
+                        "count cannot be computed from per-row data here. "
+                        "See HANDOFF_D17_option_c.md S5 for the two "
+                        "unsettled sub-questions before retrofitting one."}
+    theta_k = np.asarray(sim["theta"], dtype=np.float64)[:, list(kernel_idx)]
+    counts = distinct_realisations_per_theta(theta_k, sim["realisation_id"])
+    worst = int(min(counts.values()))
+    return {"available": True,
+            "worst_case_realisations": worst,
+            "n_kernel_values": len(counts),
+            "kernel_idx": [int(k) for k in kernel_idx],
+            "note": "recorded under D17 option (c): %d distinct kernel-axis "
+                    "value(s), worst case %d realisation(s) per value. "
+                    "Recorded, not gated." % (len(counts), worst)}
 
 
 def main(argv=None):
@@ -157,13 +204,21 @@ def main(argv=None):
         kc = kernel_axis_concentration(rf, kernel_idx)
         validation["realisation_concentration"] = {
             "passed": bool(kc["concentrated"]), **kc}
+        if kc["concentrated"]:
+            verdict = ("CONCENTRATED -- D17's premise holds: realisation "
+                       "noise sits on the kernel axes, so option (c) "
+                       "(accept the bias on these 3 axes, recorded below) "
+                       "is a coherent response")
+        else:
+            verdict = ("NOT concentrated -- D17's premise does not hold "
+                       "here, so option (c) (accept the bias on these 3 "
+                       "axes) is not a coherent response either; D17 "
+                       "should reopen")
         report += ["Realisation floor concentration on the kernel axes: "
                    "%.2f (uniform reference %.2f) -- %s. This is the D17 "
                    "check."
-                   % (kc["concentration"], kc["uniform_reference"],
-                      "CONCENTRATED" if kc["concentrated"] else "NOT "
-                      "concentrated, so masking the kernel axes out of the "
-                      "loss does not address the confound"), ""]
+                   % (kc["concentration"], kc["uniform_reference"], verdict),
+                   ""]
 
     # ---- aliasing ---------------------------------------------------------
     Js_t, Js_n = [], []
@@ -235,6 +290,13 @@ def main(argv=None):
         report += ["## Stratification, eq. (5)", "",
                    "Not computable: %s" % exc, ""]
         validation["stratification"] = {"passed": False, "error": str(exc)}
+
+    # ---- D17 realisation audit (informational; option (c)) ----------------
+    if kernel_idx:
+        audit = d17_realisation_audit(sim, kernel_idx)
+        validation["d17_realisation_audit"] = audit
+        report += ["## D17 realisation audit (option (c): recorded, "
+                   "not gated)", "", audit["note"], ""]
 
     # ---- P10 --------------------------------------------------------------
     x_all = torch.as_tensor(np.asarray(sim["x"]), dtype=torch.float32)

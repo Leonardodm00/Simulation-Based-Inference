@@ -506,6 +506,9 @@ def main(argv=None):
         seed=args.seed, **met_kw)
     print(batcher.report())
 
+    # Sigma0 spans all d_theta = 26 axes, kernel axes included. Decision, not
+    # oversight: D17 closed as option (c) -- accept and record the kernel-axis
+    # p_eff bias, no masking. See JOINT_DSN_NPE_PLAN_v0_6.md S8 (D17).
     Sigma0 = box_prior_covariance(lo.numpy(), hi.numpy(),
                                   dtype=torch.get_default_dtype())
     rep_crit = ReplicateConsistencyLoss(Sigma0, n_draws=args.n_posterior_draws,

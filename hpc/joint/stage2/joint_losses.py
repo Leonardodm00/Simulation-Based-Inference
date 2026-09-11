@@ -34,6 +34,16 @@ carelessly.
      map -- the global minimum of every pure invariance objective -- is pushed
      to +infinity rather than merely penalised.
 
+Axis coverage (D17, closed as option (c))
+-----------------------------------------
+The loss constrains ALL 26 theta axes, including the 3 Weibull kernel axes
+(p_0, d_0, beta). This is a decision, not an oversight: D17 was closed as
+option (c) -- accept the known p_eff overstatement on the kernel axes (one
+connectivity realisation per kernel-topology value in the bank) and record
+it, rather than mask those axes out of the loss. There is deliberately no
+axis-subset parameter in this API. See JOINT_DSN_NPE_PLAN_v0_6.md S8 (D17)
+and HANDOFF_D17_option_c.md.
+
 Numerical choices, stated rather than buried
 --------------------------------------------
 * The quadratic form is evaluated by a Cholesky solve on 2*C_bar, never by

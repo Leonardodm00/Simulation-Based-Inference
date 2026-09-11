@@ -1393,10 +1393,12 @@ $\theta$ at all.
 - Same arms on the MFR-filtered, $\theta$-deduplicated 29 616-row bank with the
   existing grouped split. Cost: $W$ per Stage 0, $\sim 3\times10^4$ rows per
   member on CPU; budget from one probe epoch before any array.
-- **New in v0.6:** before A5 trains on the real cohort, run the D17 check on
-  the *real* bank's terms -- count distinct realisations per kernel-parameter
-  value; if it is one, the kernel axes stay in the diagnostic and out of the
-  loss until the campaign is extended.
+- **New in v0.6, amended by D17's closure as (c):** before A5 trains on the
+  real cohort, run the D17 audit on the *real* bank's terms -- count distinct
+  realisations per kernel-parameter value -- and **record the count
+  regardless of its value**. All 26 axes stay in the loss either way (D17,
+  option (c)); the count goes into the Stage 3c report via
+  `d17_realisation_audit()`, which is informational and cannot gate the run.
 - Downstream: the gate and witness consume $z$ arrays and are
   encoder-agnostic, so re-export to a **new stem** and re-run; every witness
   number is encoder-conditional [KB]. TSNPE is untouched.
@@ -1477,16 +1479,32 @@ stated in advance.
   means, or move to the Bayes-factor form (3d), which is correct under
   multimodality but costs density evaluations? Settle by first checking
   whether the posteriors are in fact multimodal -- nothing currently does.
-- **D17 -- Realisation marginalisation on the kernel axes (new in v0.6).**
-  Does the bank contain more than one connectivity realisation per
-  $\theta^{\rm topo}$ value? If not, $F$ and hence $p_{\rm eff}$ are overstated
-  on those axes and eq. (3c) would push $T_{gg'}$ upward there. Options:
-  (a) extend the campaign with repeated realisations; (b) keep all 26 axes in
-  the diagnostic and mask the 3 kernel axes out of the loss until (a);
-  (c) accept the bias and record it. Gated by J13b and by the realisation
-  floor of Stage 3c. **Until D17 is decided, option (b) is the default.**
-
 **Closed.**
+
+- **D17 -- Realisation marginalisation on the kernel axes (closed as option
+  (c): accept and record, not mask).** The bank draws one connectivity
+  realisation per $\theta^{\rm topo}$ value, so $F$ and hence $p_{\rm eff}$
+  are overstated on the 3 kernel axes and eq. (3c) pushes $T_{gg'}$ upward
+  there. Options were: (a) extend the campaign with repeated realisations;
+  (b) keep all 26 axes in the diagnostic and mask the 3 kernel axes out of
+  the loss until (a); (c) accept the bias and record it. **Why (c) and not
+  (b), the previous default:** (b) was never implemented -- `joint_losses.py`
+  has no axis-subset parameter, and its one call site builds $\Sigma_0$ from
+  all 26 axes unconditionally -- so the runtime behaviour of (b)-pending and
+  (c) is identical; (c) is the honest label for what runs, costs no masking
+  code, and removes the invitation to "finish" a masking feature nothing
+  depends on. The bias is recorded, not gated: `d17_realisation_audit()` in
+  `run_stage3c.py` reports realisations-per-kernel-value informationally
+  (structurally unable to fail the run -- it emits no `passed` key).
+  **Residual work (the actual content of (c)):**
+  `distinct_realisations_per_theta` has never been run against the real/ANN
+  campaign bank; whether that bank's export even carries a
+  `realisation_id` field, and whether the 1-realisation claim is a
+  measurement or a directory-structure inference, are both unsettled -- see
+  `HANDOFF_D17_option_c.md` S5. **Reopen condition:** if the Stage 3c
+  concentration check finds realisation noise NOT concentrated on the kernel
+  axes, D17's premise fails and "accept the bias on these 3 axes" stops
+  being coherent; D17 reopens regardless of this closure.
 
 - **D8 -- Alignment.** Closed in v0.3: no alignment term, no arm A4, no
   research thread. An MMD between the two summary clouds would optimise the
