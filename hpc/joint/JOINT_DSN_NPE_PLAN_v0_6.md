@@ -1403,6 +1403,45 @@ $\theta$ at all.
   encoder-agnostic, so re-export to a **new stem** and re-run; every witness
   number is encoder-conditional [KB]. TSNPE is untouched.
 
+**Amended 2026-09-11 (v0.6.1), after the first measurement pass.** Stage 6 is
+split into sub-stages 6A-6G in `STAGE6_PLAN_v0_3.md`; 6A-6D are independent of
+the Stage 3 bench verdict and are the bulk of the engineering. Four decisions
+closed, and the governing principle stated:
+
+- **Everything is learned from the dataset.** $d_\theta$, the axis names and
+  bounds, $\Delta t$, $\sigma_{\rm sm}$, $f_s$, $W$, $n_e$ and the MFR floor
+  are read from the campaign's own files and from a profile JSON emitted by
+  `dataset_profile.py`. No reference constant is typed into the exporter; the
+  same code must run on a campaign with different swept axes and ranges. The
+  `hhgap` freeze ($d_\theta = 23$) is the standing test of that.
+- **D6-1** `theta` on the cohort is a NaN array of the profiled width plus
+  sidecar `theta_present: false`; the pseudo-real endpoint keys on that flag,
+  not on `theta_withheld` (present-but-unused is a different state).
+- **D6-2** the sim and real arms share one convention -- the per-electrode mean
+  of eq. (3) -- with `units_per_row` = $n_e$ read per dataset. Division by $N$
+  neurons is bench-only, where the scale is immaterial and no real data ever
+  enters (the bench's "real" arm is Stage 1 `--arm R`, held-out traces of the
+  same generated bank).
+- **D6-3** the sim side follows the real side's preprocessing, strictly.
+  **Measured 2026-09-11:** the cohort's extraction flags were
+  `--w-size 0.01 --gaussian-window 0.02 --electrodes-per-subset 9
+  --mfr-threshold 0.1 --base 1`, the archives report $f_s^{\rm IFR} = 100$ Hz,
+  and the r2 export sidecars declare the same pair -- so
+  $\Delta t = 0.01$ s, $\sigma_{\rm sm} = 0.02$ s = 2 bins, $W = 18\,000$,
+  and the existing real arm was embedded at the correct smoothing. Note
+  `--base 1` (1-based electrode indexing), a cohort property that lived only
+  in an untracked shell file.
+- **D6-4** donor = culture, well = realisation = subregion. Corroborated
+  arithmetically: $\lfloor 1200/180 \rfloor = 6$ windows per subregion,
+  $\times\, 9 = 54$ per culture, $1890/54 = 35$ cultures. The D17 real-arm
+  audit should therefore return 9.
+- **New requirement on 6C.** `export_windows.py` must **refuse to write** when
+  the archive's recorded $\sigma_{\rm sm}$, $\Delta t$ or $n_e$ disagrees with
+  the checkpoint-declared value, rather than leaving the check to a profiler
+  run someone has to remember. Until that exists the parity check is
+  *available* but not *enforced*, which is the state that allowed a factor-2
+  smoothing discrepancy to be un-detectable for months.
+
 ### Stage 7 -- Stratification on the cohort, and the drug arm
 
 Culture-level posteriors, eq. (5) on real $m_g$ over all 26 axes, the diagnosis
@@ -1754,6 +1793,21 @@ replicate-statistic machinery of S2.5, delivered and verified in v0.6.
 
 ## 11. Changelog
 
+- **2026-09-11 v0.6.1.** Stage 6 amended in place (S6) rather than rewritten;
+  the sub-stage plan lives in `STAGE6_PLAN_v0_3.md`. **Closed:** D6-1..D6-4.
+  **Added:** the learned-from-the-data principle; the measured preprocessing
+  constants and their provenance; the requirement that the exporter *enforce*
+  preprocessing parity rather than merely permit it to be checked.
+  **Corrected:** an earlier draft of this amendment recorded the ANN sim arm
+  as pooling all neurons into $n_e = 1$; the simulation reconstructs virtual
+  electrodes and divides by their count exactly as the cohort does, and the
+  sim shard of record simply predates `record_resolved_n_e` (trap 6.7).
+  **Tooling:** `dataset_profile.py` gained producer-key reading, a loud
+  zero-units failure, a missing-`n_e` warning and full real-archive
+  preprocessing metadata (25 -> 27 checks); the MultiChannel extractor now
+  records every preprocessing parameter into `traces.npz`, every
+  `trace_subregion_XX.npz` and a new `traces_meta.json`, and refuses to write
+  when $f_s^{\rm IFR} \neq 1/\Delta t$.
 - **2026-09-02 v0.6.** Changes the index set the replicate constraint acts on,
   and delivers the machinery. **Withdrawn:** the measure-then-constrain
   ordering of v0.5 S2.5(c) and S2.7, and with it the requirement that
