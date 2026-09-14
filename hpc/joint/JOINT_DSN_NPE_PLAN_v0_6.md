@@ -1390,8 +1390,13 @@ $\theta$ at all.
   windows with `donor`, `well`, `batch`, `subregion`, `condition`, with the
   holdout frozen and hashed **before** training and reused by every later gate
   or witness run.
-- Same arms on the MFR-filtered, $\theta$-deduplicated 29 616-row bank with the
-  existing grouped split. Cost: $W$ per Stage 0, $\sim 3\times10^4$ rows per
+- Same arms on the MFR-filtered, $\theta$-deduplicated bank with the
+  existing grouped split. **Corrected v0.6.2:** this line read "29 616-row",
+  which contradicts its own qualifier -- 29 616 is the count *before*
+  $\theta$-deduplication and 29 416 is the count after (S9 item (i), and
+  `SBI_PIPELINE.md` eq. (5a)). Size Stage 6 from **29 416** if the bank is
+  deduplicated, from 29 616 if it is not, and record which. The 200-row
+  difference is immaterial to compute and material to provenance. Cost: $W$ per Stage 0, $\sim 3\times10^4$ rows per
   member on CPU; budget from one probe epoch before any array.
 - **New in v0.6, amended by D17's closure as (c):** before A5 trains on the
   real cohort, run the D17 audit on the *real* bank's terms -- count distinct
@@ -1441,6 +1446,48 @@ closed, and the governing principle stated:
   run someone has to remember. Until that exists the parity check is
   *available* but not *enforced*, which is the state that allowed a factor-2
   smoothing discrepancy to be un-detectable for months.
+
+**Amended 2026-09-14 (v0.6.2), after Stages A and B of the cluster
+consolidation.** No decision in the amendment above is changed; what follows
+is what has since been *done*, and what 6C must now enforce against.
+
+- **Stage A/B outcome: the DSN code tree of record moved.** `DSN_MAIN_DIR`
+  resolves through both symlinks to `~/dsn_git/Main`, a git clone with no
+  space in its path; the former `Deep_bio/Main` is retired as
+  `Main_RETIRED_20260914` and is never deleted, because `out/` -- every
+  training run, including `refit_mea_joint_full_r2_l0_t82` -- is inside it.
+  Verified on a compute node rather than asserted: the runtime probe gives
+  `P3 PASS` with the resolution arrow and `VERDICT: PASS (7/7 checks)` at
+  359 708 parameters; the joint suites give 9/9 and 8/8 with `J23`/`J29`
+  passing rather than skipping; `smoke_test_bench_provider.py` gives 19/19
+  with `F3` exercising the DSN import path. Three consumers, one target.
+- **The extraction environment is unified.** `run_extractor_array_mea.pbs`
+  runs under `meacnn_cpu` (DSN repo `7afe1b8`), not `brian_env`. Missing
+  dependencies are installed into `meacnn_cpu` rather than resolved by
+  switching environment.
+- **6C is the next deliverable and its enforcement targets are now measured.**
+  `assert_preprocessing_parity()` must raise on a mismatch in
+  $\Delta t = 0.01$ s, $\sigma_{\rm sm} = 0.02$ s or $n_e = 9$, naming both
+  values and both sources, and must raise on a legacy archive unless
+  `--assume-preprocessing` is passed -- in which case the sidecar records the
+  values as `"assumed"`, never as `"measured"`. `dataset_profile.py` already
+  supplies the distinction: `detail.preprocessing_sources` reports `archive:`
+  for a recorded value and names the fallback otherwise, and the $n_e$
+  fallback is explicitly labelled `"trace shape (rows) -- NOT the pooled
+  count"`. A parity claim made against an inferred value is not a parity
+  claim.
+- **A trap for 6C specifically.** `extracted/` holds **350** `.npz` while the
+  specs name **315**: the extra 35 are one combined `traces.npz` per
+  recording. `make_mea_specs.py` classifies each well's output directory and,
+  under `per_region_single`, returns only the nine `trace_subregion_0X.npz`
+  paths, so the specs route is exactly $35 \times 9 = 315$. **A glob-based
+  enumeration in `export_windows.py` would pick up all 350** and silently mix
+  two aggregation levels. Enumerate from the specs, or exclude the combined
+  archives by name.
+- **Still open, unchanged by A/B:** 6A-1, the sim-side $n_e$ for `rho1300v3`
+  (pre-`record_resolved_n_e` shard, trap 6.7) -- read `electrode_centers` from
+  that campaign's MEA root. And no Stage 3 / 3b / 3c / 4 job has run anywhere,
+  so 6E-6G still wait on the Stage 3 bench verdict.
 
 ### Stage 7 -- Stratification on the cohort, and the drug arm
 
@@ -1675,23 +1722,55 @@ is a different objection with a different remedy.
   coarse and the interval will be honestly wide. That is not a defect of the
   method. It also means group count, not row count, is what to read off the
   split manifest before interpreting any $D$.
-- $W$ is unresolved until Stage 0 reads the checkpoint (9 000 vs 18 000), a
-  factor of two in Stage 6 compute.
+- ~~$W$ is unresolved until Stage 0 reads the checkpoint (9 000 vs 18 000), a
+  factor of two in Stage 6 compute.~~ **CLOSED v0.6.2, 2026-09-14.**
+  $W = 18\,000$, from $\Delta t = 0.01$ s and a 180 s window. Five independent
+  sources agree: the cohort extraction flags, the archive sidecars, the r2
+  export sidecars on both arms, the training config that produced r2, and
+  `make_mea_specs.py` re-deriving `f_s^{IFR} = 1/w_size = 100` Hz and
+  `T = 180 x 100 = 18000` from that config alone. Stage 6 compute is the
+  larger of the two figures.
 - **Two numeric inconsistencies in the knowledge base itself**, found while
   verifying for the handoff and **not resolved**; do not silently pick one.
   (i) The MFR-filtered bank is **29,616** rows in `SBI_PIPELINE.md` S6 and
   S12.4 but **29,416** in its O1 and in the `HPC_PATHS.md` changelog.
+  **Amended v0.6.2:** these are now understood as two *stages* rather than a
+  disagreement -- `SBI_PIPELINE.md` eq. (5a) accounts for the gap as 200
+  duplicate-$\theta$ replays removed after the MFR floor, which is consistent
+  with both stage descriptions. **That account is inferred, not measured**:
+  neither the dedup count nor the order of the two reductions was ever
+  recorded, and it is logged as O4 in that document. Still do not pick one
+  silently; quote each number with its stage attached until the discriminator
+  (count rows above the floor, then distinct $\theta$ among them) has run.
   (ii) `SBI_PIPELINE.md` fixes $d_\theta = 26$ throughout, while
   `HPC_PATHS.md` S8 says not to assume a fixed width -- it is determined by
   `artifacts/label_axes.json` and depends on which campaigns are included and
   their `conn_rule`. Every number in this plan assumes 26, and Stage 0 now
   asserts it.
-- **The 23 + 3 split is [reasoning], not read.** The 3 follows from the Weibull
-  kernel $p(d) = p_0\exp(-(d/d_0)^\beta)$ having three parameters, and
-  $23 = 26-3$. **v0.6 lowers the stakes of this considerably**: with the
-  constraint acting on all 26 axes, no loss depends on the partition. It still
-  matters for the per-axis-group design effect (S2.4a) and for D17, so it
-  should still be confirmed against `label_axes.json`.
+- ~~**The 23 + 3 split is [reasoning], not read.**~~ **CLOSED v0.6.2,
+  2026-09-14 -- now READ.** The three kernel axes occupy indices **23, 24, 25**
+  in `param_names`, i.e. the last three of $d_\theta = 26$:
+
+  | axis | index |
+  |---|---|
+  | `p0_conn` | 23 |
+  | `d0_conn` | 24 |
+  | `beta_conn` | 25 |
+
+  Read off the r2 export sidecars and **identical on the simulated and the
+  real arm**, which is what makes the partition usable rather than merely
+  stated. The original reasoning -- the Weibull kernel
+  $p(d) = p_0\exp(-(d/d_0)^\beta)$ has three parameters, so $23 = 26 - 3$ --
+  is confirmed. **v0.6 had already lowered the stakes**: with the constraint
+  acting on all 26 axes, no loss depends on the partition; it matters for the
+  per-axis-group design effect (S2.4a) and for D17. Do **not** hardcode the
+  indices: $d_\theta$ is not constant across campaign sets
+  (`EXTRACTOR_USAGE.md` sec. 5.1), and on a `conn_rule=flat` set these three
+  axes do not exist at all. Read them per bank:
+
+  ```bash
+  python3 -c "import json,sys; n=json.load(open(sys.argv[1]))['labels']['param_names']; print([(i,a) for i,a in enumerate(n) if a.endswith('_conn')])" <sidecar>.json
+  ```
 - **Four discrepancies between docstring and running code in the gate stack**
   are recorded in `GATES_v1.md` S5 and are not fixed. The consequential one:
   G3's coverage-deficit branch appears unreachable, so the documented
@@ -1792,6 +1871,28 @@ replicate-statistic machinery of S2.5, delivered and verified in v0.6.
 ---
 
 ## 11. Changelog
+
+- **2026-09-14 v0.6.2.** Records the Stage A/B cluster consolidation in S6 and
+  closes two long-standing S9 items with measurements rather than argument.
+  **Closed:** $W = 18\,000$ (was "unresolved, 9 000 vs 18 000"), from five
+  agreeing sources; the **23 + 3 split**, which was `[reasoning]` and is now
+  read off the sidecars -- `p0_conn`/`d0_conn`/`beta_conn` at indices
+  **23/24/25**, identical on both arms.
+  **Corrected:** S6's Stage 6 sizing line said "$\theta$-deduplicated
+  29 616-row bank", which contradicts its own qualifier -- after
+  deduplication the count is 29 416. **And a correction to the v0.6.1 entry
+  below, left in place per this document's append-only convention:** it states
+  that `dataset_profile.py` went from "25 -> 27 checks". The measured count is
+  **25** -- `smoke_test_dataset_profile.py` prints
+  `ALL 25 CHECKS PASSED  25/25 checks passed` on the cluster at `68e27ad`,
+  and local and origin agree, so nothing is unpushed. The 27 figure was never
+  correct and has since propagated into at least one handoff; treat 25 as the
+  count.
+  **Amended:** S9 item (i), the 29 616 / 29 416 pair, now points at
+  `SBI_PIPELINE.md` eq. (5a), which accounts for the gap as 200
+  duplicate-$\theta$ replays -- inferred, not measured, and logged there as
+  O4. **Not changed:** no decision, no objective, no stage ordering. Stages 3,
+  3b, 3c and 4 remain unrun.
 
 - **2026-09-11 v0.6.1.** Stage 6 amended in place (S6) rather than rewritten;
   the sub-stage plan lives in `STAGE6_PLAN_v0_3.md`. **Closed:** D6-1..D6-4.
