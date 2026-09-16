@@ -253,11 +253,31 @@ class GMMBenchmark:
         # -- component means -------------------------------------------------
         # Offsets are placed on a simplex-like set of directions so no two
         # components coincide and none sits at the origin of the offset set.
+        #
+        # This draw is retained even though the separate_in_nullspace branch no
+        # longer uses its VALUE: it keeps the rng stream position, so `centre`
+        # below and every downstream draw stay bit-identical to the pre-fix
+        # construction. Do not delete it.
         offs = rng.normal(size=(self.n_components, max(1, self.null_basis.shape[0])))
         offs -= offs.mean(axis=0, keepdims=True)
         offs /= np.maximum(np.linalg.norm(offs, axis=1, keepdims=True), 1e-12)
         if separate_in_nullspace:
-            directions = offs @ self.null_basis          # (K, n), inside null(A)
+            # null(A) is unique; the SVD's BASIS for it is not -- any
+            # orthogonal rotation of null_basis is an equally valid SVD output,
+            # and different LAPACK builds return different ones. Building the
+            # means from those rows made every per-coordinate-axis quantity
+            # machine-dependent. The projector below is unique given A, so the
+            # directions are reproducible across builds.
+            #
+            # A separate, deterministic stream is used so that A, b and centre
+            # are unchanged by this fix.
+            P_null = np.eye(self.n_dim) - np.linalg.pinv(self.A) @ self.A
+            drng = np.random.default_rng(int(seed) + 1000003)
+            gen = drng.normal(size=(self.n_components, self.n_dim))
+            gen -= gen.mean(axis=0, keepdims=True)
+            directions = gen @ P_null                    # (K, n), inside null(A)
+            directions /= np.maximum(
+                np.linalg.norm(directions, axis=1, keepdims=True), 1e-12)
         else:
             gen = rng.normal(size=(self.n_components, self.n_dim))
             gen -= gen.mean(axis=0, keepdims=True)

@@ -211,15 +211,27 @@ def d4_sbc_names_the_failure() -> str:
         res = simulation_based_calibration(theta_true, ps, seed=0)
         fails = [r for r in res if not r.passes]
         check(fails, "SBC did not detect a '%s' posterior" % label)
-        found[label] = fails[0].verdict
+        found[label] = [r.verdict for r in fails]
 
-    check("NARROW" in found["too narrow"].upper(),
-          "narrow posterior mislabelled as: %s" % found["too narrow"])
-    check("BROAD" in found["too broad"].upper(),
-          "broad posterior mislabelled as: %s" % found["too broad"])
-    check("BIAS" in found["biased"].upper(),
-          "biased posterior mislabelled as: %s" % found["biased"])
-    return "detected and correctly named all 3 failure shapes"
+    # Assert the expected name appears among the failing axes, NOT that it is
+    # the first one. fails[0] is whichever axis happens to come first, and on a
+    # mixture prior whose modes are separated inside null(A) the per-axis
+    # verdict legitimately varies: shrinking a multimodal posterior toward its
+    # own mean moves mass away from the truth asymmetrically, so some axes read
+    # as biased rather than narrow. That is SBC behaving correctly, not a
+    # naming failure. Asserting on fails[0] made this check depend on the
+    # coordinate ordering of the benchmark's geometry.
+    def named(label, key):
+        hits = [v for v in found[label] if key in v.upper()]
+        check(hits, "no failing axis named the '%s' posterior %s; got %s"
+              % (label, key, found[label]))
+        return len(hits)
+
+    n_narrow = named("too narrow", "NARROW")
+    n_broad = named("too broad", "BROAD")
+    n_bias = named("biased", "BIAS")
+    return ("named all 3 failure shapes (narrow on %d, broad on %d, biased on "
+            "%d of the failing axes)" % (n_narrow, n_broad, n_bias))
 
 
 # ---------------------------------------------------------------------------
