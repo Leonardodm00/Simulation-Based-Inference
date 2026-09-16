@@ -1484,10 +1484,37 @@ is what has since been *done*, and what 6C must now enforce against.
   enumeration in `export_windows.py` would pick up all 350** and silently mix
   two aggregation levels. Enumerate from the specs, or exclude the combined
   archives by name.
-- **Still open, unchanged by A/B:** 6A-1, the sim-side $n_e$ for `rho1300v3`
-  (pre-`record_resolved_n_e` shard, trap 6.7) -- read `electrode_centers` from
-  that campaign's MEA root. And no Stage 3 / 3b / 3c / 4 job has run anywhere,
-  so 6E-6G still wait on the Stage 3 bench verdict.
+- **6A-1 CLOSED v0.6.4, 2026-09-16: sim-side $n_e = 9$ for `rho1300v3`,
+  constant across all 160 topologies.** It matches the cohort's 9, so the
+  sim/real parity on this axis holds. `electrode_centers` is not a file; it is
+  an `(n_e, 2)` float32 array of 2D positions inside every `mea_iter_*.npz`
+  under
+  `~/ANN/MEA_analysis/Outputs/campaign_cadex_rho1300v3/sweep_cpu_task*/topo_*/`,
+  and $n_e$ is its first dimension. Because this is a geometry array, its row
+  count genuinely is the electrode count -- unlike the real-side trace-shape
+  fallback, which `dataset_profile.py` labels `"trace shape (rows) -- NOT the
+  pooled count"`. One file per topology, 160 scanned, 0 unreadable, shape
+  distribution `{(9, 2): 160}`. The shard predating `record_resolved_n_e`
+  (trap 6.7) is worked around rather than fixed: the value is recovered from
+  the geometry, not from a recorded parameter.
+
+  **Scope, and it binds 6C.** What was measured is a property of *this
+  campaign*. **$n_e$ varies across projects, and may vary across campaigns or
+  across topologies within one.** Therefore: (i) 6C reads *both* sides and
+  compares two measured values -- the sim side from `electrode_centers`, the
+  real side from the archive's `electrodes_per_subset` -- and never compares a
+  read value against a literal 9; (ii) 9 is not hardcoded anywhere and not
+  cached across campaigns; (iii) the "constant within the campaign" property is
+  itself per-campaign and must be re-established by the scan above for any new
+  campaign, never inherited from this entry -- if a future campaign returns
+  more than one first dimension, $n_e$ is per-shard and 6C needs a per-shard
+  value, which is a larger change than the parity check is currently scoped
+  for; (iv) the same holds for $d_\theta$, which is 26 here and is not a
+  constant (`EXTRACTOR_USAGE.md` sec. 5.1 records that it varies across
+  campaign sets).
+
+- **Still open, unchanged by A/B:** no Stage 3 / 3b / 3c / 4 job has run
+  anywhere, so 6E-6G still wait on the Stage 3 bench verdict.
 
 ### Stage 7 -- Stratification on the cohort, and the drug arm
 
@@ -1875,6 +1902,27 @@ replicate-statistic machinery of S2.5, delivered and verified in v0.6.
 ---
 
 ## 11. Changelog
+
+- **2026-09-16b v0.6.4.** **Closes 6A-1** (S6): sim-side $n_e = 9$ for
+  `rho1300v3`, measured as the first dimension of `electrode_centers`, one file
+  per topology across all 160, `{(9, 2): 160}`, 0 unreadable. Matches the
+  cohort's 9. Recorded with the constraint that makes it safe to reuse: **$n_e$
+  is a per-campaign property, not a pipeline constant**, so 6C compares two
+  measured values rather than checking one against a literal, and the
+  constancy claim is re-established per campaign rather than inherited. The
+  same caution attaches to $d_\theta$.
+  **Also confirms what v0.6.3 could only assert:** the `d7_basis_invariance`
+  fix is verified on the machine that originally disagreed. `D7_contraction`
+  now reports `exact posterior max 0.435` where the same seed gave 0.280, which
+  is the value an unrelated machine produces; `smoke_test_gmm_basis_invariance`
+  gives `B8 ... 0.4354, spread 0.0e+00` on both; diagnostics 8/8. Commit
+  `77c0170`. A residual remains and is benign: `D3` and `D6` still differ
+  between machines (median adjusted min-p 0.94 vs 1.00; TARP exact p 0.556 vs
+  0.466) while reproducing 3/3 on each -- **[reasoning]** BLAS-level
+  floating-point differences moving rank-based p-values. Their assertions are
+  structural rather than thresholds on a continuous quantity, so a verdict
+  cannot flip; do not quote those p-values as constants.
+  **Nothing else changed:** no decision, no objective, no stage ordering.
 
 - **2026-09-16 v0.6.3.** **Retracts a correction made in v0.6.2.** That entry
   "corrected" the Stage 6 sizing line to 29 416 on the strength of
