@@ -1390,13 +1390,13 @@ $\theta$ at all.
   windows with `donor`, `well`, `batch`, `subregion`, `condition`, with the
   holdout frozen and hashed **before** training and reused by every later gate
   or witness run.
-- Same arms on the MFR-filtered, $\theta$-deduplicated bank with the
-  existing grouped split. **Corrected v0.6.2:** this line read "29 616-row",
-  which contradicts its own qualifier -- 29 616 is the count *before*
-  $\theta$-deduplication and 29 416 is the count after (S9 item (i), and
-  `SBI_PIPELINE.md` eq. (5a)). Size Stage 6 from **29 416** if the bank is
-  deduplicated, from 29 616 if it is not, and record which. The 200-row
-  difference is immaterial to compute and material to provenance. Cost: $W$ per Stage 0, $\sim 3\times10^4$ rows per
+- Same arms on the MFR-filtered bank of **29 616 rows** with the existing
+  grouped split. **Corrected again v0.6.3, 2026-09-16 -- v0.6.2's correction
+  was itself wrong.** It asserted that deduplication takes the bank to 29 416.
+  Measured: $\theta$-deduplication removes **0** rows, and the raw 86 251-row
+  bank contains no duplicate $\theta$ at all. The qualifier
+  "$\theta$-deduplicated" is harmless but vacuous here; the number is 29 616
+  either way. Cost: $W$ per Stage 0, $\sim 3\times10^4$ rows per
   member on CPU; budget from one probe epoch before any array.
 - **New in v0.6, amended by D17's closure as (c):** before A5 trains on the
   real cohort, run the D17 audit on the *real* bank's terms -- count distinct
@@ -1734,14 +1734,18 @@ is a different objection with a different remedy.
   verifying for the handoff and **not resolved**; do not silently pick one.
   (i) The MFR-filtered bank is **29,616** rows in `SBI_PIPELINE.md` S6 and
   S12.4 but **29,416** in its O1 and in the `HPC_PATHS.md` changelog.
-  **Amended v0.6.2:** these are now understood as two *stages* rather than a
-  disagreement -- `SBI_PIPELINE.md` eq. (5a) accounts for the gap as 200
-  duplicate-$\theta$ replays removed after the MFR floor, which is consistent
-  with both stage descriptions. **That account is inferred, not measured**:
-  neither the dedup count nor the order of the two reductions was ever
-  recorded, and it is logged as O4 in that document. Still do not pick one
-  silently; quote each number with its stage attached until the discriminator
-  (count rows above the floor, then distinct $\theta$ among them) has run.
+  **CLOSED v0.6.3, 2026-09-16 -- and v0.6.2's amendment is RETRACTED.** That
+  amendment invoked `SBI_PIPELINE.md` eq. (5a), which attributed the 200-row
+  gap to duplicate-$\theta$ replays. The discriminator was run and refutes it:
+  dedup removes **0** rows, and the raw bank has **no duplicate $\theta$ at
+  all**, so no ordering of filter and dedup produces a gap. No neighbouring
+  threshold gives 29 416 either (0.05 -> 30 321, 0.10 -> 29 616,
+  0.15 -> 29 112, 0.20 -> 28 708), and no run artifact on the cluster contains
+  the number -- every occurrence is prose. **29 416 is a transcription error
+  that propagated through five documents and is retracted; the bank is
+  29 616 rows.** Eq. (5a) is withdrawn in `SBI_PIPELINE.md` S6 and its O4 is
+  closed as a documentation error. The only surviving part of it is the
+  ordering claim, filter before dedup, read from `gate_data.load_sim`.
   (ii) `SBI_PIPELINE.md` fixes $d_\theta = 26$ throughout, while
   `HPC_PATHS.md` S8 says not to assume a fixed width -- it is determined by
   `artifacts/label_axes.json` and depends on which campaigns are included and
@@ -1871,6 +1875,25 @@ replicate-statistic machinery of S2.5, delivered and verified in v0.6.
 ---
 
 ## 11. Changelog
+
+- **2026-09-16 v0.6.3.** **Retracts a correction made in v0.6.2.** That entry
+  "corrected" the Stage 6 sizing line to 29 416 on the strength of
+  `SBI_PIPELINE.md` eq. (5a), which accounted for the 29 616 / 29 416 gap as
+  $\theta$-deduplication. Measured since: dedup removes 0 rows and the bank has
+  no duplicate $\theta$, so eq. (5a) fails at its premise and is withdrawn.
+  **Size Stage 6 from 29 616.** S9 item (i) is closed: 29 416 has no
+  provenance and is a propagated transcription error.
+  **Also corrected:** v0.6.2 reported the `D7_contraction` failure as
+  "not environmental". It is environmental in the only sense that matters --
+  `np.linalg.svd` returns a different, equally valid null-space basis on
+  different LAPACK builds, and the benchmark builds its mixture means from
+  that basis, so every per-coordinate-axis quantity is machine-dependent
+  (0.429 in one environment, 0.280 on davinci, identical code and seeds).
+  Fixed by patch `d7_basis_invariance`, which builds the directions from the
+  unique projector $P = I - A^{+}A$ and ships an 8-check invariance guard.
+  Neither issue touches this plan's decisions, objectives or stage ordering.
+  **Standing caution from both:** a claim that has been given a mechanism is
+  harder to doubt than one left flagged as unexplained.
 
 - **2026-09-14 v0.6.2.** Records the Stage A/B cluster consolidation in S6 and
   closes two long-standing S9 items with measurements rather than argument.
