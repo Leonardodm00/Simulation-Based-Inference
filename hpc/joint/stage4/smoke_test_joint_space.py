@@ -6,7 +6,6 @@ and the control-recipe identity of HANDOFF_DELTA_MIN_PER_CONFIG_v1 S4.3.
 Run:
     python smoke_test_joint_space.py                  # all
     python smoke_test_joint_space.py -k J23           # one
-    DSN_MAIN_DIR=/path/to/DSN/Main python smoke_test_joint_space.py
 
 J-numbering continues the joint stack's: J1-J18 are taken, J19 is the
 per-finalist p-value calibration (implemented as S20/S21 in
@@ -35,8 +34,9 @@ identity test reserved by that handoff, and J21-J25 are new here.
   J27  Every canonical value lies inside its axis's range, so a
        canonicalised config can be replayed into the optimiser.
 
-Tests that need the DSN repo (through DSN_MAIN_DIR) SKIP without it rather
-than fail, but the parts that do not touch the DSN loss still run.
+Tests that need the DSN tree (the in-repo hpc/dsn) SKIP with the resolver's
+reason if it is unusable, but the parts that do not touch the DSN loss
+still run.
 
 ASCII-only by policy (HPC transfer safety).
 """
@@ -58,6 +58,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # propose joint configurations at all, and a skip reads like a pass in the
 # summary line.
 for _p in (_HERE, os.path.abspath(os.path.join(_HERE, "..", "..")),
+           os.path.abspath(os.path.join(_HERE, "..")),
            os.environ.get("SBI_HPC_DIR", "")):
     if _p and _p not in sys.path:
         sys.path.insert(0, _p)
@@ -85,23 +86,10 @@ def _dsn_status() -> str:
     2026-09-07), and set to a real directory whose checkout predates
     condition_space.py.
     """
-    main = os.environ.get("DSN_MAIN_DIR", "")
-    if not main:
-        return "DSN_MAIN_DIR unset"
-    if not os.path.isdir(main):
-        return ("DSN_MAIN_DIR=%r does not exist (a deleted symlink looks "
-                "exactly like this)" % main)
-    if not os.path.isfile(os.path.join(main, "condition_space.py")):
-        return ("DSN_MAIN_DIR=%r has no condition_space.py -- that checkout "
-                "predates it; git pull the DSN repo" % main)
-    if main not in sys.path:
-        sys.path.insert(0, main)
-    try:
-        import condition_space  # noqa: F401
-        return ""
-    except ImportError as exc:
-        return "condition_space present at %r but will not import (%s)" % (
-            main, exc)
+    # Migration step 2: the three states above cannot occur any more -- the
+    # DSN is the in-repo hpc/dsn. One resolver, one reason string.
+    import dsn_locate
+    return dsn_locate.dsn_status()
 
 
 def _dsn_available() -> bool:

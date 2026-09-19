@@ -28,6 +28,14 @@ import hashlib
 import os
 import sys
 
+# The DSN lives at <hpc>/dsn since migration step 1 and joint/dsn_locate.py
+# is the one resolver (step 2). <hpc>/joint goes on sys.path here so the
+# import works whether this module is imported by a stage or run directly.
+_JOINT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+if _JOINT_DIR not in sys.path:
+    sys.path.insert(0, _JOINT_DIR)
+import dsn_locate  # noqa: E402
+
 import numpy as np
 from scipy import stats
 
@@ -252,22 +260,14 @@ class BurstProvider(object):
 
 
 def load_dsn_modules(dsn_main_dir=None):
-    """Import the DSN generator modules from DSN_MAIN_DIR.
+    """Import the DSN generator modules from the in-repo tree, <hpc>/dsn.
 
-    Returns (latent_burst_generator, generate_burst_data). The path is put on
+    Returns (latent_burst_generator, generate_burst_data). The tree is put on
     sys.path rather than copied, so the bench can never drift from the module
-    the DSN itself uses.
+    the DSN itself uses. `dsn_main_dir` is an explicit override only;
+    DSN_MAIN_DIR is not read (migration step 2, joint/dsn_locate.py).
     """
-    dsn_main_dir = dsn_main_dir or os.environ.get("DSN_MAIN_DIR")
-    if not dsn_main_dir:
-        raise RuntimeError(
-            "DSN_MAIN_DIR is not set. Point it at the DSN repo's Main/ "
-            "directory (use the dsn_main symlink -- the real path contains a "
-            "space).")
-    if not os.path.isfile(os.path.join(dsn_main_dir, "latent_burst_generator.py")):
-        raise RuntimeError("no latent_burst_generator.py under %r" % dsn_main_dir)
-    if dsn_main_dir not in sys.path:
-        sys.path.insert(0, dsn_main_dir)
+    dsn_locate.add_dsn_to_path(dsn_main_dir)
     import latent_burst_generator as lbg
     import generate_burst_data as gbd
     return lbg, gbd

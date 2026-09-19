@@ -103,7 +103,8 @@ def build_parser():
                    help="checkpoint to probe; default <runs-dir>/A0_seed0_ckpt.pt")
     p.add_argument("--max-probe-rows", type=int, default=512)
     p.add_argument("--bootstrap-dir", default=None)
-    p.add_argument("--dsn-main-dir", default=None)
+    p.add_argument("--dsn-main-dir", default=None,
+                   help="explicit DSN tree; default is this repo's hpc/dsn")
     p.add_argument("--out", default=None, help="output .md; default stdout")
     p.add_argument("--out-json", default=None)
     p.add_argument("--dry-run", action="store_true")

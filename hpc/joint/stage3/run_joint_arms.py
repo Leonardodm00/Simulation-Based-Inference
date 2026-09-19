@@ -52,6 +52,7 @@ for _p in (os.path.join(_HERE, "..", "stage1"), os.path.join(_HERE, "..", "stage
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import dsn_locate                                          # noqa: E402
 from latent_bank import concat_shards                      # noqa: E402
 from latent_sbi_simulator import LatentSBISpec, prior_log_prob  # noqa: E402
 from joint_batches import BatchSpec, ThreeStreamBatcher    # noqa: E402
@@ -262,7 +263,9 @@ def build_parser():
                         "Default 0.1 gives beta1 = 0.9, AdamW's own default.")
     p.add_argument("--warm-start-ckpt", default=None,
                    help="A0 checkpoint, for arm A3")
-    p.add_argument("--dsn-main-dir", default=None)
+    p.add_argument("--dsn-main-dir", default=None,
+                   help="explicit DSN tree; default is this repo's hpc/dsn. "
+                        "DSN_MAIN_DIR is ignored (migration step 2)")
     p.add_argument("--sbi-hpc-dir", default=None)
     p.add_argument("--dry-run", action="store_true")
     return p
@@ -289,7 +292,8 @@ def make_backbone(W, E, dsn_main_dir, seed, encoder=None):
     """
     torch.manual_seed(int(seed))
     enc = dict(encoder or {})
-    d = dsn_main_dir or os.environ.get("DSN_MAIN_DIR")
+    # require=False: this function has its own fallback and reports it.
+    d = dsn_locate.dsn_dir(dsn_main_dir, require=False)
     if d and os.path.isfile(os.path.join(d, "backbone.py")):
         if d not in sys.path:
             sys.path.insert(0, d)
@@ -304,8 +308,8 @@ def make_backbone(W, E, dsn_main_dir, seed, encoder=None):
             embedding_size=E)), "dsn"
     if enc:
         print("[warn] the fallback backbone ignores the encoder axes %s: a "
-              "search over them means nothing without the DSN repo. Set "
-              "DSN_MAIN_DIR." % sorted(enc), flush=True)
+              "search over them means nothing without the DSN tree, and "
+              "%r has no backbone.py." % (sorted(enc), d), flush=True)
     import torch.nn as nn
 
     class SmallBackbone(nn.Module):
@@ -410,20 +414,18 @@ def main(argv=None):
         # already-legal triple is free.
         mining, loss_type = str(args.mining_strategy), str(args.loss_type)
         strict = bool(int(args.strict_semihard))
-        # condition_space lives in the DSN repo, which nothing has put on
+        # condition_space lives in the DSN tree, which nothing has put on
         # sys.path yet at this point (make_backbone and build_dsn_loss do so
         # later). Resolve it here, the same way they do.
-        _dsn_dir = args.dsn_main_dir or os.environ.get("DSN_MAIN_DIR")
-        if _dsn_dir and _dsn_dir not in sys.path:
-            sys.path.insert(0, _dsn_dir)
+        _dsn_dir = dsn_locate.add_dsn_to_path(args.dsn_main_dir, require=False)
         try:
             import condition_space as _CS
             mining, loss_type, strict = _CS.project_condition(
                 mining, loss_type, strict)
         except ImportError:
-            print("[warn] condition_space unavailable: the (mining, loss, "
-                  "strict) triple is NOT legality-projected. Set "
-                  "DSN_MAIN_DIR.", flush=True)
+            print("[warn] condition_space unavailable under %r: the (mining, "
+                  "loss, strict) triple is NOT legality-projected."
+                  % _dsn_dir, flush=True)
         loss_cfg = DSNLossConfig(loss_type=loss_type,
                                  mining_strategy=mining,
                                  strict_semihard=strict,

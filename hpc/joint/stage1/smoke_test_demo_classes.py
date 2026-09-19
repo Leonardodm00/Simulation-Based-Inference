@@ -9,7 +9,7 @@ shift-invariance that makes the PSD embedding meaningful, and that each
 figure file is actually written).
 
 Generation tests need the DSN's compute_ifr_trace and SKIP loudly
-without DSN_MAIN_DIR. The feature-map tests are pure numerics and always
+if the in-repo DSN tree (hpc/dsn) is not usable. The feature-map tests are pure numerics and always
 run, on a synthetic array -- so the property that matters (shift
 invariance) is checked even on a machine with no DSN checkout.
 
@@ -23,8 +23,9 @@ import tempfile
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
+for _p in (_HERE, os.path.abspath(os.path.join(_HERE, ".."))):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from demo_classes_plot import (embed, load_demo, psd_features,        # noqa: E402
                                trace_features)
@@ -42,10 +43,13 @@ def ok(name, cond, detail):
 
 
 def _dsn_dir():
-    d = os.environ.get("DSN_MAIN_DIR")
-    if d and os.path.isfile(os.path.join(d, "generate_burst_data.py")):
-        return d
-    return None
+    """The in-repo DSN tree, or None with the reason printed once."""
+    import dsn_locate
+    status = dsn_locate.dsn_status()
+    if status:
+        print("  [dsn] " + status)
+        return None
+    return dsn_locate.dsn_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +60,7 @@ def test_generation():
     d = _dsn_dir()
     if d is None:
         for t in ("D1", "D2", "D3", "D4"):
-            report(t, "SKIP", "DSN_MAIN_DIR not resolvable")
+            report(t, "SKIP", "DSN tree not usable")
         return None
     from demo_classes_generate import build_parser, build_spec, generate
     from bench_burst_provider import load_bench_provider

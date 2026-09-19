@@ -241,30 +241,21 @@ if [ -f joint/stage4/smoke_test_joint_space.py ]; then
     JS_ARGS=()
     [ -n "$SELECTOR" ] && JS_ARGS+=(-k "$SELECTOR")
     # Pure bookkeeping: no torch, no training, seconds. J23, J35 and parts
-    # of J20/J21/J22/J26/J29 need the DSN's condition_space and SKIP or
-    # narrow unless DSN_MAIN_DIR is set; J25/J26/J31 need skopt. Set
-    # DSN_MAIN_DIR before this runs or the clause that matters most
-    # (inactive-coordinate canonicalisation) is not exercised.
-    # The suite reaches the DSN through DSN_MAIN_DIR and this directory
-    # through SBI_HPC_DIR. Default SBI_HPC_DIR to where we already are, so
-    # J26 does not skip merely because the caller did not know to set it.
+    # of J20/J21/J22/J26/J29 need the DSN's condition_space, which since
+    # migration step 2 (2026-09-19) is the in-repo hpc/dsn resolved by
+    # joint/dsn_locate.py; DSN_MAIN_DIR is no longer read. J25/J26/J31 need
+    # skopt. The suite reaches this directory through SBI_HPC_DIR; default
+    # it to where we already are, so J26 does not skip merely because the
+    # caller did not know to set it.
     export SBI_HPC_DIR="${SBI_HPC_DIR:-$(pwd)}"
-    # Three distinct failures, three different fixes. The cluster run of
-    # 2026-09-07 hit the middle one -- the $HOME/dsn_main symlink was gone --
-    # and the suites reported it as "unset", which sent the diagnosis the
-    # wrong way for a cycle.
-    if [ -z "${DSN_MAIN_DIR:-}" ]; then
-        note "  NOTE: DSN_MAIN_DIR unset -- J23/J35 SKIP; J20-J22/J26/J29 narrow."
-        note "        Those are the inactive-coordinate clauses; set it."
-    elif [ ! -d "${DSN_MAIN_DIR}" ]; then
-        note "  NOTE: DSN_MAIN_DIR=${DSN_MAIN_DIR} DOES NOT EXIST."
-        note "        A deleted symlink looks exactly like this. Recreate"
-        note "        it with ln -s pointing at the DSN repo Main directory"
-        note "        (the real path contains a space, which is why the"
-        note "        symlink exists at all: qsub -v cannot carry it)."
-    elif [ ! -f "${DSN_MAIN_DIR}/condition_space.py" ]; then
-        note "  NOTE: ${DSN_MAIN_DIR} has no condition_space.py -- that DSN"
-        note "        checkout predates it. git pull the DSN repo."
+    if [ ! -f "dsn/condition_space.py" ]; then
+        note "  NOTE: hpc/dsn/condition_space.py is MISSING -- J23/J35 SKIP;"
+        note "        J20-J22/J26/J29 narrow. hpc/dsn is tracked (195 files,"
+        note "        ORIGIN_MANIFEST.tsv); a missing file means a broken checkout."
+    fi
+    if [ -n "${DSN_MAIN_DIR:-}" ]; then
+        note "  NOTE: DSN_MAIN_DIR=${DSN_MAIN_DIR} is set and IGNORED since"
+        note "        migration step 2; the DSN is hpc/dsn. Unset it."
     fi
     stage "suite: joint space (J20-J35)" "$PY" \
           joint/stage4/smoke_test_joint_space.py "${JS_ARGS[@]}"

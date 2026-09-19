@@ -14,7 +14,10 @@
 #
 #   cd ~/SBI/hpc/dsn && mkdir -p out && qsub hpc/run_smoke_all.pbs
 #
-# The log lands at hpc/dsn/out/dsn_smoke.o<jobid> (gitignored: dsn/out/).
+# The log lands at hpc/dsn/out/dsn_smoke.log (gitignored: dsn/out/); a
+# rerun overwrites it, so rename it first if the previous one matters.
+# (Step 1b said out/ alone; PBS Pro took that as a filename and delivered
+# the spool file as out/<jobid>.pbsserver01.OU. Fixed in step 2.)
 # The last lines are the runner's own summary, "N/M suites passed in Ts".
 #
 # ENV: meacnn_cpu by default (torch + pytorch_metric_learning + skopt).
@@ -26,7 +29,7 @@
 #PBS -l select=1:ncpus=8:mem=16gb
 #PBS -l walltime=02:00:00
 #PBS -j oe
-#PBS -o out/
+#PBS -o out/dsn_smoke.log
 
 set -eo pipefail
 

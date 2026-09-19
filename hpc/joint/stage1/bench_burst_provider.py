@@ -6,7 +6,7 @@ Wires the three pieces together, per STAGE_A_BENCH_GENERATOR_SPEC_v1.md S6:
     phi --(affine map, S2/S4)--> BenchBurstParams          this module, new
     BenchBurstParams --(bench_burst_generator)--> spikes   Stages B-D, ours
     spikes --(gbd.compute_ifr_trace, UNCHANGED)--> IFR     imported from
-                                                           DSN_MAIN_DIR
+                                                           <hpc>/dsn
     IFR --(O-2 normalisation, windowing)--> (J, W)         this module, new
 
 The IFR step is imported rather than reimplemented because its constants
@@ -145,7 +145,7 @@ class BenchBurstProvider(BurstProvider):
     Parameters
     ----------
     gbd : module -- the DSN's `generate_burst_data`, imported from
-        DSN_MAIN_DIR by `load_dsn_modules`. Only `compute_ifr_trace` and
+        the in-repo <hpc>/dsn by `load_dsn_modules`. Only `compute_ifr_trace` and
         `BurstParams` are used, both unchanged (spec S6).
     gaussian_window : float [s] -- IFR smoothing sd sigma_sm. Default 0.04,
         the DSN generator's own default (the value the DSN bench runs at);
@@ -222,8 +222,9 @@ def load_bench_provider(dsn_main_dir=None, gaussian_window=0.04,
                         overlap="merge"):
     """Build a BenchBurstProvider, mirroring `load_dsn_provider`.
 
-    DSN_MAIN_DIR is still required -- not for the generator (ours), but for
+    The DSN tree is still required -- not for the generator (ours), but for
     `compute_ifr_trace`, which is imported unchanged for parity (spec S6).
+    It is the in-repo <hpc>/dsn unless `dsn_main_dir` says otherwise.
     """
     _lbg, gbd = load_dsn_modules(dsn_main_dir)
     return BenchBurstProvider(gbd, gaussian_window=gaussian_window,

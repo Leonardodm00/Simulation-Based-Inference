@@ -34,6 +34,14 @@ import contextlib
 import os
 import sys
 
+# The DSN lives at <hpc>/dsn since migration step 1 and joint/dsn_locate.py
+# is the one resolver (step 2). <hpc>/joint goes on sys.path here so the
+# import works whether this module is imported by a stage or run directly.
+_JOINT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+if _JOINT_DIR not in sys.path:
+    sys.path.insert(0, _JOINT_DIR)
+import dsn_locate  # noqa: E402
+
 __all__ = ["DSNLossConfig", "build_dsn_loss", "load_dsn_train_module"]
 
 
@@ -66,17 +74,14 @@ class DSNLossConfig(object):
 
 
 def load_dsn_train_module(dsn_main_dir=None):
-    """Import the DSN's train.py through DSN_MAIN_DIR."""
-    dsn_main_dir = dsn_main_dir or os.environ.get("DSN_MAIN_DIR")
-    if not dsn_main_dir:
-        raise RuntimeError(
-            "DSN_MAIN_DIR is not set. Point it at the DSN repo's Main/ "
-            "directory (use the dsn_main symlink -- the real path contains a "
-            "space).")
-    if not os.path.isfile(os.path.join(dsn_main_dir, "train.py")):
-        raise RuntimeError("no train.py under %r" % dsn_main_dir)
-    if dsn_main_dir not in sys.path:
-        sys.path.insert(0, dsn_main_dir)
+    """Import the DSN's train.py from the in-repo tree, <hpc>/dsn.
+
+    `dsn_main_dir` is an explicit override only (a stub in a test, a
+    deliberate A/B). DSN_MAIN_DIR is not read any more: migration step 2,
+    see joint/dsn_locate.py, which raises DSNTreeMissing naming the absent
+    files if the tree is not usable.
+    """
+    dsn_locate.add_dsn_to_path(dsn_main_dir)
     import train as dsn_train
     return dsn_train
 

@@ -58,7 +58,7 @@ import sys
 # run_joint_arms.py is deliberate -- the mirroring risk in the docstring is
 # only manageable if the two files are read together.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-for _p in (os.path.join(_HERE, "..", "stage2"), _HERE):
+for _p in (os.path.join(_HERE, "..", "stage2"), os.path.join(_HERE, ".."), _HERE):
     _p = os.path.abspath(_p)
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -125,32 +125,34 @@ def check_pml(p):
 
 
 def resolve_dsn_dir(p, explicit):
-    """P3: DSN_MAIN_DIR resolves to a real directory.
+    """P3: the DSN tree resolves to a real directory.
 
-    Mirrors run_joint_arms.py:292 and :416, which both do
-    `dsn_main_dir or os.environ.get("DSN_MAIN_DIR")`.
+    Mirrors run_joint_arms.py, which resolves through joint/dsn_locate.py:
+    `--dsn-main-dir` when given, else the in-repo tree <hpc>/dsn. DSN_MAIN_DIR
+    is NOT consulted (migration step 2); if it is set, dsn_locate prints one
+    `[dsn_locate] ... IGNORED` line and this probe records it as P3 detail,
+    so a stale export is visible in the log rather than silently redirecting.
 
-    The three failure states are reported separately on purpose. An unset
-    variable and a variable pointing at a dead symlink previously produced the
-    same message, which cost a session: $HOME/dsn_main had been deleted and
-    the suites reported it as "unset".
+    An unset variable is therefore no longer a failure state. A path given
+    explicitly and not existing still is, reported as DOES NOT EXIST.
     """
-    d = explicit or os.environ.get("DSN_MAIN_DIR")
-    if not d:
-        p.record("P3", False,
-                 "DSN_MAIN_DIR is UNSET and --dsn-main-dir was not given")
-        return None
+    import dsn_locate
+    d = dsn_locate.dsn_dir(explicit, require=False)
+    src = "--dsn-main-dir" if explicit else "in-repo hpc/dsn"
     if not os.path.exists(d):
         p.record("P3", False,
-                 "DSN_MAIN_DIR=%r points at a path that DOES NOT EXIST "
-                 "(dead symlink?)" % d)
+                 "%s=%r points at a path that DOES NOT EXIST" % (src, d))
         return None
     if not os.path.isdir(d):
-        p.record("P3", False, "DSN_MAIN_DIR=%r exists but is not a directory"
-                 % d)
+        p.record("P3", False, "%s=%r exists but is not a directory"
+                 % (src, d))
         return None
     real = os.path.realpath(d)
-    p.record("P3", True, "DSN_MAIN_DIR=%r -> %r" % (d, real))
+    env = os.environ.get("DSN_MAIN_DIR")
+    note = ""
+    if env and os.path.realpath(env) != real:
+        note = " (DSN_MAIN_DIR=%r is set and IGNORED)" % env
+    p.record("P3", True, "%s=%r -> %r%s" % (src, d, real, note))
     return d
 
 
@@ -316,8 +318,9 @@ def build_parser():
         description="Probe whether the DSN code path resolves at run time. "
                     "No shards, no latent bank, no training.")
     p.add_argument("--dsn-main-dir", default=None,
-                   help="overrides DSN_MAIN_DIR, same precedence as the "
-                        "trainer's own flag")
+                   help="explicit DSN tree; default is this repo's hpc/dsn, "
+                        "same resolution as the trainer's own flag. "
+                        "DSN_MAIN_DIR is ignored (migration step 2)")
     p.add_argument("--embedding-size", type=int, default=12,
                    help="E. Stage 4's --embedding-dim default")
     p.add_argument("--window", type=int, default=3000,

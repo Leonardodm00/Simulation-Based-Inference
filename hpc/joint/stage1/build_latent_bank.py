@@ -76,8 +76,10 @@ def build_parser():
     p.add_argument("--provider", choices=("reference", "dsn", "bench"),
                    default="reference")
     p.add_argument("--dsn-main-dir", default=None,
-                   help="overrides $DSN_MAIN_DIR for --provider dsn AND "
-                        "bench (bench imports compute_ifr_trace from there)")
+                   help="explicit DSN tree for --provider dsn AND bench "
+                        "(bench imports compute_ifr_trace from there); "
+                        "default is this repo's hpc/dsn. DSN_MAIN_DIR is "
+                        "ignored (migration step 2)")
     p.add_argument("--max-records", type=int, default=0,
                    help="cap traces, for a probe run; 0 = no cap")
     p.add_argument("--dry-run", action="store_true",

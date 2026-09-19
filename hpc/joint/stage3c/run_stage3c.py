@@ -77,7 +77,8 @@ def build_parser():
                         "passing bench validation via --validation")
     p.add_argument("--validation", default=None,
                    help="a stage3c_validation.json from a bench run")
-    p.add_argument("--dsn-main-dir", default=None)
+    p.add_argument("--dsn-main-dir", default=None,
+                   help="explicit DSN tree; default is this repo's hpc/dsn")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--dry-run", action="store_true")
     return p

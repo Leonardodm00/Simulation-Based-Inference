@@ -12,7 +12,8 @@
 #   qsub jobs/probe_dsn_runtime.pbs   # from hpc/joint/stage3
 #
 # Or, overriding anything:
-#   qsub -v PYBIN=...,DSN_MAIN_DIR=...,STAGE4_E=12 jobs/probe_dsn_runtime.pbs
+#   qsub -v PYBIN=...,STAGE4_E=12 jobs/probe_dsn_runtime.pbs
+# (DSN_MAIN_DIR is no longer read: the DSN is the in-repo hpc/dsn, step 2.)
 #
 # PASS CONDITION -- a line that must APPEAR in the log:
 #
@@ -39,10 +40,8 @@
 set -euo pipefail
 
 : "${PYBIN:=/davinci-1/home/ldellamea/.conda/envs/sbi_env/bin/python}"
-: "${DSN_MAIN_DIR:=$HOME/dsn_main}"
 : "${STAGE4_E:=12}"
 : "${WINDOW:=3000}"
-export DSN_MAIN_DIR
 
 # Self-locate: stage3/ is the directory holding probe_dsn_runtime.py. Try the
 # script's own location first, then PBS_O_WORKDIR, and fail loudly with both
@@ -75,7 +74,7 @@ echo "=========================================================="
 echo "host          : $(hostname)"
 echo "stage3 dir    : $STAGE3"
 echo "PYBIN         : $PYBIN"
-echo "DSN_MAIN_DIR  : $DSN_MAIN_DIR"
+echo "DSN tree      : in-repo hpc/dsn (DSN_MAIN_DIR=${DSN_MAIN_DIR:-<unset>} is ignored)"
 echo "=========================================================="
 
 "$PYBIN" probe_dsn_runtime.py \

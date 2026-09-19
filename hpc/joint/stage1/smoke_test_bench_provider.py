@@ -11,9 +11,9 @@ the bench spec's structural shape, the truthful per-provider
 scale_convention, the 4 * d_theta draws bound at d_theta = 10, and the
 --dry-run path end to end.
 
-Tests needing the DSN's compute_ifr_trace SKIP loudly when DSN_MAIN_DIR
-is not resolvable, mirroring how the Stage 1 suite treats the DSN
-provider. numpy + stdlib only otherwise.
+Tests needing the DSN's compute_ifr_trace SKIP loudly when the in-repo
+DSN tree (hpc/dsn) is not usable, mirroring how the Stage 1 suite treats
+the DSN provider. numpy + stdlib only otherwise.
 
 Pure ASCII, LF only.
 """
@@ -25,7 +25,8 @@ import sys
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-for _p in (_HERE, os.path.abspath(os.path.join(_HERE, "..", "stage4"))):
+for _p in (_HERE, os.path.abspath(os.path.join(_HERE, "..", "stage4")),
+           os.path.abspath(os.path.join(_HERE, ".."))):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -47,10 +48,13 @@ def ok(name, cond, detail):
 
 
 def _dsn_dir():
-    d = os.environ.get("DSN_MAIN_DIR")
-    if d and os.path.isfile(os.path.join(d, "generate_burst_data.py")):
-        return d
-    return None
+    """The in-repo DSN tree, or None with the reason printed once."""
+    import dsn_locate
+    status = dsn_locate.dsn_status()
+    if status:
+        print("  [dsn] " + status)
+        return None
+    return dsn_locate.dsn_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +145,7 @@ def test_e4_to_e7():
     d = _dsn_dir()
     if d is None:
         for t in ("E4", "E5", "E6", "E7"):
-            report(t, "SKIP", "DSN_MAIN_DIR not resolvable; "
+            report(t, "SKIP", "DSN tree not usable; "
                               "compute_ifr_trace unavailable")
         return
     prov = load_bench_provider(d)
@@ -227,7 +231,7 @@ def test_f1():
        "the per_electrode_mean claim no provider implemented is gone")
     d = _dsn_dir()
     if d is None:
-        report("F1b", "SKIP", "DSN_MAIN_DIR not resolvable")
+        report("F1b", "SKIP", "DSN tree not usable")
         return
     _prov, tag, spec, sc = make_provider_and_spec(
         build_parser().parse_args(["--out-dir", "/tmp/x", "--provider",
@@ -250,7 +254,7 @@ def test_f2():
 def test_f3():
     d = _dsn_dir()
     if d is None:
-        report("F3", "SKIP", "DSN_MAIN_DIR not resolvable")
+        report("F3", "SKIP", "DSN tree not usable")
         return
     r = subprocess.run(
         [sys.executable, os.path.join(_HERE, "build_latent_bank.py"),

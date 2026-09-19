@@ -7,12 +7,15 @@ path: a probe that reports PASS when the DSN is missing is worse than no probe
 at all. Every negative case below therefore asserts both the exit code and the
 specific check id that failed, not just "it did not pass".
 
-The DSN repo is not present in a sandbox, so these tests build a STUB
-DSN_MAIN_DIR: a directory holding minimal condition_space.py, backbone.py and
-train.py modules with the same call signatures the real ones expose. That
-tests the probe's resolution and reporting logic. It does NOT test the real
-DSN's behaviour, which only the cluster can do -- which is the whole point of
-shipping the probe.
+Most cases build a STUB DSN tree -- a directory holding minimal
+condition_space.py, backbone.py and train.py with the same call signatures the
+real ones expose -- and hand it to the probe through --dsn-main-dir. That
+tests the probe's resolution and reporting logic. Since migration step 2 the
+real DSN is the in-repo hpc/dsn, so two cases (T2, T3) run the probe with NO
+flag and assert that it resolves that tree and that a stale DSN_MAIN_DIR is
+reported as ignored rather than followed. Whether the real DSN's modules then
+import (P4-P7) depends on torch being present, so those cases assert on P3
+only.
 
 Run:
     python3 smoke_test_probe_dsn_runtime.py
@@ -104,7 +107,7 @@ def build_loss_and_miner(cfg, n_classes=None, total_steps=None):
 
 
 def make_stub_dsn(root, omit=()):
-    """A stub DSN_MAIN_DIR. `omit` drops files, for the missing-file cases."""
+    """A stub DSN tree. `omit` drops files, for the missing-file cases."""
     os.makedirs(root, exist_ok=True)
     files = {"condition_space.py": STUB_CONDITION_SPACE,
              "backbone.py": STUB_BACKBONE,
@@ -117,15 +120,28 @@ def make_stub_dsn(root, omit=()):
     return root
 
 
-def run_probe(dsn_dir_env, extra=(), unset=False):
-    """Run the probe in a subprocess. Returns (returncode, combined output)."""
+def run_probe(dsn_dir_flag, extra=(), env_dsn=None):
+    """Run the probe in a subprocess. Returns (returncode, combined output).
+
+    dsn_dir_flag -> passed as --dsn-main-dir (None: no flag, the probe must
+    resolve the in-repo hpc/dsn). env_dsn -> DSN_MAIN_DIR in the child's
+    environment (None: unset), to prove it is ignored.
+    """
     env = dict(os.environ)
     env.pop("DSN_MAIN_DIR", None)
-    if not unset and dsn_dir_env is not None:
-        env["DSN_MAIN_DIR"] = dsn_dir_env
-    proc = subprocess.run([sys.executable, PROBE] + list(extra),
+    if env_dsn is not None:
+        env["DSN_MAIN_DIR"] = env_dsn
+    argv = [sys.executable, PROBE]
+    if dsn_dir_flag is not None:
+        argv += ["--dsn-main-dir", dsn_dir_flag]
+    proc = subprocess.run(argv + list(extra),
                           capture_output=True, text=True, env=env)
     return proc.returncode, proc.stdout + proc.stderr
+
+
+def in_repo_dsn():
+    """What the probe must resolve when given no flag: <hpc>/dsn."""
+    return os.path.realpath(os.path.join(_HERE, "..", "..", "dsn"))
 
 
 def check(name, cond, out=""):
@@ -198,23 +214,34 @@ def main():
         else:
             print("  SKIP  overall verdict: torch/pml not both present")
 
-        # ---- T2: DSN_MAIN_DIR unset -------------------------------------
-        print("T2  DSN_MAIN_DIR unset")
-        rc, out = run_probe(None, unset=True)
-        ok &= check("exit 1", rc == 1, out)
-        ok &= check("P3 fails", "P3" in failed_ids(out), out)
-        ok &= check("says UNSET, not 'missing'", "is UNSET" in out, out)
-        ok &= check("VERDICT is FAIL", "VERDICT: FAIL" in out, out)
+        # ---- T2: no flag, no variable -> the in-repo hpc/dsn ------------
+        # Migration step 2: an unset DSN_MAIN_DIR is not a failure state any
+        # more, because the tree is a property of the checkout.
+        print("T2  no flag and no DSN_MAIN_DIR -> resolves the in-repo hpc/dsn")
+        rc, out = run_probe(None)
+        ok &= check("P3 passes", "P3" not in failed_ids(out), out)
+        ok &= check("P3 names the in-repo tree", in_repo_dsn() in out, out)
+        ok &= check("does not claim UNSET", "is UNSET" not in out, out)
+        ok &= check("P4 (files present) passes on the real tree",
+                    "P4" not in failed_ids(out), out)
 
-        # ---- T3: DSN_MAIN_DIR points at a dead path ---------------------
-        # This is the distinction that cost a session: a deleted symlink and
-        # an unset variable must NOT produce the same message.
-        print("T3  DSN_MAIN_DIR points at a nonexistent path")
+        # ---- T3: a stale DSN_MAIN_DIR is IGNORED, and said so -----------
+        # The old fallback would have followed the variable to a dead path
+        # and failed P3; the new resolver must ignore it, resolve hpc/dsn,
+        # and put the fact that it ignored something in the log.
+        print("T3  stale DSN_MAIN_DIR (dead path) is ignored and reported")
+        rc, out = run_probe(None, env_dsn=os.path.join(tmp, "does_not_exist"))
+        ok &= check("P3 passes despite the variable",
+                    "P3" not in failed_ids(out), out)
+        ok &= check("says IGNORED", "IGNORED" in out, out)
+        ok &= check("still names the in-repo tree", in_repo_dsn() in out, out)
+
+        # ---- T3b: an EXPLICIT dead path is still a failure --------------
+        print("T3b --dsn-main-dir pointing at a nonexistent path")
         rc, out = run_probe(os.path.join(tmp, "does_not_exist"))
         ok &= check("exit 1", rc == 1, out)
         ok &= check("P3 fails", "P3" in failed_ids(out), out)
         ok &= check("says DOES NOT EXIST", "DOES NOT EXIST" in out, out)
-        ok &= check("does NOT say UNSET", "is UNSET" not in out, out)
 
         # ---- T4: directory present, condition_space.py missing ----------
         print("T4  condition_space.py missing")
@@ -256,12 +283,14 @@ def main():
         ok &= check("reports input already legal",
                     "input already legal" in out, out)
 
-        # ---- T8: --dsn-main-dir overrides the environment ---------------
-        print("T8  --dsn-main-dir overrides DSN_MAIN_DIR")
-        rc, out = run_probe(os.path.join(tmp, "does_not_exist"),
-                            extra=["--dsn-main-dir", good])
+        # ---- T8: --dsn-main-dir overrides the in-repo default -----------
+        print("T8  --dsn-main-dir overrides the in-repo tree")
+        rc, out = run_probe(good, env_dsn=os.path.join(tmp, "does_not_exist"))
         ok &= check("P3 passes via the flag",
                     "P3" not in failed_ids(out), out)
+        ok &= check("P3 names the stub, not hpc/dsn",
+                    os.path.realpath(good) in out
+                    and in_repo_dsn() not in out, out)
 
         # ---- T9: the pass condition is a positive line ------------------
         print("T9  pass condition is a line that must appear")

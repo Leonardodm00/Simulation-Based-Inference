@@ -154,7 +154,6 @@ ARGS=(npe_tune_joint.py evaluate
 [ -n "$SPLIT_HASH" ]      && ARGS+=(--split-hash "$SPLIT_HASH")
 [ -n "$CONTRACT_DIGEST" ] && ARGS+=(--contract-digest "$CONTRACT_DIGEST")
 [ -n "$TAG" ]             && ARGS+=(--tag "$TAG")
-[ -n "${DSN_MAIN_DIR:-}" ] && ARGS+=(--dsn-main-dir "$DSN_MAIN_DIR")
 [ -n "${SBI_HPC_DIR:-}" ]  && ARGS+=(--sbi-hpc-dir "$SBI_HPC_DIR")
 [ "$DRYRUN" != "0" ]      && ARGS+=(--dry-run)
 

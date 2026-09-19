@@ -764,7 +764,9 @@ def build_parser() -> argparse.ArgumentParser:
             q.add_argument("--epochs", type=int, default=10)
             q.add_argument("--steps-per-epoch", type=int, default=25)
             q.add_argument("--runner", default=DEFAULT_RUNNER)
-            q.add_argument("--dsn-main-dir", default=None)
+            q.add_argument("--dsn-main-dir", default=None,
+                           help="explicit DSN tree passed through to "
+                                "run_joint_arms; default is hpc/dsn")
             q.add_argument("--sbi-hpc-dir", default=None)
             q.add_argument("--dry-run", action="store_true")
         return q

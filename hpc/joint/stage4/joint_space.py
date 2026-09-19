@@ -61,6 +61,14 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+# The DSN lives at <hpc>/dsn since migration step 1 and joint/dsn_locate.py
+# is the one resolver (step 2). <hpc>/joint goes on sys.path here so the
+# import works whether this module is imported by a stage or run directly.
+_JOINT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+if _JOINT_DIR not in sys.path:
+    sys.path.insert(0, _JOINT_DIR)
+import dsn_locate  # noqa: E402
+
 __all__ = [
     "JOINT_KNOB_ORDER", "BLOCKS", "CAMPAIGNS", "RANGE_PROVENANCE",
     "JointSpaceSpec", "default_joint_space", "Campaign",
@@ -482,31 +490,28 @@ def _cast(axis: str, value: Any) -> Any:
 def _active_loss_hps(loss_type: str) -> Tuple[str, ...]:
     """A(l) from the DSN's condition_space, imported not duplicated.
 
-    The DSN repo is reached through DSN_MAIN_DIR. Duplicating the table here
-    would let the two drift apart silently, which is exactly the failure this
-    module exists to prevent, so an unavailable DSN repo is an error and not
+    The DSN tree is the in-repo <hpc>/dsn (joint/dsn_locate.py; migration
+    step 2, DSN_MAIN_DIR no longer read). Duplicating the table here would
+    let the two drift apart silently, which is exactly the failure this
+    module exists to prevent, so an unavailable DSN tree is an error and not
     a fallback.
     """
-    main = os.environ.get("DSN_MAIN_DIR", "")
-    if main and main not in sys.path:
-        sys.path.insert(0, main)
     try:
+        main = dsn_locate.add_dsn_to_path()
         import condition_space as CS
-    except ImportError as exc:
+    except (ImportError, dsn_locate.DSNTreeMissing) as exc:
         raise ImportError(
             "joint_space needs the DSN's condition_space for the legality "
-            "projection and the active-loss-hyperparameter mask A(l). Set "
-            "DSN_MAIN_DIR to the DSN repo's Main/ directory. Duplicating the "
-            "table here is not an option: the two copies would drift and the "
-            "canonicalisation would stop matching the trainer. (%s)" % exc)
+            "projection and the active-loss-hyperparameter mask A(l), from "
+            "the in-repo tree hpc/dsn. Duplicating the table here is not an "
+            "option: the two copies would drift and the canonicalisation "
+            "would stop matching the trainer. (%s)" % exc)
     return tuple(CS.active_loss_hps(str(loss_type)))
 
 
 def _project_condition(mining_strategy: str, loss_type: str,
                        strict_semihard: int) -> Tuple[str, str, bool]:
-    main = os.environ.get("DSN_MAIN_DIR", "")
-    if main and main not in sys.path:
-        sys.path.insert(0, main)
+    dsn_locate.add_dsn_to_path()
     import condition_space as CS
     return CS.project_condition(mining_strategy, loss_type,
                                 bool(strict_semihard))

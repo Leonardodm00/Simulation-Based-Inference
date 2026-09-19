@@ -142,7 +142,8 @@ def build_parser():
     p.add_argument("--nuisance", action="store_true",
                    help="apply the observation layer (eq. N1); off by default")
     p.add_argument("--dsn-main-dir", default=None,
-                   help="overrides $DSN_MAIN_DIR (compute_ifr_trace lives there)")
+                   help="explicit DSN tree (compute_ifr_trace lives there); "
+                        "default is this repo's hpc/dsn")
     return p
 
 

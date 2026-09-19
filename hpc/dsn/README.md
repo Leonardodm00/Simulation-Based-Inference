@@ -33,9 +33,11 @@ Two reasons, both checked before choosing this shape.
    the directory being called `Main`. So `hpc/dsn/` is `Main/` under a new
    name and everything runs unchanged from `cd hpc/dsn`.
 
-Nothing in this directory was edited. Import rewiring of the joint stack
-(`hpc/joint/stage*/`) from `DSN_MAIN_DIR` to this directory is migration
-step 2, a separate commit, so that this one stays cmp-verifiable.
+Nothing in the mirrored files was edited (the only additions since step 1
+are `hpc/run_smoke_all.pbs`, this README and `ORIGIN_MANIFEST.tsv`). The
+joint stack (`hpc/joint/stage*/`) reaches this directory through
+`hpc/joint/dsn_locate.py` since migration step 2; `DSN_MAIN_DIR` is no
+longer read anywhere and is reported as ignored if set.
 
 ## Layout
 
@@ -94,11 +96,24 @@ nor `pytorch_metric_learning` nor `skopt` pass in the sandbox
 (`batch_geometry`, `generate_mc`, `inspect_latent`, `metrics`,
 `objective_wiring`, `removed_modules`, `silhouette_floor`,
 `latent_and_objective`, `search_persistence`); the other 33 need the
-cluster environment. Cluster: run the DSN smoke suite from the new location
-and compare with the last run from the old one:
+cluster environment.
 
-    cd ~/SBI/hpc/dsn && bash hpc/run_all_smoke_tests.sh
+Cluster [CLUSTER 2026-09-19]: the DSN smoke suite was run as a batch job
+(`hpc/run_smoke_all.pbs`, `meacnn_cpu`, dvnode001) from this directory and
+from the old tree `~/dsn_git/Main` in the same window, jobs 1722691 and
+1722692: **30/30 suites passed in both**, 261.5 s vs 261.9 s, identical
+environment (torch 2.13.0+cu130, pml 2.9.0, skopt 0.10.2), `runner_exit=0`.
+The old tree stood at DSN `1e369e8`, one commit behind the mirror source
+`7afe1b8`; the only file differing between those two commits is
+`Main/hpc/MultiChannel/run_extractor_array_mea.pbs`, excluded from the
+mirror and not exercised by the suite, so for every file the suite touches
+the two trees were byte-identical. Equal counts close step 1.
 
-The suite must report the same pass count it reported from `~/dsn_git/Main`.
-A difference is a finding about the move, not about the code, and this
-commit is reverted rather than patched.
+To repeat the check after any change here:
+
+    cd ~/SBI/hpc/dsn && mkdir -p out && qsub hpc/run_smoke_all.pbs
+
+then read `out/dsn_smoke.log`: the `[job] torch ...` line must appear (the
+prerequisites were real) and the last lines must read `30/30 suites passed`
+and `runner_exit=0`. Never run `hpc/run_all_smoke_tests.sh` on the login
+node: it is a 2 h allocation's worth of work and produces nothing comparable.

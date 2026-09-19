@@ -26,10 +26,11 @@ the next actions.
 
 ## Running the tests
 
-Set the paths first. `DSN_MAIN_DIR` must point at the DSN repo's `Main/`
-directory -- use the `dsn_main` symlink, the real path contains a space.
+Set the paths first. The DSN itself needs none: since migration step 2
+(2026-09-19) it is the in-repo tree `hpc/dsn`, resolved by
+`joint/dsn_locate.py`; `DSN_MAIN_DIR` is no longer read and is reported
+as ignored if set.
 
-    export DSN_MAIN_DIR=~/dsn_main
     export SBIX_DIR=~/repos/Sbi-extractor
     export SBI_HPC_DIR=~/repos/Simulation-Based-Inference/hpc
 
@@ -46,8 +47,9 @@ Then, in this order:
 The one skip is J5 (one host sync per epoch); it needs a CUDA device. Assert it
 on the cluster with `torch.cuda.set_sync_debug_mode`.
 
-Without `DSN_MAIN_DIR` the Stage 1 and 3b suites skip the tests that need the
-generator and report why; nothing fails.
+If `hpc/dsn` is unusable (a broken checkout) the Stage 1 and 3b suites skip
+the tests that need the generator and print the resolver's reason; nothing
+fails silently.
 
 ## Dry runs
 

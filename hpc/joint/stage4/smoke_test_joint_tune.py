@@ -3,7 +3,7 @@
 smoke_test_joint_tune.py -- the Stage 4 search driver (npe_tune_joint.py).
 
 Run:
-    DSN_MAIN_DIR=... SBI_HPC_DIR=... python smoke_test_joint_tune.py
+    SBI_HPC_DIR=... python smoke_test_joint_tune.py
     python smoke_test_joint_tune.py -k J31
 
 The integration surface between the tuner and the trainer is ONE thing: the
@@ -53,7 +53,8 @@ from typing import Any, Callable, Dict, List, Tuple
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-for _p in (_HERE, os.environ.get("SBI_HPC_DIR", "")):
+for _p in (_HERE, os.path.abspath(os.path.join(_HERE, "..")),
+           os.environ.get("SBI_HPC_DIR", "")):
     if _p and _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -83,23 +84,10 @@ def _dsn_status() -> str:
     smoke_test_joint_space.py rather than shared, so neither suite has to
     import the other to run standalone.
     """
-    main = os.environ.get("DSN_MAIN_DIR", "")
-    if not main:
-        return "DSN_MAIN_DIR unset"
-    if not os.path.isdir(main):
-        return ("DSN_MAIN_DIR=%r does not exist (a deleted symlink looks "
-                "exactly like this)" % main)
-    if not os.path.isfile(os.path.join(main, "condition_space.py")):
-        return ("DSN_MAIN_DIR=%r has no condition_space.py -- that checkout "
-                "predates it; git pull the DSN repo" % main)
-    if main not in sys.path:
-        sys.path.insert(0, main)
-    try:
-        import condition_space  # noqa: F401
-        return ""
-    except ImportError as exc:
-        return "condition_space present at %r but will not import (%s)" % (
-            main, exc)
+    # Migration step 2: the three states above cannot occur any more -- the
+    # DSN is the in-repo hpc/dsn. One resolver, one reason string.
+    import dsn_locate
+    return dsn_locate.dsn_status()
 
 
 def _dsn() -> bool:

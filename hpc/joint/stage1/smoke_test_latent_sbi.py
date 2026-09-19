@@ -24,6 +24,10 @@ import shutil
 import sys
 import tempfile
 
+_JOINT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+if _JOINT_DIR not in sys.path:
+    sys.path.insert(0, _JOINT_DIR)
+
 import numpy as np
 from scipy import stats
 
@@ -145,8 +149,9 @@ def test_s1():
 
 
 def _dsn_modules():
-    """(lbg, gbd, dsn_spec) or None if DSN_MAIN_DIR is not set."""
-    if not os.environ.get("DSN_MAIN_DIR"):
+    """(lbg, gbd, dsn_spec) or None if the in-repo DSN tree is not usable."""
+    import dsn_locate
+    if not dsn_locate.dsn_available():
         return None
     from latent_sbi_simulator import load_dsn_modules
     lbg, gbd = load_dsn_modules()
@@ -167,7 +172,7 @@ def _s1e_against_dsn(_unused_spec):
     mods = _dsn_modules()
     if mods is None:
         report("S1e agrees with sample_latents off the boundary", "SKIP",
-               "set DSN_MAIN_DIR to run this")
+               "hpc/dsn not usable")
         return
     lbg, _gbd, dsn = mods
     from latent_sbi_simulator import latent_spec_from_dsn
@@ -280,7 +285,7 @@ def test_s4():
     mods = _dsn_modules()
     if mods is None:
         report("S4 provider matches the DSN primitives", "SKIP",
-               "set DSN_MAIN_DIR to run this")
+               "hpc/dsn not usable")
         return
     lbg, gbd, dsn = mods
     from latent_sbi_simulator import DSNBurstProvider
@@ -757,7 +762,7 @@ def main():
     n_skip = RESULTS.count("SKIP")
     print("%d passed, %d failed, %d skipped" % (n_pass, n_fail, n_skip))
     if n_skip:
-        print("Skips need DSN_MAIN_DIR (and SBIX_DIR for S4e); everything\n"
+        print("Skips need a usable hpc/dsn (and SBIX_DIR for S4e); everything\n"
               "else runs with the built-in fixture provider.")
     return 1 if n_fail else 0
 

@@ -34,7 +34,7 @@ Both are reported per trace via `EnvelopeStats` so the choice is auditable in
 the bank, never silent.
 
 This module produces SPIKE TIMES ONLY. IFR construction (binning, smoothing)
-is imported from DSN_MAIN_DIR unchanged, in Stage E, for parity reasons
+is imported from the DSN tree (<hpc>/dsn) unchanged, in Stage E, for parity reasons
 stated in spec S6.
 
 Pure ASCII, LF only.

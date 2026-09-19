@@ -45,8 +45,8 @@ def ok(name, cond, detail):
 class TinyBackbone(nn.Module):
     """Stand-in encoder: GroupNorm only, L2-normalised output, like the DSN's.
 
-    The real `OneDCNNBackbone` is imported when DSN_MAIN_DIR is set (J0); this
-    exists so the loop and the model can be tested without the DSN repo.
+    The real `OneDCNNBackbone` is imported from the in-repo hpc/dsn (J0); this
+    exists so the loop and the model can be tested without the DSN tree.
     """
 
     def __init__(self, W, E, dropout=0.0):
@@ -90,11 +90,13 @@ def make_model(seed=0, dropout=0.0):
 # ---------------------------------------------------------------------------
 
 def test_j0():
-    if not os.environ.get("DSN_MAIN_DIR"):
+    import dsn_locate
+    status = dsn_locate.dsn_status()
+    if status:
         report("J0 real OneDCNNBackbone builds and back-propagates", "SKIP",
-               "set DSN_MAIN_DIR to run this")
+               status)
         return
-    sys.path.insert(0, os.environ["DSN_MAIN_DIR"])
+    dsn_locate.add_dsn_to_path()
     from backbone import BackboneConfig, build_backbone
     cfg = BackboneConfig(depth_exponent=2, width_multiplier=2.0,
                          stem_width=8, embedding_size=E_DIM)
@@ -225,9 +227,10 @@ def test_j4():
 
 def test_j3():
     """J3: the real l_DSN, and the ramp the probe must not disturb."""
-    if not os.environ.get("DSN_MAIN_DIR"):
-        report("J3 real CompositeDSNLoss + miner", "SKIP",
-               "set DSN_MAIN_DIR to run this")
+    import dsn_locate
+    status = dsn_locate.dsn_status()
+    if status:
+        report("J3 real CompositeDSNLoss + miner", "SKIP", status)
         return
     from dsn_loss_adapter import DSNLossConfig, build_dsn_loss
 

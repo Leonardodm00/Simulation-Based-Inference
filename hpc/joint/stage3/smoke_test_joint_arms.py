@@ -5,7 +5,7 @@ Run:  python3 smoke_test_joint_arms.py
 Needs a small two-arm bench bank, which it BUILDS ITSELF with the Stage 1
 fixture provider, so the test has no external inputs. It does not need the DSN
 repo except for the arms whose encoder is fitted by l_DSN (A0, A0s, A2, A2s,
-A3), which are skipped with a reason when DSN_MAIN_DIR is unset.
+A3), which are skipped with a reason when the in-repo hpc/dsn is unusable.
 
 Pure ASCII, LF only.
 """
