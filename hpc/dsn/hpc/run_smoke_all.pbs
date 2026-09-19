@@ -1,0 +1,81 @@
+#!/bin/bash
+# =============================================================================
+# run_smoke_all.pbs -- the DSN smoke suite as a batch job
+# =============================================================================
+#
+# Documentation/HPC_SMOKE_TEST_RUNBOOK.md sec. 5 prescribes exactly this job
+# but only as a heredoc to paste; it was never committed, so the suite kept
+# being run on the login node by hand. This file is that job, committed
+# (migration step 1b, 2026-09-19), with the conda activation block copied
+# from hpc/MultiChannel/run_extractor_array_mea.pbs -- the one form verified
+# to survive a fresh PBS batch shell on davinci (probe 2026-09-14).
+#
+# SUBMIT FROM hpc/dsn (the directory that holds config.py and Smoke_Tests/):
+#
+#   cd ~/SBI/hpc/dsn && mkdir -p out && qsub hpc/run_smoke_all.pbs
+#
+# The log lands at hpc/dsn/out/dsn_smoke.o<jobid> (gitignored: dsn/out/).
+# The last lines are the runner's own summary, "N/M suites passed in Ts".
+#
+# ENV: meacnn_cpu by default (torch + pytorch_metric_learning + skopt).
+# Override at submit time only if you know why:  qsub -v ENV_NAME=<env> ...
+#
+# HPC note (hpc-python-compat): pure ASCII, LF only.
+# =============================================================================
+#PBS -N dsn_smoke
+#PBS -l select=1:ncpus=8:mem=16gb
+#PBS -l walltime=02:00:00
+#PBS -j oe
+#PBS -o out/
+
+set -eo pipefail
+
+ENV_NAME="${ENV_NAME:-meacnn_cpu}"
+# Known-good fallback for davinci-1 specifically (from `conda env list`'s own
+# "base" row) -- used only if neither an already-loaded conda nor a module
+# load gets us there. The module name varies by site; this path does not.
+KNOWN_CONDA_BASE="/archive/apps/miniconda/miniconda3/py312_2"
+
+if ! command -v conda >/dev/null 2>&1 && command -v module >/dev/null 2>&1; then
+    module load miniconda3 2>/dev/null || module load anaconda3 2>/dev/null || true
+fi
+if ! command -v conda >/dev/null 2>&1 && [ -f "$KNOWN_CONDA_BASE/etc/profile.d/conda.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$KNOWN_CONDA_BASE/etc/profile.d/conda.sh"
+fi
+if ! command -v conda >/dev/null 2>&1; then
+    echo "ABORT: conda not found on PATH, module load did not provide it, and"
+    echo "       $KNOWN_CONDA_BASE does not exist either."
+    exit 2
+fi
+# Source conda's OWN profile.d hook rather than ~/.bashrc, which is usually
+# guarded against non-interactive shells and would silently no-op here.
+# shellcheck disable=SC1091
+source "$(conda info --base)/etc/profile.d/conda.sh"
+if ! conda activate "$ENV_NAME"; then
+    echo "ABORT: conda found, but 'conda activate $ENV_NAME' failed."
+    conda env list | sed 's/^/         /'
+    exit 2
+fi
+set -u
+
+# ---- resolve the tree: must be the directory qsub was run from -------------
+cd "${PBS_O_WORKDIR:-$PWD}"
+if [ ! -f "config.py" ] || [ ! -d "Smoke_Tests" ]; then
+    echo "ABORT: submit this job from hpc/dsn (config.py and Smoke_Tests/ expected)."
+    echo "       PBS_O_WORKDIR=$PWD"
+    exit 2
+fi
+
+echo "[job] host=$(hostname) started=$(date -Is)"
+echo "[job] tree=$PWD"
+echo "[job] env=${CONDA_DEFAULT_ENV:-?} python3=$(command -v python3)"
+# The three imports the runner header names as prerequisites. A missing one
+# aborts HERE with a positive marker, not 30 suites later with 30 tracebacks.
+python3 -c "import torch, pytorch_metric_learning, skopt, sklearn; print('[job] torch %s  pml %s  skopt %s' % (torch.__version__, pytorch_metric_learning.__version__, skopt.__version__))"
+echo "[job] git=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)  manifest_rows=$(grep -vc '^#' ORIGIN_MANIFEST.tsv 2>/dev/null || echo n/a)"
+
+echo "=== DSN smoke suite (hpc/run_all_smoke_tests.sh) ==="
+bash hpc/run_all_smoke_tests.sh && rc=0 || rc=$?
+echo "[job] runner_exit=$rc finished=$(date -Is)"
+exit $rc
