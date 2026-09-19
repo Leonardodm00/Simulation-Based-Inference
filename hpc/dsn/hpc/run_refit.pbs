@@ -1,0 +1,128 @@
+#!/bin/bash
+#PBS -N dsn_refit
+#PBS -l select=1:ncpus=48
+#PBS -l walltime=12:00:00
+#PBS -j oe
+
+# ======================================================================
+# run_refit.pbs -- train ONE configuration as given, no search
+# ======================================================================
+#
+#   qsub -v CFG=hpc/Config/refit_l0_top1.json -o refit_l0_top1.out \
+#        hpc/run_refit.pbs
+#
+# --skip-search bypasses every HPO phase and goes straight to run_final,
+# which trains train.n_seeds model(s), writes checkpoints/seed_<n>/,
+# results.json, config_best.json and figures/embedding_test_seed_<n>.png.
+#
+# Set runtime.experiment_name to something UNIQUE in the config first, or
+# this overwrites the search's run directory.
+#
+# Pure ASCII, LF only (hpc-python-compat).
+# ======================================================================
+
+set -uo pipefail
+
+cd "${PBS_O_WORKDIR:-$PWD}"
+if   [ -f "Main/config.py" ]; then MAIN="$PWD/Main"
+elif [ -f "config.py" ];      then MAIN="$PWD"
+else echo "ABORT: run from the repo root or from Main/"; exit 2; fi
+cd "$MAIN"
+export PYTHONPATH="$MAIN"
+
+CFG="${CFG:-}"
+RESUME="${RESUME:-auto}"
+if [ -z "$CFG" ]; then echo "ABORT: set CFG=hpc/Config/<file>.json"; exit 2; fi
+if [ ! -f "$CFG" ]; then echo "ABORT: config not found: $CFG"; exit 2; fi
+NCPUS=48
+
+# conda's activate/deactivate hooks read unset variables; under 'set -u'
+# that is FATAL and kills the job before it starts. Disable -u here only.
+CONDA_ENV="${DSN_CONDA_ENV:-meacnn_cpu}"
+set +u
+if command -v module >/dev/null 2>&1; then
+    module load miniconda3 2>/dev/null || module load anaconda3 2>/dev/null || true
+fi
+if command -v conda >/dev/null 2>&1; then
+    eval "$(conda shell.bash hook)"
+    conda activate "$CONDA_ENV" || echo "WARN: could not activate $CONDA_ENV"
+fi
+set -u
+
+export OMP_NUM_THREADS="$NCPUS"
+export MKL_NUM_THREADS="$NCPUS"
+export OPENBLAS_NUM_THREADS="$NCPUS"
+export NUMEXPR_NUM_THREADS="$NCPUS"
+export MPLBACKEND=Agg
+
+python3 -c "import torch, pytorch_metric_learning, skopt, sklearn" || {
+    echo "ABORT: dependencies not importable in env '$CONDA_ENV'."; exit 2; }
+
+CFG_THREADS=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['runtime']['torch_threads'])" "$CFG")
+if [ "$CFG_THREADS" != "$NCPUS" ]; then
+    echo "ABORT: runtime.torch_threads=$CFG_THREADS but the job has ncpus=$NCPUS."
+    exit 2
+fi
+
+# ---- resume decision -------------------------------------------------
+# run_final writes checkpoints/final_seed_<n>.pt after EACH seed finishes, so a
+# walltime kill loses only the seed in flight. --resume tells train() to pick up
+# from the in-progress seed's last.pt instead of clearing it. RESUME=auto turns
+# it on exactly when a previous attempt left checkpoints behind, so the SAME
+# qsub line both starts a re-fit and continues it.
+RUN_DIR=$(python3 -c "
+import json, os, sys
+r = json.load(open(sys.argv[1]))['runtime']
+print(os.path.join(r['out_dir'], r['experiment_name']))" "$CFG")
+
+RESUME_FLAG=""
+case "$RESUME" in
+    yes) RESUME_FLAG="--resume" ;;
+    no)  RESUME_FLAG="" ;;
+    auto)
+        if ls "$RUN_DIR"/checkpoints/seed_*/last.pt >/dev/null 2>&1 \
+           || ls "$RUN_DIR"/checkpoints/final_seed_*.pt >/dev/null 2>&1; then
+            N_DONE=$(ls "$RUN_DIR"/checkpoints/final_seed_*.pt 2>/dev/null | wc -l)
+            echo "RESUME=auto: $RUN_DIR has $N_DONE completed seed(s)"
+            echo "             -> continuing with --resume"
+            RESUME_FLAG="--resume"
+        else
+            echo "RESUME=auto: no prior checkpoints -> starting fresh"
+        fi
+        ;;
+    *) echo "ABORT: RESUME must be auto|yes|no, got '$RESUME'"; exit 2 ;;
+esac
+
+# Refuse to clobber a search run directory: experiment_name MUST be new.
+python3 - "$CFG" <<'EOF' || exit 2
+import json, os, sys
+r = json.load(open(sys.argv[1]))["runtime"]
+d = os.path.join(r["out_dir"], r["experiment_name"])
+if os.path.exists(os.path.join(d, "trials.jsonl")):
+    print("ABORT: %s holds a search trial log. Set runtime.experiment_name to "
+          "something new or the re-fit overwrites the study." % d)
+    sys.exit(1)
+print("run dir: %s (n_seeds=%d)" % (d, json.load(open(sys.argv[1]))["train"]["n_seeds"]))
+EOF
+
+echo "======================================================================"
+echo "config  : $CFG"
+echo "started : $(date)"
+echo "======================================================================"
+
+python3 run_optimization.py --config "$CFG" --skip-search --verbose $RESUME_FLAG
+RC=$?
+
+# If the job was killed mid-run, results.json will be absent but completed
+# seeds are still on disk. Rebuild an honest partial aggregate from them.
+if [ ! -f "$RUN_DIR/results.json" ] && \
+   ls "$RUN_DIR"/checkpoints/final_seed_*.pt >/dev/null 2>&1; then
+    echo "results.json absent but seed checkpoints exist -> recovering"
+    python3 analysis/recover_results.py --run-dir "$RUN_DIR" --main-dir "$MAIN" \
+        || echo "WARN: recovery failed; the checkpoints are still intact."
+fi
+
+echo "======================================================================"
+echo "finished: $(date)   exit=$RC"
+echo "======================================================================"
+exit $RC

@@ -20,3 +20,17 @@ runs/
 # sbi writes tensorboard summaries here on every train() call
 sbi-logs/
 runs/
+
+# hpc/dsn -- the mirrored Deep-Summary-Network tree (migration step 1,
+# 2026-09-19). Same machine state the DSN repo ignored, now under this path.
+dsn/out/
+dsn/outputs/
+dsn/trials.jsonl
+dsn/search_state.json
+dsn/config_best.json
+dsn/config_top*.json
+dsn/**/checkpoints/
+dsn/**/figures/
+dsn/**/config_*_lane[0-9]*.json
+dsn/**/npz_specs_*.json
+dsn/**/cache_*/
