@@ -96,7 +96,13 @@ other environment:
 `[job] env=sbi_env` and `30/30 suites passed` close it, and the job scripts'
 `DSN_CONDA_ENV` default flips from `meacnn_cpu` to `sbi_env` (step 5b);
 anything less keeps `meacnn_cpu` as the default and the difference is
-diagnosed before anything is flipped. Result [CLUSTER, fill in].
+diagnosed before anything is flipped. Result [CLUSTER, fill in]; step 5b
+(this commit) applies the flip: the seven `DSN_CONDA_ENV` defaults in
+`hpc/` and `run_smoke_all.pbs` now say `sbi_env`. The nine synthetic
+experiment scripts that hard-code `conda activate meacnn_cpu`
+(`hpc/dsn_4c_*.pbs`, `hpc/dsn_latent_*.pbs`, `runs_synthetic/*.pbs`) are
+2026-08 history and were left as they are; pass `-v` or edit before
+reusing one.
 
 One thing the two environments share: on davinci the system
 `/lib64/libstdc++.so.6` lacks `GLIBCXX_3.4.26`, and both environments rely

@@ -112,7 +112,7 @@ if [ "$IDX" -lt 0 ] || [ "$IDX" -ge "${#CONFIGS[@]}" ]; then
 fi
 
 # ---- settings you may need to change ----------------------------------
-CONDA_ENV="${DSN_CONDA_ENV:-meacnn_cpu}"     # your env name (Step 1 of README_HPC)
+CONDA_ENV="${DSN_CONDA_ENV:-sbi_env}"    # step 5b: one env for this repo     # your env name (Step 1 of README_HPC)
 NCPUS=48                                     # MUST match '#PBS -l ncpus=' above
 CONFIG_SUBDIR="${DSN_CONFIG_SUBDIR:-hpc/Config}"   # relative to WORKDIR
 

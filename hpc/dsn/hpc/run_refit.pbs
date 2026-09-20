@@ -38,7 +38,7 @@ NCPUS=48
 
 # conda's activate/deactivate hooks read unset variables; under 'set -u'
 # that is FATAL and kills the job before it starts. Disable -u here only.
-CONDA_ENV="${DSN_CONDA_ENV:-meacnn_cpu}"
+CONDA_ENV="${DSN_CONDA_ENV:-sbi_env}"    # step 5b: one env for this repo
 set +u
 if command -v module >/dev/null 2>&1; then
     module load miniconda3 2>/dev/null || module load anaconda3 2>/dev/null || true

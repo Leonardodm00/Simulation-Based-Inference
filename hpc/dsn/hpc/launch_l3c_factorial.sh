@@ -41,7 +41,7 @@
 set -e
 set -o pipefail
 
-CONDA_ENV="${DSN_CONDA_ENV:-meacnn_cpu}"
+CONDA_ENV="${DSN_CONDA_ENV:-sbi_env}"    # step 5b: one env for this repo
 CONFIG_SUBDIR="${DSN_CONFIG_SUBDIR:-hpc/Config}"
 PBS_SCRIPT="${DSN_PBS:-hpc/dsn_l3c_factorial.pbs}"
 

@@ -20,8 +20,9 @@
 # the spool file as out/<jobid>.pbsserver01.OU. Fixed in step 2.)
 # The last lines are the runner's own summary, "N/M suites passed in Ts".
 #
-# ENV: meacnn_cpu by default (torch + pytorch_metric_learning + skopt).
-# Override at submit time only if you know why:  qsub -v ENV_NAME=<env> ...
+# ENV: sbi_env by default since migration step 5b (the one environment for
+# this repo; it carries torch + pytorch_metric_learning + skopt). Override
+# at submit time only if you know why:  qsub -v ENV_NAME=<env> ...
 #
 # HPC note (hpc-python-compat): pure ASCII, LF only.
 # =============================================================================
@@ -33,7 +34,7 @@
 
 set -eo pipefail
 
-ENV_NAME="${ENV_NAME:-meacnn_cpu}"
+ENV_NAME="${ENV_NAME:-sbi_env}"
 # Known-good fallback for davinci-1 specifically (from `conda env list`'s own
 # "base" row) -- used only if neither an already-loaded conda nor a module
 # load gets us there. The module name varies by site; this path does not.
