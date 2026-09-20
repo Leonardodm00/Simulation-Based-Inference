@@ -81,9 +81,29 @@ Same as in the DSN repo, now covered by `hpc/.gitignore`:
 
 ## Environment
 
-`train.py` imports `pytorch_metric_learning`, which `sbi_env` does not list.
-Until the environment is consolidated (migration step 5), run this tree under
-`meacnn_cpu` exactly as before, from `cd hpc/dsn`.
+Two environments can run this tree: `meacnn_cpu`, which produced every
+result so far, and `sbi_env`, the one the rest of this repo runs in.
+Migration step 5 (2026-09-19) consolidates on `sbi_env`: `train.py` needs
+`pytorch_metric_learning` and `search.py` needs `scikit-optimize`, both
+already installed in the cluster's `sbi_env` and, since step 5, listed in
+`hpc/environment.yml` / `hpc/requirements.txt` so a rebuild keeps them.
+
+The consolidation is decided by one run, the same 30-suite job under the
+other environment:
+
+    cd ~/SBI/hpc/dsn && mkdir -p out && qsub -v ENV_NAME=sbi_env hpc/run_smoke_all.pbs
+
+`[job] env=sbi_env` and `30/30 suites passed` close it, and the job scripts'
+`DSN_CONDA_ENV` default flips from `meacnn_cpu` to `sbi_env` (step 5b);
+anything less keeps `meacnn_cpu` as the default and the difference is
+diagnosed before anything is flipped. Result [CLUSTER, fill in].
+
+One thing the two environments share: on davinci the system
+`/lib64/libstdc++.so.6` lacks `GLIBCXX_3.4.26`, and both environments rely
+on their `activate.d` hook putting `$CONDA_PREFIX/lib` first on
+`LD_LIBRARY_PATH` (`hpc/setup_env_davinci.sh:151-166`). Calling an
+environment's python by absolute path skips the hook and scipy fails to
+import; always `conda activate`, or submit a job that does.
 
 ## Verification of this step
 
