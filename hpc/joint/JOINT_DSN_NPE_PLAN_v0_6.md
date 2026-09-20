@@ -1541,6 +1541,18 @@ gitignored `artifacts/` with a `.sha256` beside each and a tracked README.
 Never submit a full array before one probe run whose expected output lines were
 stated in advance.
 
+**Layout since the migration (v0.6.5, 2026-09-19).** The DSN is `hpc/dsn/`
+in this repo, a byte-identical mirror of the retired repo's `Main/`; the joint
+stack reaches it through `hpc/joint/dsn_locate.py` (explicit path wins, else
+`hpc/dsn`, `DSN_MAIN_DIR` ignored and reported). `Sbi-extractor` reaches the
+same tree as `$SBI_HPC_DIR/dsn` through its `dsn_tree.py`, with
+`artifacts/sbi_hpc` a per-machine symlink to this repo's `hpc/`; the real-data
+extractor lives in `Sbi-extractor/extractor/`. Dependency direction is
+Sbi-extractor -> Simulation-Based-Inference only. One environment per repo:
+`sbi_env` here (incl. `hpc/dsn`), `sbi_export` there. The r2 checkpoint
+(`Main_RETIRED_20260914/out/refit_mea_joint_full_r2_l0_t82`) and
+`Deep_bio/extracted/` are data and never move.
+
 ---
 
 ## 8. Decisions
@@ -1902,6 +1914,74 @@ replicate-statistic machinery of S2.5, delivered and verified in v0.6.
 ---
 
 ## 11. Changelog
+
+- **2026-09-19 v0.6.5. The DSN migration, and the Stage C/D redesign.**
+  Seven steps, all but the last two landed the same day; each carried a run
+  that could have come out the other way, and the outcomes are recorded here
+  with their job ids so nothing below is asserted from argument alone.
+  **Repositories.** `Deep-Summary-Network` is retired at tag
+  `dsn-final-20260919` (`7afe1b8`); its `Main/` is mirrored byte for byte
+  into this repo as `hpc/dsn/` (195 files, `hpc/dsn/ORIGIN_MANIFEST.tsv`
+  carries sha256 and source path for each; step 1, `5135a4f`). The DSN smoke
+  suite run as a batch job from the mirror and from the old tree in the same
+  window gave **30/30 in both** (jobs 1722691/1722692, `meacnn_cpu`,
+  dvnode001, 261.5 s vs 261.9 s); the old tree stood one commit behind the
+  mirror source and the only differing file was the excluded extractor job
+  script. The joint stack reaches the mirror through the new
+  `hpc/joint/dsn_locate.py`; `DSN_MAIN_DIR` is read by nothing and is
+  reported once as IGNORED if set (step 2). Discriminator, unpatched ->
+  patched with the variable unset: J23 SKIP -> PASS, J29 SKIP -> PASS, bench
+  provider 10/6 skip -> 19/0, demo classes 5/5 skip -> 14/0, latent sbi
+  37/2 -> 46/1; the full `run_tests.sh` sweep on the cluster gives 12/13
+  stages with only local calibration failing (L7/L8, pre-existing, S8 of the
+  2026-09-16 handoff) and `probe_dsn_runtime` `VERDICT: PASS (7/7)` naming
+  `hpc/dsn`. The real-data extractor moved to `Sbi-extractor/extractor/`
+  (step 3): 8/8 suites there and `extraction_flags.sh` regenerated
+  byte-identical from `config_mea_joint_full.davinci.json`, 35 wells.
+  Sbi-extractor's remaining `DSN_MAIN_DIR` consumers moved onto its
+  `dsn_tree.py` (`$SBI_HPC_DIR/dsn`), and `check_preprocessing_parity.py`
+  was retired unrun (step 4a). **One IFR function for both arms** (step 4b):
+  `sim_observable.build_pooled_ifr` now calls the extractor's own
+  `compute_ifr_trace` in the extractor's order. Measured first: the private
+  re-implementation matched the un-normalised trace bit for bit but the
+  NORMALISED traces differed at the last float32 bit on 50/50 random trials
+  (worst 3e-8) and disagreed on a spike at exactly $t = T$; both are gone by
+  construction, and the new tests T2b/T2c fail on the old code. Environment
+  consolidation (step 5): `sbi_env` gains `pytorch-metric-learning` and
+  `scikit-optimize` in its spec (already installed, never listed); the flip
+  of the DSN job scripts to `sbi_env` and of the extractor jobs to
+  `sbi_export` (step 5b) is licensed only by the 30/30 and 8/8 suites
+  passing under the new environments, `[CLUSTER, pending]` at the time of
+  writing. Steps 6-7 (retire the cluster's `dsn_git`, archive the repo,
+  this entry) close the migration; the r2 checkpoint and the `extracted/`
+  archives stay where they are, as data.
+  **Stage C/D are redesigned** around a cohort manifest, superseding the
+  2026-09-16 handoff's S6-S7 and this plan's 6C as written: (i) the
+  real-data extractor emits the manifest -- each array task writes its
+  per-archive fragment, an aggregation job reads them all back and writes
+  `extracted_v2/cohort_manifest.json` only if every field is constant and
+  measured; (ii) both exports read it -- the real arm asserts each archive
+  against it, the sim arm conforms $\Delta t$ and $\sigma_{\rm sm}$ to it
+  and asserts $n_e$ against it; mismatch **raises**, there is no
+  `--assume-preprocessing`, legacy archives are not exported at all; (iii)
+  DSN training reads its preprocessing from the manifest and the config
+  loses that block (a config that still carries it must agree, else raise);
+  the checkpoint stores the manifest digest and the export asserts it.
+  Gating fields: `dt`, `sigma_sm`, `w_size`, `gaussian_window`,
+  `electrodes_per_subset`, `mfr_threshold`, `n_units` (315), plus
+  `manifest_version`; recorded: sha256 of `extraction_flags.sh` and of the
+  cohort config (gating at write, reported at read), extractor commit,
+  timestamp. Everything downstream is re-run under this framework; the
+  frozen r2 encoder is not carried forward. Lifting `CohortConfig` out of
+  `config.py` (so the extractor is torch-free) is folded into this work.
+  `[reasoning]` on the family: this is the prospective/retrospective
+  provenance split of workflow-centric provenance models (Ott et al. 2026,
+  `10.1515/jib-2025-0050`), with `CohortConfig` the plan and the manifest
+  the trace. Decisions 2026-09-19, all the user's: standalone DSN training
+  kept; extractor emits the manifest; raise on any mismatch; DSN reads the
+  manifest for preprocessing, the config for everything else;
+  `mfr_threshold` gating; `manifest_version` present.
+  **Nothing else changed:** no objective, no stage ordering upstream of 6.
 
 - **2026-09-16b v0.6.4.** **Closes 6A-1** (S6): sim-side $n_e = 9$ for
   `rho1300v3`, measured as the first dimension of `electrode_centers`, one file
