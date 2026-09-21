@@ -98,7 +98,7 @@ def dsn_dir(explicit=None, require=True):
                    else "the in-repo tree hpc/dsn")
             raise DSNTreeMissing(
                 "DSN tree %r (%s) is missing %s. If this is a fresh clone, "
-                "hpc/dsn should hold 195 files listed in ORIGIN_MANIFEST.tsv; "
+                "hpc/dsn should hold every file listed in ORIGIN_MANIFEST.tsv; "
                 "run `git status` there." % (d, src, ", ".join(missing)))
     return d
 

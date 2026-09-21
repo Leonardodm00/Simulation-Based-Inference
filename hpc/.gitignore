@@ -34,3 +34,9 @@ dsn/**/figures/
 dsn/**/config_*_lane[0-9]*.json
 dsn/**/npz_specs_*.json
 dsn/**/cache_*/
+# Smoke_Tests writes these INTO THE TREE on every run (rasters, triplet plots,
+# burst specs). They were never ignored, so a `git add -A` after a suite run
+# commits ten binaries. Stage D, 2026-09-21.
+dsn/Smoke_Tests/aug_debug/
+dsn/Smoke_Tests/burst_data/
+dsn/Smoke_Tests/pipeline_out/

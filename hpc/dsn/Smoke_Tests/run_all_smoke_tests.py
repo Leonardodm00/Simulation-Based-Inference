@@ -105,6 +105,7 @@ ORDER = [
     "smoke_test_objective_wiring.py",       # selection rule + tie-break MATH (no torch)
     "smoke_test_batch_geometry.py",         # [C4] Eq. (2)/(3) + the caps (no torch)
     "smoke_test_config.py",
+    "smoke_test_mea_specs.py",              # CohortConfig + make_mea_specs (no torch)
     "smoke_test_backbone.py",
     "smoke_test_augmentation.py",
     "smoke_test_data_pipeline.py",
@@ -198,6 +199,12 @@ def main(argv=None):
     here = Path(__file__).resolve().parent
     suites = [here / n for n in ORDER if (here / n).exists()]
     absent = [n for n in ORDER if not (here / n).exists()]
+    # The mirror of `absent`: a suite that EXISTS on disk but was never added to
+    # ORDER is never run and never reported, so a green run silently omits it.
+    # smoke_test_mea_specs.py sat in exactly that state until 2026-09-21, which
+    # is how a defect in CohortConfig could survive a 30/30 batch run.
+    unregistered = sorted(p.name for p in here.glob("smoke_test_*.py")
+                          if p.name not in ORDER)
 
     if a.only:
         suites = [p for p in suites
@@ -257,6 +264,16 @@ def main(argv=None):
         print("  data_splits.py (the leakage guarantee) and metrics.py (the search")
         print("  objective) are therefore exercised only INDIRECTLY, by the suites")
         print("  above. Treat that as a gap, not as coverage.")
+
+    if unregistered:
+        print()
+        print("  NOTE: %d suite(s) exist in this directory but are NOT in ORDER,"
+              % len(unregistered))
+        print("  so they were NOT run and are NOT covered by the result above:")
+        for n in unregistered:
+            print("    %s" % n)
+        print("  Register them in ORDER or delete them; an unregistered suite is")
+        print("  coverage you believe you have and do not.")
 
     print("=" * 78)
     return 0 if n_fail == 0 else 1

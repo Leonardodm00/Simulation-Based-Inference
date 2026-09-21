@@ -158,6 +158,30 @@ def check_A_round_trip_is_silent():
     print("  [A] PASS  cohort round-trips, no warnings, empty cohort silent")
 
 
+def check_A2_sigma_warning_fires():
+    """The sub-bin smoothing warning must actually be EMITTED, not raise.
+
+    Stage D moved CohortConfig verbatim from config.py to cohort.py and the
+    first cut dropped `import warnings`; every cohort with sigma_bins < 1
+    then died with NameError at construction. The davinci config has
+    sigma_bins = 2, so A/C/F never reach that branch -- this check does.
+    Also asserts config.CohortConfig IS cohort.CohortConfig (one definition).
+    """
+    import cohort
+    if CohortConfig is not cohort.CohortConfig:
+        _fail("A2: config.CohortConfig and cohort.CohortConfig are two objects")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        c = CohortConfig(class_roots={"0": ["/a"], "1": ["/b"]},
+                         w_size=0.05, gaussian_window=0.02)   # 0.4 bins
+    msgs = [str(x.message) for x in w]
+    if not any("no-op" in m for m in msgs):
+        _fail("A2: sigma_bins=%.2f < 1 but no smoothing warning was emitted"
+              % c.sigma_bins())
+    print("  [A2] PASS  sub-bin smoothing warns (sigma_bins=%.2f); one "
+          "CohortConfig definition" % c.sigma_bins())
+
+
 def check_B_validation_raises():
     cases = [
         ({"0": ["/a"], "2": ["/b"]}, "non-contiguous class indices"),
@@ -308,7 +332,8 @@ def main():
     print("CohortConfig / make_mea_specs smoke test")
     print("  fixture: 2 classes x %d roots x %d wells x %d subregions"
           % (N_ROOTS, len(WELLS), N_SUB))
-    checks = [check_A_round_trip_is_silent, check_B_validation_raises,
+    checks = [check_A_round_trip_is_silent, check_A2_sigma_warning_fires,
+              check_B_validation_raises,
               check_C_inventory, check_D_modes, check_E_missing_reported,
               check_F_feeds_the_pipeline]
     for fn in checks:

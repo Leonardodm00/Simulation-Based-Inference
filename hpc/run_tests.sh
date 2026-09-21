@@ -250,7 +250,7 @@ if [ -f joint/stage4/smoke_test_joint_space.py ]; then
     export SBI_HPC_DIR="${SBI_HPC_DIR:-$(pwd)}"
     if [ ! -f "dsn/condition_space.py" ]; then
         note "  NOTE: hpc/dsn/condition_space.py is MISSING -- J23/J35 SKIP;"
-        note "        J20-J22/J26/J29 narrow. hpc/dsn is tracked (195 files,"
+        note "        J20-J22/J26/J29 narrow. hpc/dsn is tracked (see"
         note "        ORIGIN_MANIFEST.tsv); a missing file means a broken checkout."
     fi
     if [ -n "${DSN_MAIN_DIR:-}" ]; then

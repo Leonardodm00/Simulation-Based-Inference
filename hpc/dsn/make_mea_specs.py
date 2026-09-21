@@ -73,76 +73,11 @@ if _HERE not in sys.path:
 
 from config import ExperimentConfig                            # noqa: E402
 
-SUBREGION_PREFIX = "trace_subregion_"
-MULTICHANNEL_NAME = "traces.npz"
-
-
-# --------------------------------------------------------------------------- #
-# discovery
-# --------------------------------------------------------------------------- #
-def root_name_for(root):
-    """The {root_name} value substituted into extract_layout/culture_template.
-
-    THE single place this is computed -- both build_records() below and
-    list_extraction_jobs.py's manifest builder call this, so the two can
-    never disagree about a well's culture id or output path.
-
-    Two path COMPONENTS (parent + leaf), not one. A bare basename collides
-    the moment two batches reuse a leaf name -- e.g. a "SubBatch1" folder
-    that exists under both a control batch and a pathological batch is a
-    real, observed layout, not a hypothetical: DATA_C/Batch4/SubBatch1 and
-    DATA_P/Batch3/SubBatch1 are two different cultures that a bare basename
-    would fold into one, silently pointing both wells' extraction at the
-    same output directory.
-
-    This is a best-effort disambiguator, not a uniqueness proof: two roots
-    that ALSO share their parent's name would still collide. That is exactly
-    why the collision check at the call site (build_records here;
-    list_extraction_jobs.py's own check) is a hard abort rather than a
-    warning -- silent data loss is not an acceptable failure mode for either
-    caller, so an unresolved collision must stop the run, not print past it.
-    """
-    root = os.path.normpath(str(root))
-    leaf = os.path.basename(root)
-    parent = os.path.basename(os.path.dirname(root))
-    return "%s_%s" % (parent, leaf) if parent else leaf
-
-
-def find_wells(root, well_glob):
-    """Immediate child directories of `root` matching `well_glob`, sorted.
-
-    Deliberately NOT recursive: the extractor reads one leaf well folder at a
-    time, and recursing would sweep up intermediate Batch/ folders as if they
-    were wells (see REAL_DATA_FINDINGS, "Command").
-    """
-    import fnmatch
-    if not os.path.isdir(root):
-        return None                                  # signals "root missing"
-    out = []
-    for entry in sorted(os.listdir(root)):
-        full = os.path.join(root, entry)
-        if os.path.isdir(full) and fnmatch.fnmatch(entry, well_glob):
-            out.append(entry)
-    return out
-
-
-def classify_output_dir(out_dir):
-    """('per_region_single', [paths]) | ('multichannel', [path]) | (None, [])."""
-    if not os.path.isdir(out_dir):
-        return None, []
-    names = sorted(os.listdir(out_dir))
-    subs = [n for n in names
-            if n.startswith(SUBREGION_PREFIX) and n.endswith(".npz")]
-    if subs:
-        return "per_region_single", [os.path.join(out_dir, n) for n in subs]
-    if MULTICHANNEL_NAME in names:
-        return "multichannel", [os.path.join(out_dir, MULTICHANNEL_NAME)]
-    return None, []
-
-
-def expand(template, class_index, class_name, root_name, well):
-    return template.format(class_index=class_index, class_name=class_name,
-                           root_name=root_name, well=well)
+# The output-layout constants and the discovery helpers moved to cohort.py
+# (Stage D, 2026-09-21) so list_extraction_jobs.py can import them without
+# torch. Re-exported here so MMS.root_name_for etc. keep working.
+from cohort import (SUBREGION_PREFIX, MULTICHANNEL_NAME,           # noqa: E402,F401
+                    root_name_for, find_wells, classify_output_dir, expand)
 
 
 # --------------------------------------------------------------------------- #

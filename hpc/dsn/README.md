@@ -33,8 +33,15 @@ Two reasons, both checked before choosing this shape.
    the directory being called `Main`. So `hpc/dsn/` is `Main/` under a new
    name and everything runs unchanged from `cd hpc/dsn`.
 
-Nothing in the mirrored files was edited (the only additions since step 1
-are `hpc/run_smoke_all.pbs`, this README and `ORIGIN_MANIFEST.tsv`). The
+Two mirrored files have been edited since, both on 2026-09-21 (Stage D) and
+both by MOVING text, not rewriting it: `CohortConfig` left `config.py` and
+the extraction-output helpers left `make_mea_specs.py`, verbatim, for the new
+torch-free `cohort.py`; each original re-imports what it lost, so there is
+still one definition of every name. `ORIGIN_MANIFEST.tsv` marks the two rows
+EDITED with their current sha and the source sha, and adds `cohort.py` as
+NEW. Every other mirrored file is still byte-identical to its source blob.
+The other additions since step 1 are `hpc/run_smoke_all.pbs`, this README
+and `ORIGIN_MANIFEST.tsv`. The
 joint stack (`hpc/joint/stage*/`) reaches this directory through
 `hpc/joint/dsn_locate.py` since migration step 2; `DSN_MAIN_DIR` is no
 longer read anywhere and is reported as ignored if set.
