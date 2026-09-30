@@ -18,7 +18,12 @@
 # rerun overwrites it, so rename it first if the previous one matters.
 # (Step 1b said out/ alone; PBS Pro took that as a filename and delivered
 # the spool file as out/<jobid>.pbsserver01.OU. Fixed in step 2.)
-# The last lines are the runner's own summary, "N/M suites passed in Ts".
+# Near the end: the runner's own summary, "N/M suites passed in Ts" (followed
+# by its note on suites on disk that are in no ORDER); the LAST line is
+# "[job] runner_exit=<rc> manifest=PASS|FAIL". Before the suite the job
+# checks ORIGIN_MANIFEST.tsv with verify_origin_manifest.py (2026-09-28); a
+# FAIL there does not stop the suite and does not change the exit status --
+# it means some row no longer describes its file; the lines above say which.
 #
 # ENV: sbi_env by default since migration step 5b (the one environment for
 # this repo; it carries torch + pytorch_metric_learning + skopt). Override
@@ -77,9 +82,15 @@ echo "[job] env=${CONDA_DEFAULT_ENV:-?} python3=$(command -v python3)"
 # The three imports the runner header names as prerequisites. A missing one
 # aborts HERE with a positive marker, not 30 suites later with 30 tracebacks.
 python3 -c "import torch, pytorch_metric_learning, skopt, sklearn; print('[job] torch %s  pml %s  skopt %s' % (torch.__version__, pytorch_metric_learning.__version__, skopt.__version__))"
-echo "[job] git=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)  manifest_rows=$(grep -vc '^#' ORIGIN_MANIFEST.tsv 2>/dev/null || echo n/a)"
+echo "[job] git=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# The provenance record, CHECKED rather than counted (2026-09-28): this line
+# used to print manifest_rows=<count>, which stayed 196 while seven rows were
+# stale. Not fatal -- the suites still run -- but the verdict is repeated on
+# the last line, where it cannot be missed.
+echo "[job] --- ORIGIN_MANIFEST ---"
+if python3 verify_origin_manifest.py; then manifest=PASS; else manifest=FAIL; fi
 
 echo "=== DSN smoke suite (hpc/run_all_smoke_tests.sh) ==="
 bash hpc/run_all_smoke_tests.sh && rc=0 || rc=$?
-echo "[job] runner_exit=$rc finished=$(date -Is)"
+echo "[job] runner_exit=$rc manifest=$manifest finished=$(date -Is)"
 exit $rc

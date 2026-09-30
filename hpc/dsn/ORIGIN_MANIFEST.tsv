@@ -1,7 +1,8 @@
 # hpc/dsn origin manifest -- generated 2026-09-19 from Deep-Summary-Network@7afe1b885b486b60215aeaf5143b637705c5d69a (tag dsn-final-20260919)
-# every file below is byte-identical to the named source blob; verify with:
+# every file below is byte-identical to the named source blob, EXCEPT a row after an EDITED note (its sha is the current file's; the note gives the source sha) or a NEW note (no source blob). Verify a byte-identical row with:
 #   git -C <DSN clone> show dsn-final-20260919:<source_path> | sha256sum
 # columns: path_under_hpc_dsn	sha256	source_path_in_DSN_repo
+# check EVERY row against the files here (current sha, not the source blob), from any directory:  python3 verify_origin_manifest.py
 COLAB_RUNBOOK.md	721b1f2f56dad58671b84188cb1c162bc9afe3eb229e2e6c6581fb140e0a1736	Main/COLAB_RUNBOOK.md
 DEPLOYMENT_PIPELINE.md	bae626564c80f2a43384e36fc9f4fac8f6275637e893e56409714358ccbd741a	Main/DEPLOYMENT_PIPELINE.md
 Documentation/CHANGES_joint_condition_search.md	a572173f0a6a5df1f04e01b50184f160503a613ff0ef0399ee4fca44aa357c70	Main/Documentation/CHANGES_joint_condition_search.md
@@ -145,7 +146,8 @@ hpc/dsn_4c_hard_single.pbs	1b27c03223f806024e8ab608d369dbfbf2df06f5b45424e7ef1a9
 hpc/dsn_4c_semihard_multi.pbs	ed87c1b17ccc8f05e19483c6cf1e0a1a53d4ea6066502f7f496302bba909be25	Main/hpc/dsn_4c_semihard_multi.pbs
 hpc/dsn_4c_semihard_single.pbs	25f562a495f28af280dc0cee6cde92323bcfae0bca1f03f5baee91a9a981837b	Main/hpc/dsn_4c_semihard_single.pbs
 hpc/dsn_4c_tracesplit_diag.pbs	e284f78d2aa26bb313e55fea852950fa2fb50471800889c370f3f53cb00a9311	Main/hpc/dsn_4c_tracesplit_diag.pbs
-hpc/dsn_l3c_factorial.pbs	d3d967b45455e709283e9401c833656bf719a8ec00b04f6979dc943abadf35b4	Main/hpc/dsn_l3c_factorial.pbs
+# EDITED step 5b 2026-09-20 (fe9cb20): one line, the CONDA_ENV default meacnn_cpu -> sbi_env (${DSN_CONDA_ENV:-...}), plus a 'step 5b' comment on that line. The row kept the source sha until 2026-09-28. Source sha was d3d967b45455e709.
+hpc/dsn_l3c_factorial.pbs	df4b287bef5a6178d9486dd929221609045838070646800d7b359dcef9fdeaef	Main/hpc/dsn_l3c_factorial.pbs
 hpc/dsn_latent_4class_easypos.pbs	34f983f80e691215dc5df165ead34f530f295c3bb6dc4e3f170ef3a336341fbe	Main/hpc/dsn_latent_4class_easypos.pbs
 hpc/dsn_latent_4class_hard.pbs	888c0648c16addb8c37d4b6e4bcdf5e36d4a2ecc3445b0fa33d219e87b8c83fe	Main/hpc/dsn_latent_4class_hard.pbs
 hpc/environment_hpc.yml	212da8b2320ffc732a2f6438e74fff6296e065d87c3dda18d236a49a63c480c2	Main/hpc/environment_hpc.yml
@@ -153,7 +155,8 @@ hpc/estimate_walltime.py	6943159352d7a9aa7419e6691dc1ad278fa3b5d7e54060356a45e66
 hpc/gate_joint_search.pbs	dc7bf206757fe2cbf86612ef9bed928d27250b7ea436ce67a6d214646a3ba7f7	Main/hpc/gate_joint_search.pbs
 hpc/launch_4c_factorial.sh	38a1a171379a349aa11145197c0705f468e940d8c3fe0801eee77e353eec8e0e	Main/hpc/launch_4c_factorial.sh
 hpc/launch_factorial52.sh	4f704cbd05b8e4ed71bdfd9a616aa84d2014e5b6536f1364c38d58f2901ed854	Main/hpc/launch_factorial52.sh
-hpc/launch_l3c_factorial.sh	43c8c3ce5e724129d45c0468845c4f0ef8390762d0052ec219a5b914ac7850cf	Main/hpc/launch_l3c_factorial.sh
+# EDITED step 5b 2026-09-20 (fe9cb20): one line, the CONDA_ENV default meacnn_cpu -> sbi_env (${DSN_CONDA_ENV:-...}), plus a 'step 5b' comment on that line. The row kept the source sha until 2026-09-28. Source sha was 43c8c3ce5e724129.
+hpc/launch_l3c_factorial.sh	50d809b48c73761def5fc2df7626f8a3834556d48b294a90cc898e0f8cc805fa	Main/hpc/launch_l3c_factorial.sh
 hpc/make_factorial_configs.py	290f4a2729ab3202ff83bfe4d32a23e40a1e32ef637bee0d89045acadded30c1	Main/hpc/make_factorial_configs.py
 hpc/make_joint_search_config.py	e8500dcee6c8afbf748930970c16ebf1697f10be24e957c0ecc454b458201de1	Main/hpc/make_joint_search_config.py
 hpc/make_mea_lanes.sh	3333e6319697d3f7024142a7f80ce10ea9ad60e7d1b2ed9c925aac7030c114af	Main/hpc/make_mea_lanes.sh
@@ -162,11 +165,16 @@ hpc/run_all_smoke_tests.sh	53244d6e77d5bd55d6483718e1ebd207eab4b786ff30d43dae1f8
 hpc/run_aug_diag.pbs	2fa50fc6ef0a1ffb1bd44b48b3a56c724e30981253330bda2d1de2c98a052be0	Main/hpc/run_aug_diag.pbs
 hpc/run_example_3class_simplex.sh	23726fc1cfa79ade6ea527e9118983f6dd50c1162b0e1d394669d33b5c01f8e5	Main/hpc/run_example_3class_simplex.sh
 hpc/run_factorial52_screen.pbs	8ca75d55ae904b7161195161ff4658be3d04eb1f0d7f7834d415f718d81733b0	Main/hpc/run_factorial52_screen.pbs
-hpc/run_full_pipeline.pbs	9fd80bf5789faf5dc263f5d6425835ad124a5fc1d541155c5258bd41f1057c37	Main/hpc/run_full_pipeline.pbs
-hpc/run_mea_joint_search.pbs	583db9f60db4039ef5ac0859d475c047b3d474cc63b18c82c3377aeb7a0e6fe7	Main/hpc/run_mea_joint_search.pbs
-hpc/run_plot_embeddings.pbs	37e99a30c6de56a0bf252495aeb8ef6d82a26f742b9d403bd0d7bf6c72b7bd74	Main/hpc/run_plot_embeddings.pbs
-hpc/run_plot_traces.pbs	cea740a2b998daa1c37aa00f38363da63080bb5e6dc734014744e5c5f1a3fa4a	Main/hpc/run_plot_traces.pbs
-hpc/run_refit.pbs	9b37860d9910687d23a47febdb44964f530b78a1a124f20462cd7bd1cdf4e08c	Main/hpc/run_refit.pbs
+# EDITED step 5b 2026-09-20 (fe9cb20): one line, the CONDA_ENV default meacnn_cpu -> sbi_env (${DSN_CONDA_ENV:-...}), plus a 'step 5b' comment on that line. The row kept the source sha until 2026-09-28. Source sha was 9fd80bf5789faf5d.
+hpc/run_full_pipeline.pbs	2cf154531926e92d1cd062447f18ff542813da419474bc94f20be5467411ab7b	Main/hpc/run_full_pipeline.pbs
+# EDITED step 5b 2026-09-20 (fe9cb20): one line, the CONDA_ENV default meacnn_cpu -> sbi_env (${DSN_CONDA_ENV:-...}), plus a 'step 5b' comment on that line. The row kept the source sha until 2026-09-28. Source sha was 583db9f60db4039e.
+hpc/run_mea_joint_search.pbs	2424189de6ab079fe3c7284a6d9e914b423557766b7d53e22ba3e114eabc8a2b	Main/hpc/run_mea_joint_search.pbs
+# EDITED step 5b 2026-09-20 (fe9cb20): one line, the CONDA_ENV default meacnn_cpu -> sbi_env (${DSN_CONDA_ENV:-...}), plus a 'step 5b' comment on that line. The row kept the source sha until 2026-09-28. Source sha was 37e99a30c6de56a0.
+hpc/run_plot_embeddings.pbs	37166aa293ee716f93ab62a77e2496216cd78621675fb029991ea715cfbe2ca4	Main/hpc/run_plot_embeddings.pbs
+# EDITED step 5b 2026-09-20 (fe9cb20): one line, the CONDA_ENV default meacnn_cpu -> sbi_env (${DSN_CONDA_ENV:-...}), plus a 'step 5b' comment on that line. The row kept the source sha until 2026-09-28. Source sha was cea740a2b998daa1.
+hpc/run_plot_traces.pbs	108ed4ff5496ce349f6d843166fa73205a20ffa90c511143410a12e2b2021814	Main/hpc/run_plot_traces.pbs
+# EDITED step 5b 2026-09-20 (fe9cb20): one line, the CONDA_ENV default meacnn_cpu -> sbi_env (${DSN_CONDA_ENV:-...}), plus a 'step 5b' comment on that line. The row kept the source sha until 2026-09-28. Source sha was 9b37860d9910687d.
+hpc/run_refit.pbs	d7c560339349e14956ff1b1ea7b4b503c4b6736c0acbf4d0b02ddc563b1f678f	Main/hpc/run_refit.pbs
 hpc/run_search_9ch.pbs	16d5bacd2800544c9442c63c6c4165764c0e28018786402ce6af7ce22cc3d3f4	Main/hpc/run_search_9ch.pbs
 hpc/setup_env_davinci.sh	c754fcc4a14e76d8a0c02404a07104af4fe45dbc74ba4673e776fcb42037e6dd	Main/hpc/setup_env_davinci.sh
 hpc/smoke_test_audit_factorial.py	3c4e01f7651eea469677a68aee21eb4a6d97cfa9ebb2055261dd53cd344d9162	Main/hpc/smoke_test_audit_factorial.py
