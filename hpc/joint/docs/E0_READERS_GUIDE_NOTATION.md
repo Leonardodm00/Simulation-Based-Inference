@@ -3,12 +3,13 @@
 **Document E0 of the joint documentation set.** The master notation table
 and glossary for both sets (P0-P7, E1-E9); the reading map; the
 prerequisites; the running example. Index and status: `00_INDEX.md`.
-**Date:** 2026-10-01 (v1). **Applies to:** the repository
+**Date:** 2026-10-01 (v1.1). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037), and the
 project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-01 | v1.1. Appended the encoder-architecture group (29 symbols) for P1, under convention 14; nothing renamed. |
 | 2026-10-01 | v1. Built from the joint plan's S1 (`JOINT_DSN_NPE_PLAN_v0_6.md` at `834eb41`, with its v0.6 collision repairs), the deck pack's `09_NOTATION_AND_GLOSSARY.md` (its conventions 1-12 and glossary), the metric document's notation (`METRIC_REPLICATE_v1_4.md`: the computed-versus-true covariance convention, $\kappa_S$, the draw and error symbols) and P0's table. Seventeen symbol repairs beyond the plan's two, each listed in S1.1 with what it replaces. The checker `tools/check_notation.py` (26 fixture checks, run twice `[RAN]`) reads this table and passes on P0 and on this document's own prose. |
 
 **Abstract.** Nineteen documents share one notation, and a reader who moves
@@ -210,6 +211,36 @@ bold are headings, not symbols.
 | $N_{\rm tr}, J$ | bench traces (cultures) and windows per trace (`--n-traces`, `--n-windows`; the plan's `G`, `J`) | $\mathbb{N}$ | -- | E6 |
 | $N_{\rm neu}$ | bench neurons per trace (`--n-neurons`; the plan's `N`) | $\mathbb{N}$ | -- | E6 |
 | $n_{\rm rl}$ | realisations per $\theta$ in a bank (`--n-per-theta`) | $\mathbb{N}$ | -- | E6 |
+| **Encoder architecture (P1)** | | | | |
+| $d_{\rm exp}$ | depth exponent (`depth_exponent`): the backbone stacks $B_{\rm blk} = 2^{d_{\rm exp}}$ residual blocks | $\mathbb{N}$; searched in $\{3, \dots, 6\}$ | -- | P1 |
+| $B_{\rm blk}$ | number of residual blocks of the backbone | $\mathbb{N}$ | -- | P1 |
+| $b$ | block index, $b \in \{0, \dots, B_{\rm blk} - 1\}$ | index | -- | P1 |
+| $w_{\rm m}$ | width multiplier (`width_multiplier`): the slope of the width schedule | $\mathbb{R}_{>1}$ | dimensionless | P1 |
+| $w_0$ | stem width (`stem_width`): channels after the stem | $\mathbb{N}$ | channels | P1 |
+| $s_b$ | real-valued width exponent of block $b$, $s_b = \ln(b + 1) / \ln w_{\rm m}$ | $\mathbb{R}_{\ge 0}$ | dimensionless | P1 |
+| $w_b$ | width (channel count) of block $b$ after rounding and group snapping | $\mathbb{N}$ | channels | P1 |
+| $g_{\rm w}$ | group width (`group_width`): channels per group of the ResNeXt grouped convolution, and the unit every width is snapped to | $\mathbb{N}$ | channels | P1 |
+| $n_{\rm st}$ | number of stages: distinct consecutive values among $w_0, \dots, w_{B_{\rm blk} - 1}$ | $\mathbb{N}$ | -- | P1 |
+| $s_{\rm tot}$ | total stride of the backbone, $s_{\rm tot} = 4 \cdot 2^{n_{\rm st}}$ at the fixed strides | $\mathbb{N}$ | samples | P1 |
+| $n_{\rm out}$ | length of the last stage's feature map, $n_{\rm out} = \lceil W / s_{\rm tot} \rceil$ | $\mathbb{N}$ | samples | P1 |
+| $R_{\rm f}$ | receptive field of one output sample, in input samples | $\mathbb{N}$ | samples | P1 |
+| $G_{\rm gn}$ | number of GroupNorm groups of a layer, a function of its channel count | $\mathbb{N}$ | -- | P1 |
+| $c_{\rm pg}$ | target channels per GroupNorm group (`norm_target_cpg`) | $\mathbb{N}$ | channels | P1 |
+| $n_{\rm head}$ | input features of the head's linear projection | $\mathbb{N}$ | -- | P1 |
+| $\tilde z$ | the head's output before L2 normalisation, $z = \tilde z / \lVert \tilde z \rVert_2$ | $\mathbb{R}^{E}$ | dimensionless | P1 |
+| $p_{\rm drop}$ | dropout probability (`dropout`), applied after every residual block in training | $[0, 1)$ | dimensionless | P1 |
+| $k_b$ | integer width exponent of block $b$, $k_b = \mathrm{round}(s_b)$ | $\mathbb{N}_0$ | -- | P1 |
+| $w_b^{\rm raw}$ | the width of block $b$ before rounding and snapping | $\mathbb{R}_{>0}$ | channels | P1 |
+| $g_{\rm eff}$ | effective group size of a block, $\min(g_{\rm w}, w)$ | $\mathbb{N}$ | channels | P1 |
+| $w$ | a block's output width when the block index is immaterial ($w_b$ with $b$ dropped; P1 flags the abuse where it uses it) | $\mathbb{N}$ | channels | P1 |
+| $w_{\rm in}$ | a block's input width | $\mathbb{N}$ | channels | P1 |
+| $C_{\rm ch}$ | the channel count of a normalisation layer | $\mathbb{N}$ | channels | P1 |
+| $n^{\rm res}, n^{\rm rx}, n^{\rm blk}$ | weights of one ResNet block, one ResNeXt block, one block of the chosen family | $\mathbb{N}$ | -- | P1 |
+| $\mathbb{1}_{\rm proj}, \mathbb{1}_{\rm fusion}$ | indicators: a block carries a projection shortcut; the head fuses all stages | $\{0, 1\}$ | -- | P1 |
+| $n_{\rm ops}$ | number of pooled statistics per stage (`head_pool_ops`), 1 or 3 | $\{1, 3\}$ | -- | P1 |
+| $\Omega_{\rm st}$ | the set of stage widths | finite set of $\mathbb{N}$ | channels | P1 |
+| $u_{\rm head}$ | the concatenated pooled vector entering the head's projection; not the Cholesky vector $u$ | $\mathbb{R}^{n_{\rm head}}$ | dimensionless | P1 |
+| $A_{\rm head}, a_{\rm head}$ | weight matrix and bias of the head's linear projection; not the reparameterisation $A$ | $\mathbb{R}^{E \times n_{\rm head}}$, $\mathbb{R}^{E}$ | dimensionless | P1 |
 
 ### 1.1 Conventions
 

@@ -5,6 +5,7 @@
 | 2026-10-01 | v1. Stage 1 of `claude/JOINT_DOCS_BUILD_PLAN_v1.md` (v1.1): this index; the inventory extractor `tools/inventory_joint_knobs.py` with its smoke test `tools/smoke_test_inventory.py` (31/31, run twice in the sandbox) and its output `tools/inventory.json`; the inventory block of S7 generated from the repository at `834eb41`; the findings of the plan's S4 re-checked against the extraction and extended (F-m .. F-p). Delivered as the first patch of the set (D-035). |
 | 2026-10-01 | v1.1. Stage 2: `P0_PARAMETERS_OVERVIEW.md` drafted, its three generated tables rendered by the new `tools/p0_tables.py` (tests T6.1-T6.6 added to the suite: 38/38, run twice `[RAN]`) and checked with `--check-doc`; `--n-post-draws` re-owned to P7 (`stage3c`), `inventory.json` and the S7 block regenerated (`--check-index` OK); findings F-q and F-r added from the P0 reading, F-a's `build_argv` line reference corrected; S9 rewritten for D-052 (one push at the end, no per-turn delivery; first written as "D-047" and renumbered the same turn, that number having been taken by the Giulia chat's entry of about 16:10); status rows updated. |
 | 2026-10-01 | v1.2. Stage 3: `E0_READERS_GUIDE_NOTATION.md` drafted -- the master table (179 declared symbols `[RAN]`), the conventions with seventeen overload repairs beyond the plan's two, the glossary by first appearance, the reading map, the prerequisites, the running example at the DUP15HD and bench shapes, the spaces and maps, the analytic/computed pairs; the checker `tools/check_notation.py` with `tools/smoke_test_notation.py` (29/29, run twice `[RAN]`) passes on E0 and on P0. P0 v1.1: bare `T` and `\lambda` aligned with E0 (`T_{gg'}`, `\lambda_{\rm dsn}`), no value changed. S3: the plan's stage status is tracked here between re-issues of the plan. |
+| 2026-10-01 | v1.3. Stage 4 begins: `P1_ENCODER_AXES.md` drafted (the six encoder axes and the twelve fixed `BackboneConfig` knobs, the architecture as a closed-form function of the knobs with the stage layouts, output lengths and parameter counts over the searched grid `[RAN]`, the D-036 differences table, findings F-b, F-c, F-g, F-m and the new F-s). The parameter count reconciled: the cluster's 359708 is the count at `E = 12` (the runtime probe's default), 359450 at the runner's `E = 10` `[RAN]` (S8 corrected). E0 v1.1 appends 29 encoder-architecture symbols; `check_notation.py` reads `\text{}`/environments as prose, set-membership and arithmetic in scripts, and lets a declared base fall through to an indexed match (29/29 twice). Grounding searches for P1 run and reported in its S6 (PubMed: four queries, one PMC full text used; bioRxiv: no keyword search exists, a 30-day slice inspected). |
 
 **What this is.** The index of the joint DSN + NPE documentation set: where
 the documents live and in what state (S1-S3), what they were written
@@ -79,17 +80,17 @@ plan is re-issued when its content changes, not for status alone.
 
 | id | file | status | repo commit | KB copy | notes |
 |---|---|---|---|---|---|
-| 00 | `00_INDEX.md` | drafted | pending push (D-052) | `claude/joint_docs/00_INDEX.md` | this file; v1.2 |
+| 00 | `00_INDEX.md` | drafted | pending push (D-052) | `claude/joint_docs/00_INDEX.md` | this file; v1.3 |
 | tools | `tools/inventory_joint_knobs.py`, `tools/smoke_test_inventory.py`, `tools/inventory.json`, `tools/p0_tables.py`, `tools/check_notation.py`, `tools/smoke_test_notation.py` | drafted | pending push (D-052) | -- | 31/31 twice `[RAN]` at v1 [corrected 2026-10-01: 38/38 twice at v1.1, `p0_tables.py` and tests T6.1-T6.6 added; at v1.2 `check_notation.py` with its own suite, 29/29 twice] |
 | P0 | `P0_PARAMETERS_OVERVIEW.md` | drafted | pending push (D-052) | `claude/joint_docs/P0_PARAMETERS_OVERVIEW.md` | v1.1; tables A, F, K generated, `--check-doc` OK x3; notation check OK |
-| P1 | `P1_ENCODER_AXES.md` | planned | -- | -- | next turn |
-| P2 | `P2_DSN_LOSS_AXES.md` | planned | -- | -- | |
+| P1 | `P1_ENCODER_AXES.md` | drafted | pending push (D-052) | -- | v1; notation check OK; owns F-b, F-c, F-g, F-m (encoder rows), F-s |
+| P2 | `P2_DSN_LOSS_AXES.md` | planned | -- | -- | next turn |
 | P3 | `P3_REPLICATE_AXES.md` | planned | -- | -- | |
 | P4 | `P4_FLOW_AXES.md` | planned | -- | -- | |
 | P5 | `P5_OPTIMISER_AND_SCHEDULE.md` | planned | -- | -- | |
 | P6 | `P6_SEARCH_DRIVER.md` | planned | -- | -- | |
 | P7 | `P7_UPSTREAM_AND_JOBS.md` | planned | -- | -- | |
-| E0 | `E0_READERS_GUIDE_NOTATION.md` | drafted | pending push (D-052) | -- | v1; 179 symbols; `--self` check OK |
+| E0 | `E0_READERS_GUIDE_NOTATION.md` | drafted | pending push (D-052) | -- | v1.1; 208 symbols; `--self` check OK |
 | E1 | `E1_THE_PROBLEM.md` | planned | -- | -- | |
 | E2 | `E2_NPE_AND_FLOWS.md` | planned | -- | -- | |
 | E3 | `E3_THE_SUMMARY_NETWORK.md` | planned | -- | -- | |
@@ -178,6 +179,7 @@ decision log's Open calls).
 | F-p | `warmup_frac_rep`: the runner's default is 0.3 (`--warmup-frac-rep`), the space's inactive pin 0.0 and `ReplicateConsistencyLoss` default 0.0: a Stage 3 arm A5 ramps the term over the first 30 % of training, a Stage 4 trial with `rep_on = 0` records 0.0 | `[REPO]` `joint/stage3/run_joint_arms.py:224`; `joint/stage4/joint_space.py:178`; `joint/stage2/joint_losses.py:264` | P3 | report |
 | F-q | the encoder-only pre-training of arms `A0`, `A0s` builds `torch.optim.AdamW(backbone.parameters(), lr=lr)`: torch's own defaults for `weight_decay` and `betas`, not the runner's `--weight-decay` and `--one-minus-beta1`, which reach only the joint loop's optimiser; the values of those torch defaults are not read here (torch is not installed in the sandbox) | `[REPO]` `joint/stage3/run_joint_arms.py:154`, `:458-459`; `joint/stage2/joint_train.py:144-147` | P2, P5 | report; open whether the pre-training should take the runner's optimiser flags (candidate for the D-038 stream) |
 | F-r | four of the runner's defaults lie outside the ranges the space samples, so a Stage 3 arm at default hyper-parameters is not a point of the Stage 4 space: `--b-sim 128` not in `{256, 512, 1024}`; `--hidden-features 48` below the lower bound 52 at $(26, 12, 26)$ (inside the bench's `[32, 256]`); `--num-transforms 3` below `[4, 12]`; `--weight-decay 0.0` below `[1e-5, 1e-2]` | `[reasoning]` over P0 Table A (`[REPO]` `joint/stage3/run_joint_arms.py:217, 221, 227-228`; `[RAN]` S8) | P0, P4, P5, P6 | report |
+| F-s | the joint space's `depth_exponent` range `(3, 6)` is the DSN `SearchConfig` dataclass default, not the DSN's configured `[2, 5]`; `TUNING_1` S3.1 says a bound of 6 doubles the block count to 64 and must not be searched without re-running its budget gate; at that bound the searched encoders have 49 M to 215 M parameters `[RAN]` (P1 S3.2), against the standalone study's documented maximum of 31.6 M over its own ranges; the joint driver has no parameter-count or budget guard and the runner records no count | `[REPO]` `joint/stage4/joint_space.py:221`; `dsn/config.py:893`; `dsn/Documentation/TUNING_1_searched_axes.md` S3.1; `[RAN]` P1 S3.2 | P1, P6 | report; open whether the range is narrowed to `{3, ..., 5}` or a guard added (Open calls) |
 
 ## 7. Inventory ledger
 
@@ -912,7 +914,7 @@ were exercised.
 | resolved ranges on the bench $(10, 10, 10)$ | `hidden_features` `[32, 256]`; `n_posterior_draws` `[40, 400]` | `default_joint_space(10, 10, 10)` |
 | fixed by S5.1, as the space reports them | `head_pool_ops=1`, `num_bins=10`, `one_minus_beta2=1e-3`, `sep_warmup_frac=0.0`, `strict_semihard=1` | `provenance_report` |
 | inventory | 546 rows: cli 164, signature 153 (104 with defaults), dataclass 82, constant 46, job_var 101; 46 knobs with more than one default | `inventory_joint_knobs.py --strict` |
-| backbone parameter count at the runner's defaults | **not computed** (torch absent); usage v1.3 S8 states 359708 `[CLUSTER]` | -- |
+| backbone parameter count at the runner's defaults | **not computed** (torch absent); usage v1.3 S8 states 359708 `[CLUSTER]` [corrected 2026-10-01: computed analytically from a torch-free replica of `backbone.py`'s helpers, P1 eq. (P1.10): 359450 at the runner's `E = 10`; 359708 at `E = 12`, which is the configuration `probe_dsn_runtime.py` builds and the cluster's number; 360224 at `E = 16`] | P1 S3.2 `[RAN]` |
 
 ## 9. How a document reaches the repository (D-035, D-052)
 

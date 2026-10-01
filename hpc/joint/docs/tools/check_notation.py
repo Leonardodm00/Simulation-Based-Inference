@@ -52,7 +52,7 @@ OPERATORS = set("""
 \\argmax \\sup \\inf \\lim \\partial \\infty \\cdot \\cdots \\ldots \\dots \\vdots
 \\ddots \\top \\pm \\mp \\sqrt \\frac \\left \\right \\big \\Big \\bigl \\bigr
 \\Bigl \\Bigr \\| \\oplus \\otimes \\sim \\approx \\equiv \\propto \\nabla \\circ
-\\langle \\rangle \\lfloor \\rfloor \\lceil \\rceil \\quad \\qquad \\, \\; \\: \\!
+\\langle \\rangle \\lfloor \\rfloor \\lceil \\rceil \\lVert \\rVert \\quad \\qquad \\, \\; \\: \\!
 \\ \\lvert \\rvert \\lbrace \\rbrace \\{ \\} \\setminus \\cup \\cap \\forall \\exists
 \\implies \\iff \\Rightarrow \\Leftarrow \\leftarrow \\rightarrow \\mapsto \\wedge
 \\vee \\neg \\land \\lor \\ast \\star \\prime \\ll \\gg \\simeq \\cong \\perp
@@ -65,7 +65,7 @@ OPERATORS = set("""
 \\mathrm{median} \\mathrm{floor} \\mathrm{argmin} \\mathrm{argmax} \\mathrm{KL}
 \\mathrm{DEFF} \\mathrm{MMD} \\mathrm{EI} \\mathrm{NLL} \\mathrm{ETF} \\mathrm{SBC}
 \\operatorname{diag} \\operatorname{tr} \\operatorname{Var} \\operatorname{Cov}
-\\mathrm{LOG\\_PARAMS} \\mathrm{ns} \\mathrm{topo}
+\\mathrm{LOG\\_PARAMS} \\mathrm{ns} \\mathrm{topo} \\mathrm{var} \\mathrm{std} \\mathrm{max} \\mathrm{min} \\mathrm{len}
 """.split())
 
 TYPES = set("""
@@ -165,6 +165,11 @@ def _read_atom(s: str, i: int) -> Tuple[str, int, str]:
         j = m.end()
         if mac in ACCENTS:
             return "accent", j, mac
+        if mac in ("\\text", "\\textrm", "\\begin", "\\end", "\\label", "\\tag"):
+            # prose inside math, environment delimiters, labels: not symbols
+            if j < len(s) and s[j] == "{":
+                j = _balanced(s, j)
+            return "skip", j, mac
         if mac in FONTS:
             if j < len(s) and s[j] == "{":
                 k = _balanced(s, j)
@@ -286,6 +291,23 @@ def math_spans(text: str) -> List[Tuple[int, str]]:
     return out
 
 
+def _split_arith(s: str) -> List[str]:
+    """Split on + and - outside braces and parentheses."""
+    parts, depth, cur = [], 0, ""
+    for ch in s:
+        if ch in "{(":
+            depth += 1
+        elif ch in "})":
+            depth -= 1
+        if ch in "+-" and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return [p.strip() for p in parts]
+
+
 def _split_top_level(s: str) -> List[str]:
     parts, depth, cur = [], 0, ""
     for ch in s:
@@ -362,6 +384,11 @@ def _index_ok(inner: str, declared: Set[str]) -> bool:
         return all(_index_ok(p, declared) for p in _split_top_level(inner))
     if "\\times" in inner:                 # ^{d_\theta \times d_\theta}
         return all(_index_ok(p, declared) for p in inner.split("\\times"))
+    if "\\in" in inner:                     # _{w \in \Omega_{\rm st}}
+        return all(_index_ok(p, declared) for p in inner.split("\\in") if p)
+    arith = _split_arith(inner)             # _{B_{\rm blk} - 1}, ^{E-1}
+    if len(arith) > 1:
+        return all(_index_ok(p, declared) for p in arith if p)
     pieces = re.findall(r"\\[A-Za-z]+|[A-Za-z]'?|\d+", inner)
     if pieces and "".join(pieces) == inner and len(pieces) > 1:
         return all(_index_ok(p, declared) for p in pieces)
@@ -384,7 +411,8 @@ def token_ok(tok: str, declared: Set[str], by_base: Dict[str, List[List[Tuple[st
     if not parts:
         return False
     if base in declared or base in OPERATORS or base in TYPES:
-        return all(_script_ok(k, a, declared) for k, a in parts)
+        if all(_script_ok(k, a, declared) for k, a in parts):
+            return True
     # a declared symbol with the same base whose index-like scripts are
     # substituted: \chi^2_{26} for \chi^2_d; T_{gg'}^2 for T_{gg'}
     for dparts in by_base.get(base, []):
