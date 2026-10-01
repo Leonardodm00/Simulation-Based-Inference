@@ -4,6 +4,7 @@
 |---|---|
 | 2026-10-01 | v1. Stage 1 of `claude/JOINT_DOCS_BUILD_PLAN_v1.md` (v1.1): this index; the inventory extractor `tools/inventory_joint_knobs.py` with its smoke test `tools/smoke_test_inventory.py` (31/31, run twice in the sandbox) and its output `tools/inventory.json`; the inventory block of S7 generated from the repository at `834eb41`; the findings of the plan's S4 re-checked against the extraction and extended (F-m .. F-p). Delivered as the first patch of the set (D-035). |
 | 2026-10-01 | v1.1. Stage 2: `P0_PARAMETERS_OVERVIEW.md` drafted, its three generated tables rendered by the new `tools/p0_tables.py` (tests T6.1-T6.6 added to the suite: 38/38, run twice `[RAN]`) and checked with `--check-doc`; `--n-post-draws` re-owned to P7 (`stage3c`), `inventory.json` and the S7 block regenerated (`--check-index` OK); findings F-q and F-r added from the P0 reading, F-a's `build_argv` line reference corrected; S9 rewritten for D-052 (one push at the end, no per-turn delivery; first written as "D-047" and renumbered the same turn, that number having been taken by the Giulia chat's entry of about 16:10); status rows updated. |
+| 2026-10-01 | v1.2. Stage 3: `E0_READERS_GUIDE_NOTATION.md` drafted -- the master table (179 declared symbols `[RAN]`), the conventions with seventeen overload repairs beyond the plan's two, the glossary by first appearance, the reading map, the prerequisites, the running example at the DUP15HD and bench shapes, the spaces and maps, the analytic/computed pairs; the checker `tools/check_notation.py` with `tools/smoke_test_notation.py` (29/29, run twice `[RAN]`) passes on E0 and on P0. P0 v1.1: bare `T` and `\lambda` aligned with E0 (`T_{gg'}`, `\lambda_{\rm dsn}`), no value changed. S3: the plan's stage status is tracked here between re-issues of the plan. |
 
 **What this is.** The index of the joint DSN + NPE documentation set: where
 the documents live and in what state (S1-S3), what they were written
@@ -72,20 +73,23 @@ and glossary for both sets. Full chapter plans: the build plan, S1.
 a fresh agent (plan Stage 6). `reviewed`: both reviews returned empty. The
 commit column is the repository commit that carries the file, filled in once
 the user's push is seen from the sandbox (`git fetch`), never assumed.
+Between re-issues of `claude/JOINT_DOCS_BUILD_PLAN_v1.md` (v1.2 marks
+Stages 0-2 done), this ledger is the record of which stage is done; the
+plan is re-issued when its content changes, not for status alone.
 
 | id | file | status | repo commit | KB copy | notes |
 |---|---|---|---|---|---|
-| 00 | `00_INDEX.md` | drafted | pending push (D-052) | `claude/joint_docs/00_INDEX.md` | this file; v1.1 |
-| tools | `tools/inventory_joint_knobs.py`, `tools/smoke_test_inventory.py`, `tools/inventory.json`, `tools/p0_tables.py` | drafted | pending push (D-052) | -- | 31/31 twice `[RAN]` at v1 [corrected 2026-10-01: 38/38 twice at v1.1, `p0_tables.py` and tests T6.1-T6.6 added] |
-| P0 | `P0_PARAMETERS_OVERVIEW.md` | drafted | pending push (D-052) | `claude/joint_docs/P0_PARAMETERS_OVERVIEW.md` | v1; tables A, F, K generated, `--check-doc` OK x3 |
-| P1 | `P1_ENCODER_AXES.md` | planned | -- | -- | |
+| 00 | `00_INDEX.md` | drafted | pending push (D-052) | `claude/joint_docs/00_INDEX.md` | this file; v1.2 |
+| tools | `tools/inventory_joint_knobs.py`, `tools/smoke_test_inventory.py`, `tools/inventory.json`, `tools/p0_tables.py`, `tools/check_notation.py`, `tools/smoke_test_notation.py` | drafted | pending push (D-052) | -- | 31/31 twice `[RAN]` at v1 [corrected 2026-10-01: 38/38 twice at v1.1, `p0_tables.py` and tests T6.1-T6.6 added; at v1.2 `check_notation.py` with its own suite, 29/29 twice] |
+| P0 | `P0_PARAMETERS_OVERVIEW.md` | drafted | pending push (D-052) | `claude/joint_docs/P0_PARAMETERS_OVERVIEW.md` | v1.1; tables A, F, K generated, `--check-doc` OK x3; notation check OK |
+| P1 | `P1_ENCODER_AXES.md` | planned | -- | -- | next turn |
 | P2 | `P2_DSN_LOSS_AXES.md` | planned | -- | -- | |
 | P3 | `P3_REPLICATE_AXES.md` | planned | -- | -- | |
 | P4 | `P4_FLOW_AXES.md` | planned | -- | -- | |
 | P5 | `P5_OPTIMISER_AND_SCHEDULE.md` | planned | -- | -- | |
 | P6 | `P6_SEARCH_DRIVER.md` | planned | -- | -- | |
 | P7 | `P7_UPSTREAM_AND_JOBS.md` | planned | -- | -- | |
-| E0 | `E0_READERS_GUIDE_NOTATION.md` | planned | -- | -- | next turn; written before P1 |
+| E0 | `E0_READERS_GUIDE_NOTATION.md` | drafted | pending push (D-052) | -- | v1; 179 symbols; `--self` check OK |
 | E1 | `E1_THE_PROBLEM.md` | planned | -- | -- | |
 | E2 | `E2_NPE_AND_FLOWS.md` | planned | -- | -- | |
 | E3 | `E3_THE_SUMMARY_NETWORK.md` | planned | -- | -- | |

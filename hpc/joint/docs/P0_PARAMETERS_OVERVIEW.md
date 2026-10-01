@@ -2,11 +2,12 @@
 
 **Document P0 of the joint documentation set.** Companions: P1-P7 (one per
 parameter block), E0 (master notation and glossary). Index and status:
-`00_INDEX.md`. **Date:** 2026-10-01 (v1). **Applies to:** the repository
+`00_INDEX.md`. **Date:** 2026-10-01 (v1.1). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037).
 
 | date | change |
 |---|---|
+| 2026-10-01 | v1.1. Notation aligned with E0: the bare `T` of the table and of Table C is $T_{gg'}$ (the pair is part of the name), the bare `\lambda` of S3.2 note 3 is $\lambda_{\rm dsn}$; `tools/check_notation.py` now passes on this document. No value changed. |
 | 2026-10-01 | v1. Written from `tools/inventory.json` (546 rows at `834eb41`) and from the source; the three generated tables (A, F, K) are rendered by `tools/p0_tables.py` and checked with `--check-doc`. No literature claim is made here (S6). |
 
 **Abstract.** The joint stack trains one encoder $h_\psi$ and one conditional
@@ -50,9 +51,10 @@ stack (`JOINT_DSN_NPE_USAGE_v1.md`). Nothing here is a measurement: no job of
 | $B_{\rm sim}, B_{\rm met}, B_{\rm rep}$ | rows per optimiser step in the simulated, metric and replicate streams (`--b-sim`, `--b-met`, `--b-rep`) | $\mathbb{N}$ | rows (pairs for $B_{\rm rep}$) | S3.3 |
 | $\beta_1, \beta_2$ | AdamW exponential decay rates; $\beta_1 = 1 - $ `one_minus_beta1` | $(0, 1)$ | dimensionless | S3.4 |
 | $\Sigma_0$ | prior covariance used by the replicate term, $\mathrm{diag}((b_k - a_k)^2 / 12)$ for the box $[a_k, b_k]$ | PSD $d_\theta \times d_\theta$ | (param units)$^2$ | S3.4 |
-| $T$ | the replicate statistic of two wells (one number per pair) | $\mathbb{R}_{\ge 0}$ | dimensionless | S3.4 |
+| $T_{gg'}$ | the replicate statistic of two wells $g, g'$ (one number per pair; E0 keeps the pair in the name) | $\mathbb{R}_{\ge 0}$ | dimensionless | S3.4 |
+| $g, g'$ | two wells (cultures) of one donor | indices into the real bank | -- | S1 |
 | $p_{\rm eff}$ | the replicate term's target, the effective number of constrained directions | $[0, d_\theta]$ | dimensionless | S3.4 |
-| $\kappa_S$ | the finite-draw inflation factor of $T$ left after the $d_\theta / S_{\rm mc}$ correction | $\mathbb{R}_{> 1}$ | dimensionless | S3.4 |
+| $\kappa_S$ | the finite-draw inflation factor of $T_{gg'}$ left after the $d_\theta / S_{\rm mc}$ correction | $\mathbb{R}_{> 1}$ | dimensionless | S3.4 |
 | $N_{\rm train}$ | rows of the training split (`n_train`, a shape anchor of the search) | $\mathbb{N}$ | rows | S3.5 |
 | $\bar C$ | the symmetrised posterior covariance of a well pair, computed from the $S_{\rm mc}$ draws of each well (computed level; its analytic counterpart is P3's) | PD $d_\theta \times d_\theta$ | (param units)$^2$ | S3.4 |
 | $\phi$ | the bench's structural parameters, stored in the unit box | $\phi \in (0, 1)^{d_\theta}$, $d_\theta = 10$ on the bench | dimensionless | S3.1 |
@@ -313,7 +315,7 @@ Three things the table does not say by itself:
    the value is what the axis records. The two weight axes record the
    exponent itself (`log10_lambda_dsn`, `log10_lambda_rep`) under a uniform
    prior on `[-3, 1]`: the same law for the weight, uniform in
-   $\log_{10} \lambda$ over `[1e-3, 10]`, recorded in the other coordinate.
+   $\log_{10} \lambda_{\rm dsn}$ (likewise $\lambda_{\rm rep}$) over `[1e-3, 10]`, recorded in the other coordinate.
    A partial-dependence plot of `lr` is therefore read on a log axis of the
    value, one of `log10_lambda_dsn` on a linear axis of the exponent.
 
@@ -388,9 +390,9 @@ be "about" it.
 | `TrainConfig.beta2` | `0.999` | `joint_train.py:44` | AdamW $\beta_2$; equals $1 - 10^{-3}$, the space's fixed `one_minus_beta2` | P5 |
 | `patience` | `99` | `run_joint_arms.py:522` | early-stopping patience in epochs on the NPE validation score; at `epochs=10` it cannot fire (F-d); the best-validation state is restored regardless (`joint_train.py:269-270`) | P5 |
 | `rho_grad_probe` | `lambda_dsn > 0` | `run_joint_arms.py:523` | the per-epoch gradient-cosine probe between the NPE and DSN terms, on when the DSN term is on | P2, P5 |
-| `ReplicateConsistencyLoss.correct_mc` | `True` | `joint_losses.py:264` | subtracts $d_\theta / S_{\rm mc}$ from $T$ (plan eq. 3h); the residual $\kappa_S$ is not corrected (F-e) | P3 |
+| `ReplicateConsistencyLoss.correct_mc` | `True` | `joint_losses.py:264` | subtracts $d_\theta / S_{\rm mc}$ from $T_{gg'}$ (plan eq. 3h); the residual $\kappa_S$ is not corrected (F-e) | P3 |
 | `ReplicateConsistencyLoss.jitter` | `1e-6` x mean diagonal | `joint_losses.py:79`, `:184-190` | relative jitter added to $\bar C$ before the Cholesky factorisation | P3 |
-| `ReplicateConsistencyLoss.t_floor` | `1e-8` | `joint_losses.py:80`, `:232-235` | clamp on $T$ and on $p_{\rm eff}$ before the logs of plan eq. (3c) | P3 |
+| `ReplicateConsistencyLoss.t_floor` | `1e-8` | `joint_losses.py:80`, `:232-235` | clamp on $T_{gg'}$ and on $p_{\rm eff}$ before the logs of plan eq. (3c) | P3 |
 | `ReplicateConsistencyLoss.p_eff_min` | `1e-3` | `joint_losses.py:83`, `:320-322` | below this, $p_{\rm eff}$ is clamped and the pair counted as invalid | P3 |
 | $\Sigma_0$ | `diag(1/12)` on the unit box | `run_joint_arms.py:514-515`, `joint_losses.py:168-177` | the prior covariance of plan eq. (9); `analytic`, the box second moment; spans all $d_\theta$ axes (D17 option (c)) | P3 |
 | prior of the flow | `BoxUniform(0, 1)^{d_theta}` | `run_joint_arms.py:385-388` | the prior `posterior_nn` needs for `z_score_theta="transform_to_unconstrained"`; `analytic` | P4 |
