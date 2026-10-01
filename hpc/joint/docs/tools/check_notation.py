@@ -82,6 +82,12 @@ INDEX_FREE = {"*", "\\star", "0", "1", "2", "3", "\\min", "\\max", "\\pm",
               "\\gt0", "\\lt0", "+", "-"}
 
 _MACRO = re.compile(r"\\[A-Za-z]+|\\[,;:!|{}]|\\ ")
+# Relations that may appear inside a script: _{c \ne c'}, _{c : n_c \ge 2}.
+# Only the two-letter macros: canonicalisation strips spaces, so `\ne q'
+# and `\neq` are the same string, and splitting on the two-letter form reads
+# it as a relation followed by an index (`q`), which is the reading that
+# keeps an undeclared index visible. Write \ne, \le, \ge inside scripts.
+_RELATION = re.compile(r"\\ne|\\le|\\ge|<|>|:")
 _BOUND = re.compile(r"(\\ge|\\le|\\geq|\\leq|\\gt|\\lt|\\ne|\\neq|>|<|=)-?\d+(?:\.\d+)?")
 _NUMBER = re.compile(r"\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
@@ -375,13 +381,25 @@ def _index_ok(inner: str, declared: Set[str]) -> bool:
         return True
     if inner in declared:
         return True
+    if inner.endswith("'") and inner.rstrip("'") in declared:   # z_{i'}, v_{c'}
+        return True
+    if "'" in inner:                        # n_{c'} inside a script: the
+        toks = tokenize(inner.replace("'", ""))   # primed index of a declared
+        if len(toks) == 1 and (toks[0] in declared or   # indexed symbol
+                               toks[0].replace("{", "").replace("}", "") in declared):
+            return True
     if inner.startswith("(") and inner.endswith(")"):
         return _index_ok(inner[1:-1], declared)
+    if "," in inner:
+        pieces = _split_top_level(inner)        # a comma inside (...) or {...}
+        if len(pieces) > 1:                     # does not split: fall through
+            return all(_index_ok(p, declared) for p in pieces)
+    rel = _RELATION.split(inner)                # _{c \ne c'}, _{c : n_c \ge 2}
+    if len(rel) > 1:
+        return all(_index_ok(p, declared) for p in rel if p)
     if "=" in inner:
         left, right = inner.split("=", 1)
         return _index_ok(left, declared) and _index_ok(right, declared)
-    if "," in inner:
-        return all(_index_ok(p, declared) for p in _split_top_level(inner))
     if "\\times" in inner:                 # ^{d_\theta \times d_\theta}
         return all(_index_ok(p, declared) for p in inner.split("\\times"))
     if "\\in" in inner:                     # _{w \in \Omega_{\rm st}}

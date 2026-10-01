@@ -3,12 +3,13 @@
 **Document E0 of the joint documentation set.** The master notation table
 and glossary for both sets (P0-P7, E1-E9); the reading map; the
 prerequisites; the running example. Index and status: `00_INDEX.md`.
-**Date:** 2026-10-01 (v1.1). **Applies to:** the repository
+**Date:** 2026-10-01 (v1.2). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037), and the
 project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-01 | v1.2. Appended the DSN-loss group (26 rows, 31 symbols) for P2, under convention 14; nothing renamed. The checker gained two index forms P2 needs (a primed declared index; a relation inside a script) and a recursion guard, `tools/check_notation.py`, smoke tests T2.10-T2.11, T4.4-T4.5. |
 | 2026-10-01 | v1.1. Appended the encoder-architecture group (29 symbols) for P1, under convention 14; nothing renamed. |
 | 2026-10-01 | v1. Built from the joint plan's S1 (`JOINT_DSN_NPE_PLAN_v0_6.md` at `834eb41`, with its v0.6 collision repairs), the deck pack's `09_NOTATION_AND_GLOSSARY.md` (its conventions 1-12 and glossary), the metric document's notation (`METRIC_REPLICATE_v1_4.md`: the computed-versus-true covariance convention, $\kappa_S$, the draw and error symbols) and P0's table. Seventeen symbol repairs beyond the plan's two, each listed in S1.1 with what it replaces. The checker `tools/check_notation.py` (26 fixture checks, run twice `[RAN]`) reads this table and passes on P0 and on this document's own prose. |
 
@@ -241,6 +242,33 @@ bold are headings, not symbols.
 | $\Omega_{\rm st}$ | the set of stage widths | finite set of $\mathbb{N}$ | channels | P1 |
 | $u_{\rm head}$ | the concatenated pooled vector entering the head's projection; not the Cholesky vector $u$ | $\mathbb{R}^{n_{\rm head}}$ | dimensionless | P1 |
 | $A_{\rm head}, a_{\rm head}$ | weight matrix and bias of the head's linear projection; not the reparameterisation $A$ | $\mathbb{R}^{E \times n_{\rm head}}$, $\mathbb{R}^{E}$ | dimensionless | P1 |
+| **DSN loss (P2)** | | | | |
+| $y, y_i$ | the labels of the metric batch, and the label of its row $i$ ($y^{\rm real}_{\rm met}$ indexed by row) | labels in $\{0, \dots, C-1\}$ | -- | P2 |
+| $\mathcal{P}_i$ | the positives of batch row $i$: the other rows with the same label | index set | -- | P2 |
+| $\mathcal{O}_i$ | the negatives of batch row $i$: the rows with another label | index set | -- | P2 |
+| $d_{\cos}$ | cosine distance between two unit embeddings, $d_{\cos}(z, z') = 1 - z^\top z'$ | $[0, 2]$ | dimensionless | P2 |
+| $Q$ | squared Euclidean distance between two batch rows, $Q(i, i') = \lVert z_i - z_{i'} \rVert_2^2 = 2\, d_{\cos}(z_i, z_{i'})$ on $S^{E-1}$; not the flow $q_\omega$ | $[0, 4]$ | dimensionless | P2 |
+| $Q_{\rm mid}$ | squared Euclidean distance from a negative to the anchor-positive midpoint, $Q_{\rm mid}(i, i', i'')$ | $[0, 4]$ | dimensionless | P2 |
+| $m_{\rm sq}$ | the triplet margin in squared-Euclidean units, $m_{\rm sq} = 2 m_{\cos}$ | $(0, 2)$ | dimensionless | P2 |
+| $\mathcal{T}_{\rm strict}$ | the mined triplets that survive the strict semi-hard filter (all of $\mathcal{T}_{\rm mined}$ when the filter is off) | set of index triples | -- | P2 |
+| $\ell_{\rm trip}, \ell_{\rm ang}$ | the per-triplet margin hinge and angular hinge of the composite loss, in squared-Euclidean units | $\mathbb{R}_{\ge 0}$ | dimensionless | P2 |
+| $\ell_{\rm pml}$ | the library's per-triplet triplet-margin loss under `loss_type = triplet`, in cosine units | $\mathbb{R}_{\ge 0}$ | dimensionless | P2 |
+| $n_{\rm mined}, n_{\rm strict}, n_{\rm act}$ | mined, strict-filtered and active (positive-loss) triplet counts of one batch (`n_mined`, `n_strict`, `n_active`) | $\mathbb{N}_0$ | -- | P2 |
+| $\mathcal{L}_{\rm joint}$ | the margin-plus-angular part of $\ell_{\rm DSN}$ for one batch: the mean of $\ell_{\rm trip} + \ell_{\rm ang}$ over the active strict triplets | $\mathbb{R}_{\ge 0}$ | dimensionless | P2 |
+| $n_c$ | rows of class $c$ in one metric batch | $\mathbb{N}_0$ | rows | P2 |
+| $\bar z^{(B)}_c$ | class-$c$ mean embedding over the rows of one metric batch (computed level); $\bar z_c$ is its population counterpart (analytic level) | $\mathbb{R}^{E}$ | dimensionless | P2 |
+| $v_c$ | unit direction of the batch class mean, $v_c = \bar z^{(B)}_c / \lVert \bar z^{(B)}_c \rVert_2$; not the generalised eigenvector $v_j$ | $S^{E-1}$ | dimensionless | P2 |
+| $K$ | classes present in one metric batch with at least `min_per_class` rows (computed level; $K \le C$); not $K_{\rm bins}$ | $\mathbb{N}_0$ | -- | P2 |
+| $\rho_{\rm ETF}$ | the simplex-ETF target cosine of the separation term, $\rho_{\rm ETF} = -1/(K-1)$ | $[-1, 0)$ | dimensionless | P2 |
+| $\mathcal{L}_{\rm sep}$ | the centroid-separation penalty of one batch: mean over ordered pairs of valid classes of $(v_c^\top v_{c'} - \rho_{\rm ETF})^2$ | $\mathbb{R}_{\ge 0}$ | dimensionless | P2 |
+| $\tau_{\rm sep}$ | warm-up fraction of the separation weight (`sep_warmup_frac`); fixed at 0 in the joint space; not $\tau_j$ or $\tau_{\rm ov}$ | $[0, 1]$ | dimensionless | P2 |
+| $n_{\rm done}$ | optimiser steps completed so far, as the separation ramp counts them (one per evaluation of $\ell_{\rm DSN}$); the DSN's own documents call it `t` | $\mathbb{N}_0$ | steps | P2 |
+| $n_{\rm plan}$ | the planned step budget of the ramp: $n_{\rm ep} n_{\rm step}$ in the joint loop, `--encoder-steps` in the encoder-only pre-training | $\mathbb{N}$ | steps | P2 |
+| $\gamma_{\rm sep}$ | the ramp factor of the separation weight, $\gamma_{\rm sep}(t) = \min(1, t / \tau_{\rm sep})$ for $\tau_{\rm sep} > 0$ and $1$ for $\tau_{\rm sep} = 0$; not $\gamma_{\rm wd}$ | $[0, 1]$ | dimensionless | P2 |
+| $\hat{\mathcal{L}}_{\rm step}$ | the per-step estimate of $\mathcal{L}$, plan eq. (2): the three batch terms of one optimiser step | $\mathbb{R}$ | nats/row plus dimensionless terms | P2 |
+| $\mathcal{M}_{\rm trip}, \mathcal{M}_{\rm joint}, \mathcal{M}_{\rm jsep}$ | the activity masks: the loss hyper-parameters each `loss_type` reads (`condition_space.active_loss_hps`); not the bench axis sets $\mathcal{A}_{\rm lab}, \mathcal{A}_{\rm free}$ | sets of knobs | -- | P2 |
+| $\Pi$ | the legality projection of a (`mining_strategy`, `loss_type`, `strict_semihard`) triple onto a legal one (`condition_space.project_condition`); not the projector $\Pi_\theta$ | map on triples | -- | P2 |
+| $S_{\rm sil}$ | the cosine silhouette of an embedding cloud against its labels; not $S_{\rm mc}$ | $[-1, 1]$ | dimensionless | P2 |
 
 ### 1.1 Conventions
 

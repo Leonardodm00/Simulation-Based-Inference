@@ -148,6 +148,22 @@ def test_master_and_matcher():
     check("T2.9 display math is scanned, with the line of its opening $$",
           len(disp) == 1 and disp[0][0] == GOOD_DOC.split("\n").index("$$ T_{gg'} = \\Delta_{gg'}^\\top M \\Delta_{gg'} \\tag{3} $$") + 1,
           disp[:1])
+    # P2 forms: a primed index of a declared index, and a relation inside a
+    # subscript (the index symbols are the fixture's g, j, k).
+    doc = r"$x_{g'}$, $\lambda_{j'}$, $\sum_{j \ne j'} \lambda_j$, $\sum_{k : a_k \ge 1} b_k$, $x_{g''}$"
+    toks = [t for t, _, _ in N.check_document(doc, declared)]
+    check("T2.10 a primed declared index and a relation inside a subscript pass",
+          toks == [], toks)
+    doc = r"$x_{q'}$, $\sum_{j \ne q} \lambda_j$"
+    toks = [t for t, _, _ in N.check_document(doc, declared)]
+    check("T2.11 an undeclared index stays undeclared, primed or in a relation",
+          toks == ["\\sum_{j\\neq}", "x_{q'}"], toks)
+    # a parenthesised index list before \in (the recursion guard), a primed
+    # indexed symbol inside a script, and a comma list of relations
+    doc = r"$\sum_{(g, g', k) \in \Theta} a_k$, $\sum_{k : a_k \ge 1, b_{k'} \ge 1} b_k$, $x_{g, g'}$"
+    toks = [t for t, _, _ in N.check_document(doc, declared)]
+    check("T2.12 a parenthesised list before \\in, a primed indexed symbol in a "
+          "script, and a comma list of relations pass", toks == [], toks)
 
 
 def test_cli(tmp):
@@ -199,13 +215,17 @@ def test_real(docs_dir):
     check("T4.1 E0 declares at least 100 symbols", len(declared) >= 100, len(declared))
     res = N.check_document(text, declared)
     check("T4.2 E0's own prose uses only declared symbols", not res, [t for t, _, _ in res][:8])
-    for name in ("P0_PARAMETERS_OVERVIEW.md",):
+    # Every written document of the set is checked here; a document that does
+    # not exist yet is skipped, so the suite grows with the set.
+    docs = ("P0_PARAMETERS_OVERVIEW.md", "P1_ENCODER_AXES.md", "P2_DSN_LOSS_AXES.md")
+    for n, name in enumerate(docs, 3):
         path = os.path.join(docs_dir, name)
         if not os.path.isfile(path):
+            print("SKIP  T4.%d %s (absent)" % (n, name))
             continue
         with open(path, encoding="ascii") as fh:
             res = N.check_document(fh.read(), declared)
-        check("T4.3 %s uses only declared symbols" % name, not res, [t for t, _, _ in res][:8])
+        check("T4.%d %s uses only declared symbols" % (n, name), not res, [t for t, _, _ in res][:8])
 
 
 def main(argv=None):
