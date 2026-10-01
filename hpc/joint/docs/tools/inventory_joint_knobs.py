@@ -206,8 +206,7 @@ OWNER_RULES: List[Tuple[str, str]] = [
     (r"\|train_encoder_only\.", "P2"),
     (r"\|BatchSpec\.__init__\.b_met$", "P2"),
     # --- replicate block (P3) ------------------------------------------------
-    (r"\|--(lambda-rep|warmup-frac-rep|n-posterior-draws|b-rep|n-post-draws)$",
-     "P3"),
+    (r"\|--(lambda-rep|warmup-frac-rep|n-posterior-draws|b-rep)$", "P3"),
     (r"\|(LAMBDA_REP|N_DRAWS)$", "P3"),
     (r"\|JointSpaceSpec\.(log10_lambda_rep|warmup_frac_rep|n_posterior_draws)$",
      "P3"),

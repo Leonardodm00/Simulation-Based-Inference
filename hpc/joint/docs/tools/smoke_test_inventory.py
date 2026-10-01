@@ -35,6 +35,7 @@ Exit status 0 iff every test passed. Pure ASCII, LF only.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -387,6 +388,45 @@ def test_real_tree(hpc_dir):
     return ok
 
 
+def test_p0_tables(hpc_dir):
+    """T6: the generated tables of P0 (p0_tables.py), real tree only."""
+    import p0_tables as P
+    ok = True
+    inv_path = os.path.join(_HERE, "inventory.json")
+    if not os.path.isfile(inv_path):
+        return _report("T6 p0 tables", False, "inventory.json missing; run the extractor first")
+    blocks = P.render(hpc_dir, inv_path)
+    a_rows = [l for l in blocks["A"].split("\n") if l.startswith("| ") and l[2].isdigit()]
+    ok &= _report("T6.1 table A has one row per axis of JOINT_KNOB_ORDER",
+                  len(a_rows) == 23, "got %d" % len(a_rows))
+    JS, NTJ = P._load_space(hpc_dir)
+    pri = P.priors_from_source(JS)
+    cats = {k for k, v in pri.items() if v == "categorical"}
+    ok &= _report("T6.2 priors parsed for every axis; categorical set == _NO_BOUNDARY",
+                  set(pri) == set(JS.JOINT_KNOB_ORDER) and cats == set(JS._NO_BOUNDARY),
+                  "categorical %s" % sorted(cats))
+    reach = [l for l in a_rows if "NOT PASSED" in l]
+    ok &= _report("T6.3 every searched axis reaches the runner (no NOT PASSED row)",
+                  not reach, "%d rows" % len(reach))
+    doc = "x\n" + "".join(P.MARK[k][0] + "\n" + blocks[k] + P.MARK[k][1] + "\n" for k in ("A", "F", "K")) + "y\n"
+    res = P.check_doc(doc, blocks)
+    ok &= _report("T6.4 check_doc passes on a doc built from the blocks",
+                  all(r[1] for r in res), "%s" % [(r[0], r[1]) for r in res])
+    broken = doc.replace("| `lr` |", "| `lr2` |", 1)
+    res2 = P.check_doc(broken, blocks)
+    ok &= _report("T6.5 check_doc fails when one cell changes",
+                  not all(r[1] for r in res2))
+    with open(inv_path, "r", encoding="ascii") as fh:
+        inv = json.load(fh)
+    owned = [r for r in inv["rows"] if r["owner"] not in ("plumbing", "UNOWNED")
+             and not (r["surface"] == "signature" and r.get("required"))]
+    n_knobs = len({INV.knob_name(r) for r in owned})
+    k_rows = [l for l in blocks["K"].split("\n") if l.startswith("| `")]
+    ok &= _report("T6.6 table K lists every owned knob exactly once",
+                  len(k_rows) == n_knobs, "rows %d, knobs %d" % (len(k_rows), n_knobs))
+    return ok
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -404,6 +444,7 @@ def main(argv=None):
         if args.hpc_dir:
             if os.path.isdir(os.path.join(args.hpc_dir, "joint")):
                 ok &= test_real_tree(args.hpc_dir)
+                ok &= test_p0_tables(args.hpc_dir)
             else:
                 ok &= _report("T5 real tree", False,
                               "%s has no joint/ subdirectory" % args.hpc_dir)

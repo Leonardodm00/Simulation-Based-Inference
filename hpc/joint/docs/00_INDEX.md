@@ -3,6 +3,7 @@
 | date | change |
 |---|---|
 | 2026-10-01 | v1. Stage 1 of `claude/JOINT_DOCS_BUILD_PLAN_v1.md` (v1.1): this index; the inventory extractor `tools/inventory_joint_knobs.py` with its smoke test `tools/smoke_test_inventory.py` (31/31, run twice in the sandbox) and its output `tools/inventory.json`; the inventory block of S7 generated from the repository at `834eb41`; the findings of the plan's S4 re-checked against the extraction and extended (F-m .. F-p). Delivered as the first patch of the set (D-035). |
+| 2026-10-01 | v1.1. Stage 2: `P0_PARAMETERS_OVERVIEW.md` drafted, its three generated tables rendered by the new `tools/p0_tables.py` (tests T6.1-T6.6 added to the suite: 38/38, run twice `[RAN]`) and checked with `--check-doc`; `--n-post-draws` re-owned to P7 (`stage3c`), `inventory.json` and the S7 block regenerated (`--check-index` OK); findings F-q and F-r added from the P0 reading, F-a's `build_argv` line reference corrected; S9 rewritten for D-052 (one push at the end, no per-turn delivery; first written as "D-047" and renumbered the same turn, that number having been taken by the Giulia chat's entry of about 16:10); status rows updated. |
 
 **What this is.** The index of the joint DSN + NPE documentation set: where
 the documents live and in what state (S1-S3), what they were written
@@ -74,9 +75,9 @@ the user's push is seen from the sandbox (`git fetch`), never assumed.
 
 | id | file | status | repo commit | KB copy | notes |
 |---|---|---|---|---|---|
-| 00 | `00_INDEX.md` | drafted | pending push | `claude/joint_docs/00_INDEX.md` | this file; v1 |
-| tools | `tools/inventory_joint_knobs.py`, `tools/smoke_test_inventory.py`, `tools/inventory.json` | drafted | pending push | -- | 31/31 twice `[RAN]` |
-| P0 | `P0_PARAMETERS_OVERVIEW.md` | planned | -- | `claude/joint_docs/P0_PARAMETERS_OVERVIEW.md` | next turn |
+| 00 | `00_INDEX.md` | drafted | pending push (D-052) | `claude/joint_docs/00_INDEX.md` | this file; v1.1 |
+| tools | `tools/inventory_joint_knobs.py`, `tools/smoke_test_inventory.py`, `tools/inventory.json`, `tools/p0_tables.py` | drafted | pending push (D-052) | -- | 31/31 twice `[RAN]` at v1 [corrected 2026-10-01: 38/38 twice at v1.1, `p0_tables.py` and tests T6.1-T6.6 added] |
+| P0 | `P0_PARAMETERS_OVERVIEW.md` | drafted | pending push (D-052) | `claude/joint_docs/P0_PARAMETERS_OVERVIEW.md` | v1; tables A, F, K generated, `--check-doc` OK x3 |
 | P1 | `P1_ENCODER_AXES.md` | planned | -- | -- | |
 | P2 | `P2_DSN_LOSS_AXES.md` | planned | -- | -- | |
 | P3 | `P3_REPLICATE_AXES.md` | planned | -- | -- | |
@@ -84,7 +85,7 @@ the user's push is seen from the sandbox (`git fetch`), never assumed.
 | P5 | `P5_OPTIMISER_AND_SCHEDULE.md` | planned | -- | -- | |
 | P6 | `P6_SEARCH_DRIVER.md` | planned | -- | -- | |
 | P7 | `P7_UPSTREAM_AND_JOBS.md` | planned | -- | -- | |
-| E0 | `E0_READERS_GUIDE_NOTATION.md` | planned | -- | -- | written before P1 |
+| E0 | `E0_READERS_GUIDE_NOTATION.md` | planned | -- | -- | next turn; written before P1 |
 | E1 | `E1_THE_PROBLEM.md` | planned | -- | -- | |
 | E2 | `E2_NPE_AND_FLOWS.md` | planned | -- | -- | |
 | E3 | `E3_THE_SUMMARY_NETWORK.md` | planned | -- | -- | |
@@ -155,7 +156,7 @@ decision log's Open calls).
 
 | id | finding | evidence | owner | resolution |
 |---|---|---|---|---|
-| F-a | `num_bins`: runner default **8**; `build_joint_model` default 10; the space declares it FIXED at 10; `build_argv` passes no `--num-bins`, so a Stage 4 trial trains an 8-bin flow while its ledger spec says 10 | `[REPO]` `joint/stage3/run_joint_arms.py:229`; `joint/stage2/joint_model.py:195-197`; `joint/stage4/joint_space.py:322-324`; `joint/stage4/npe_tune_joint.py:86-106, 198-203` | P4, P6 | patch (D-038) |
+| F-a | `num_bins`: runner default **8**; `build_joint_model` default 10; the space declares it FIXED at 10; `build_argv` passes no `--num-bins`, so a Stage 4 trial trains an 8-bin flow while its ledger spec says 10 | `[REPO]` `joint/stage3/run_joint_arms.py:229`; `joint/stage2/joint_model.py:195-197`; `joint/stage4/joint_space.py:322-324`; `joint/stage4/npe_tune_joint.py:86-106, 206-217` [corrected 2026-10-01: was `198-203`] | P4, P6 | patch (D-038) |
 | F-b | `head_pool_ops`: the space declares code **1** (`("mean","max","std")`) fixed; `make_backbone` never sets it, so `BackboneConfig`'s default `("mean",)` (code 0) is built | `[REPO]` `joint/stage4/joint_space.py:322-324`; `joint/stage3/run_joint_arms.py:301-308`; `dsn/backbone.py:76`; `dsn/condition_space.py:113` | P1, P6 | patch (D-038) |
 | F-c | `RANGE_PROVENANCE` names `SearchConfig.weight_decay_range` for `weight_decay` and `SearchConfig.dropout_range` for `dropout`; `SearchConfig` has `weight_decay_range = (1e-4, 1e-2)` and no `dropout_range`; the values the space carries, `(1e-5, 1e-2)` and `(0.0, 0.3)`, are `RegularizationConfig`'s | `[REPO]` `joint/stage4/joint_space.py:121-145, 221, 240`; `dsn/config.py:934, 1183-1184` | P1, P5 | report; open whether the two strings get fixed in the D-038 stream |
 | F-d | `patience=99` in the runner: early stopping cannot fire in any run shorter than 99 epochs (default `epochs=10`); the best-validation state is still restored. `control_config_from`'s docstring expects early stopping to fire on shuffled data | `[REPO]` `joint/stage3/run_joint_arms.py:519-524`; `joint/stage4/joint_space.py:712-717` | P5, P6 | report; open |
@@ -171,6 +172,8 @@ decision log's Open calls).
 | F-n | `stage3c.pbs` defaults `N_POST_DRAWS=128` while `run_stage3c.py --n-post-draws` defaults to 64: the two entry points run different draw counts unless the variable is passed | `[REPO]` `joint/stage3c/jobs/stage3c.pbs:49`; `joint/stage3c/run_stage3c.py:66` | P7 | report; open |
 | F-o | `JointSpaceSpec.n_posterior_draws` defaults to `(100, 400)`, below the $4 d_\theta = 104$ floor at $d_\theta = 26$; only `default_joint_space` resolves the floor, so a `JointSpaceSpec()` built directly carries a range the floor forbids | `[REPO]` `joint/stage4/joint_space.py:233, 308-316` | P3, P6 | report |
 | F-p | `warmup_frac_rep`: the runner's default is 0.3 (`--warmup-frac-rep`), the space's inactive pin 0.0 and `ReplicateConsistencyLoss` default 0.0: a Stage 3 arm A5 ramps the term over the first 30 % of training, a Stage 4 trial with `rep_on = 0` records 0.0 | `[REPO]` `joint/stage3/run_joint_arms.py:224`; `joint/stage4/joint_space.py:178`; `joint/stage2/joint_losses.py:264` | P3 | report |
+| F-q | the encoder-only pre-training of arms `A0`, `A0s` builds `torch.optim.AdamW(backbone.parameters(), lr=lr)`: torch's own defaults for `weight_decay` and `betas`, not the runner's `--weight-decay` and `--one-minus-beta1`, which reach only the joint loop's optimiser; the values of those torch defaults are not read here (torch is not installed in the sandbox) | `[REPO]` `joint/stage3/run_joint_arms.py:154`, `:458-459`; `joint/stage2/joint_train.py:144-147` | P2, P5 | report; open whether the pre-training should take the runner's optimiser flags (candidate for the D-038 stream) |
+| F-r | four of the runner's defaults lie outside the ranges the space samples, so a Stage 3 arm at default hyper-parameters is not a point of the Stage 4 space: `--b-sim 128` not in `{256, 512, 1024}`; `--hidden-features 48` below the lower bound 52 at $(26, 12, 26)$ (inside the bench's `[32, 256]`); `--num-transforms 3` below `[4, 12]`; `--weight-decay 0.0` below `[1e-5, 1e-2]` | `[reasoning]` over P0 Table A (`[REPO]` `joint/stage3/run_joint_arms.py:217, 221, 227-228`; `[RAN]` S8) | P0, P4, P5, P6 | report |
 
 ## 7. Inventory ledger
 
@@ -314,7 +317,7 @@ Generated by `tools/inventory_joint_knobs.py` at commit `834eb41`; 546 rows. Do 
 | joint/stage3c/run_stage3c.py | `--sim-shards` |  | str |  |  | yes | plumbing |
 | joint/stage3c/run_stage3c.py | `--out-dir` |  | str |  |  | yes | plumbing |
 | joint/stage3c/run_stage3c.py | `--n-floor-draws` |  | int | `48` |  |  | P7 |
-| joint/stage3c/run_stage3c.py | `--n-post-draws` |  | int | `64` |  |  | P3 |
+| joint/stage3c/run_stage3c.py | `--n-post-draws` |  | int | `64` |  |  | P7 |
 | joint/stage3c/run_stage3c.py | `--kernel-axes` |  | str | `''` |  |  | P7 |
 | joint/stage3c/run_stage3c.py | `--spread-axes` |  | str | `''` |  |  | P7 |
 | joint/stage3c/run_stage3c.py | `--fd-step` |  | float | `0.02` |  |  | P7 |
@@ -907,15 +910,27 @@ were exercised.
 | inventory | 546 rows: cli 164, signature 153 (104 with defaults), dataclass 82, constant 46, job_var 101; 46 knobs with more than one default | `inventory_joint_knobs.py --strict` |
 | backbone parameter count at the runner's defaults | **not computed** (torch absent); usage v1.3 S8 states 359708 `[CLUSTER]` | -- |
 
-## 9. How a document reaches the repository (D-035)
+## 9. How a document reaches the repository (D-035, D-052)
 
-Each turn: the files are written in the sandbox clone on top of the last
-delivered state, the gates of the `hpc-git-delivery` skill run (the real
-file fetched from `origin/main`; `py_compile`; `args.*` resolution; byte
-safety: pure ASCII and LF-only for every `.py` and `.md`; the behavioural
-smoke test; the patch re-applied in a fresh clone and compared byte for byte
-with the tested files), a tarball holding a `git format-patch` is sent, and
-the reply gives the two laptop commands: extract and `git apply`, review,
-then `git add` of the explicit file list, `git commit`, `git push`. The next
-turn starts with a `git fetch` that checks the previous patch landed, so a
-patch is never built against an assumed state.
+**One push at the end (D-052, 2026-10-01).** Every document of the set is
+written turn by turn on the sandbox branch `docs/joint-docs`, forked from
+`origin/main` at `834eb41`; nothing is applied or pushed while the set is
+incomplete, and the Stage 1 tarball that was sent before D-052 is not to be
+applied on its own. When the set is complete (plan Stage 7), `origin/main`
+is fetched again, the branch is rebased if `main` moved, and ONE tarball
+holding the whole `git format-patch` series from the base is sent; the
+reply then gives the laptop commands: extract, `git am` (or `git apply` per
+patch), review, `git push`. The gates of the `hpc-git-delivery` skill run
+on every turn's files (the real file fetched from `origin/main` where one
+exists; `py_compile`; `args.*` resolution; byte safety: pure ASCII and
+LF-only for every `.py` and `.md`; the behavioural smoke test; the patch
+re-applied in a fresh clone and compared byte for byte with the tested
+files) and again on the whole series before it is sent. The KB copies of
+this index and of P0 are still written in the turn that changes them.
+
+[corrected 2026-10-01] v1 of this section described a per-turn delivery
+(one tarball per turn, `git apply`, push, and a `git fetch` at the start of
+the next turn to check the previous patch landed); D-052 replaced it with
+the single delivery above. The fetch-before-build rule survives: the final
+series is built against the re-fetched `origin/main`, never an assumed
+state.
