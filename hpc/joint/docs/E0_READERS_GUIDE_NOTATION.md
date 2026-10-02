@@ -3,12 +3,13 @@
 **Document E0 of the joint documentation set.** The master notation table
 and glossary for both sets (P0-P7, E1-E9); the reading map; the
 prerequisites; the running example. Index and status: `00_INDEX.md`.
-**Date:** 2026-10-02 (v1.4). **Applies to:** the repository
+**Date:** 2026-10-02 (v1.5). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037), and the
 project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-02 | v1.5. Appended the optimiser-and-schedule group (15 rows; 297 declared `[RAN]`) for P5, under convention 14; nothing renamed. One row annotated, not changed: $L_{\rm sel}$ keeps the plan's gloss "the search objective" and now says that at `834eb41` the tuner's objective `nll` is $L$ on the report split while $L_{\rm sel}$ feeds the stopping rule alone (P5 F-al), the assignment being an open decision. The checker is unchanged; smoke test T4.8 adds P5 to the suite. |
 | 2026-10-02 | v1.4. Appended the flow group (15 rows, 15 symbols; 272 declared `[RAN]`, the v1.3 count being 257 as `--list` reports it, not 256) for P4, under convention 14: the flow's base variable and transform, reserved there for the first chapter to need them, are now declared ($\zeta$, $p_\zeta$, $\mathcal{F}_\omega$, $\mathcal{F}_{\rm box}$) and convention 14 says so; nothing renamed. The checker is unchanged; smoke test T4.7 adds P4 to the suite. |
 | 2026-10-02 | v1.3. Appended the replicate-term group (13 rows, 13 symbols) for P3, under convention 14; nothing renamed. The checker is unchanged; smoke test T4.6 adds P3 to the suite. |
 | 2026-10-01 | v1.2. Appended the DSN-loss group (26 rows, 31 symbols) for P2, under convention 14; nothing renamed. The checker gained two index forms P2 needs (a primed declared index; a relation inside a script) and a recursion guard, `tools/check_notation.py`, smoke tests T2.10-T2.11, T4.4-T4.5. |
@@ -134,7 +135,7 @@ bold are headings, not symbols.
 | **Evaluation and decision** | | | | |
 | $\ell_i$ | per-row held-out NLL, $\ell_i = -\log q_\omega(\theta_i \mid z_i)$ | $\mathbb{R}$ | nats | E7 |
 | $L$ | held-out NLL of an arm: the mean of $\ell_i$ over a split (computed level; estimates $\mathcal{L}^{\rm sim}_{\rm NPE}$ at the fitted weights) | $\mathbb{R}$ | nats/row | E4 |
-| $L_{\rm sel}, L_{\rm gate}$ | $L$ on the selection split (the search objective) and on the gate split | $\mathbb{R}$ | nats/row | E8 |
+| $L_{\rm sel}, L_{\rm gate}$ | $L$ on the selection split (the search objective, as the plan's S2.4 and E8 assign it) and on the gate split [2026-10-02: at `834eb41` the runner scores $L_{\rm sel}$ once per epoch for the stopping rule and the best-state restore only, and the tuner's objective `nll` is $L$ on the report split; which assignment is wanted is open, P5 F-al] | $\mathbb{R}$ | nats/row | E8 |
 | $L_0$ | the prior floor, $L_0 = -\mathbb{E}_{p_\Theta} \log p_\Theta(\theta)$ | $\mathbb{R}$ | nats/row | E7 |
 | $\hat\Delta$ | the information gain, $\hat\Delta = L_0 - L$ | $\mathbb{R}$ | nats/row | E7 |
 | $\hat\Delta^{(k)}$ | per-axis gain on axis $k$ | $\mathbb{R}$ | nats | E7 |
@@ -301,6 +302,23 @@ bold are headings, not symbols.
 | $\zeta$ | the flow's base variable, $\zeta = \mathcal{F}_\omega(\theta \mid z)$, standard normal under the flow; $\zeta^{(s)}$ the $s$-th base draw of a sample, $\zeta_i$ the image of row $i$; not $z$ (embedding), not $\xi$ (within-class residual) | $\zeta \in \mathbb{R}^{d_\theta}$ | dimensionless | P4 |
 | $p_\zeta$ | the base density: the standard normal on $\mathbb{R}^{d_\theta}$ (zuko `DiagNormal(0, I)`, buffers, no weights) | density on $\mathbb{R}^{d_\theta}$ | -- | P4 |
 | $n^{\rm live}_\omega$ | the flow weights the autoregressive masks leave live (the elements of the weight matrices the masks do not zero, plus every bias); $n_\omega$ counts every element, masked or not | $\mathbb{N}$ | -- | P4 |
+
+| **Optimiser and schedule (P5)** | | | | |
+| $\varpi$ | the trainable weight vector of the joint loop: the concatenation of the `requires_grad` tensors of $(\psi, \omega)$, which AdamW updates; $\varpi_\tau$ its value after step $\tau$, $\varpi_0$ the initial value; not $\varphi$ (spline parameters), not $\pi$ | $\varpi \in \mathbb{R}^{n_\varpi}$ | mixed | P5 |
+| $n_\varpi$ | its length: $n_\psi + n_\omega$ when nothing is frozen, $n_\omega$ on the frozen-encoder arms | $\mathbb{N}$ | -- | P5 |
+| $\tau$, $\tau'$ | optimiser step index: the $\tau$-th call of `opt.step()` of one run, AdamW's own counter, from 1; $\tau' \le \tau$ an earlier step of the same run; the loop's `step` is $n_{\rm done} = \tau - 1$ and $t = n_{\rm done} / n_{\rm plan}$; not $\tau_j$, $\tau_{\rm sep}$, $\tau_{\rm ov}$ | $\tau, \tau' \in \{1, \dots, n_{\rm plan}\}$ | steps | P5 |
+| $\iota$ | epoch index of the joint loop (the loop's `epoch`) | $\iota \in \{0, \dots, n_{\rm ep} - 1\}$ | -- | P5 |
+| $\iota_{\rm best}$ | the epoch with the lowest $L_{\rm sel}$ so far (`best_epoch`), $-1$ before any validation | $\{-1, 0, \dots, n_{\rm ep} - 1\}$ | -- | P5 |
+| $n_{\rm pat}$ | early-stopping patience in epochs (`patience`): the loop breaks after epoch $\iota$ iff $\iota - \iota_{\rm best} \ge n_{\rm pat}$ | $\mathbb{N}$ | epochs | P5 |
+| $\upsilon_1, \upsilon_2$ | the complements of AdamW's decay rates, $\upsilon_1 = 1 - \beta_1$ (`one_minus_beta1`, searched) and $\upsilon_2 = 1 - \beta_2$ (`one_minus_beta2`, fixed); TUNING_1's $u_1, u_2$, letters taken here by the Cholesky vector $u$ | $(0, 1)$ | dimensionless | P5 |
+| $\mathcal{H}_1, \mathcal{H}_2, \mathcal{H}_{\rm wd}$ | averaging horizons of AdamW's first and second moment, $\mathcal{H}_1 = 1/\upsilon_1$, $\mathcal{H}_2 = 1/\upsilon_2$, and the decay horizon $\mathcal{H}_{\rm wd} = 1/(\eta \gamma_{\rm wd})$, the steps after which the decoupled decay alone would shrink a weight by the factor $\exp(-1)$; not $H_0$ | $\mathbb{R}_{>0}$ | steps | P5 |
+| $\gamma_{\rm clip}$ | the global gradient-norm clip threshold (`grad_clip`, 5.0); not $\gamma_{\rm wd}$, not $\gamma_{\rm sep}$ | $\mathbb{R}_{\ge 0}$ | dimensionless | P5 |
+| $\epsilon_{\rm adam}$ | AdamW's denominator constant (torch `eps`, $10^{-8}$); not $\epsilon_{\rm jit}$, not $\varepsilon$ | $\mathbb{R}_{>0}$ | mixed | P5 |
+| $\Gamma_\tau$, $\tilde\Gamma_\tau$ | the gradient of $\hat{\mathcal{L}}_{\rm step}$ with respect to $\varpi$ at step $\tau$, before and after the clip; not $\gamma_{\rm wd}$, not $\mathcal{G}$ | $\mathbb{R}^{n_\varpi}$ | mixed | P5 |
+| $\varrho_\tau$ | the clip coefficient of step $\tau$, $\min(1, \gamma_{\rm clip} / (\lVert \Gamma_\tau \rVert_2 + 10^{-6}))$; not $\rho_{\rm grad}$, not $\rho_{\rm ETF}$ | $(0, 1]$ | dimensionless | P5 |
+| $\mu^{(1)}_\tau, \mu^{(2)}_\tau$, $\bar\mu^{(1)}_\tau, \bar\mu^{(2)}_\tau$ | AdamW's exponential moving averages of the clipped gradient and of its elementwise square after step $\tau$ (optimiser state, computed level), and their bias-corrected forms $\mu^{(1)}_\tau / (1 - \beta_1^{\tau})$, $\mu^{(2)}_\tau / (1 - \beta_2^{\tau})$: the bar is torch's normalisation, not this set's computed-level hat; not $\mu_j$ | $\mathbb{R}^{n_\varpi}$ | mixed | P5 |
+| $\varsigma_{\rm tr}, \varsigma_{\rm sel}, \varsigma_{\rm rep}$ | the three fractions of `grouped_split`, $(0.7, 0.15, 0.15)$, applied to the count of donors, not of rows; not $\sigma_b$, $\sigma_w$, $\sigma_{\rm seed}$ | $[0, 1]$, summing to 1 | -- | P5 |
+| $s_{\rm seed}$ | the run seed (`--seed`): the donor permutation of the split, the encoder's initialisation, the three stream generators ($s_{\rm seed} + 1, + 2, + 3$), the loop's dropout and posterior draws, the shuffled control ($s_{\rm seed} + 777$); not $s$ (draw index) | $\mathbb{N}_0$ | -- | P5 |
 
 ### 1.1 Conventions
 
