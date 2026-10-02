@@ -5,6 +5,7 @@
 | 2026-10-01 | v1. Stage 1 of `claude/JOINT_DOCS_BUILD_PLAN_v1.md` (v1.1): this index; the inventory extractor `tools/inventory_joint_knobs.py` with its smoke test `tools/smoke_test_inventory.py` (31/31, run twice in the sandbox) and its output `tools/inventory.json`; the inventory block of S7 generated from the repository at `834eb41`; the findings of the plan's S4 re-checked against the extraction and extended (F-m .. F-p). Delivered as the first patch of the set (D-035). |
 | 2026-10-01 | v1.1. Stage 2: `P0_PARAMETERS_OVERVIEW.md` drafted, its three generated tables rendered by the new `tools/p0_tables.py` (tests T6.1-T6.6 added to the suite: 38/38, run twice `[RAN]`) and checked with `--check-doc`; `--n-post-draws` re-owned to P7 (`stage3c`), `inventory.json` and the S7 block regenerated (`--check-index` OK); findings F-q and F-r added from the P0 reading, F-a's `build_argv` line reference corrected; S9 rewritten for D-052 (one push at the end, no per-turn delivery; first written as "D-047" and renumbered the same turn, that number having been taken by the Giulia chat's entry of about 16:10); status rows updated. |
 | 2026-10-01 | v1.2. Stage 3: `E0_READERS_GUIDE_NOTATION.md` drafted -- the master table (179 declared symbols `[RAN]`), the conventions with seventeen overload repairs beyond the plan's two, the glossary by first appearance, the reading map, the prerequisites, the running example at the DUP15HD and bench shapes, the spaces and maps, the analytic/computed pairs; the checker `tools/check_notation.py` with `tools/smoke_test_notation.py` (29/29, run twice `[RAN]`) passes on E0 and on P0. P0 v1.1: bare `T` and `\lambda` aligned with E0 (`T_{gg'}`, `\lambda_{\rm dsn}`), no value changed. S3: the plan's stage status is tracked here between re-issues of the plan. |
+| 2026-10-02 | v1.6. Delivery at the chat change (D-054): the seven commits of `docs/joint-docs` (`b961784` .. this one) leave as one `git format-patch` series for the user to apply with `git am` and push; S9 annotated; S4 records that `origin/main` moved to `745edce` (`hpc/dsn/` only, none of the files the set reads) `[RAN]`. The handoff for the next chat is `claude/HANDOFF_2026-10-02_joint_docs_P3_done.md` `[KB]`. No document content changed. |
 | 2026-10-02 | v1.5. Stage 4 continues: `P3_REPLICATE_AXES.md` drafted (the four replicate axes and the nine fixed knobs of the term; the term written out from the code as one function of the knobs, eq. (P3.1)-(P3.12), with the two samplers checked against the `sbi` 0.27.0 wheel and every number recomputed by the new torch-free `tools/p3_numbers.py` `[RAN]`; the three readings of the $4 d_\theta$ floor and the $\kappa_S$ bias, cited from `claude/METRIC_REPLICATE_v1_4.md` and `claude/FINITE_DRAW_CORRECTION_v1.md` with the repository plan flagged as v0.6.5; owns F-e, F-i with P5, F-o with P6, F-p, and the new F-y to F-ab). `E0_READERS_GUIDE_NOTATION.md` v1.3: the replicate-term group appended (13 rows, 13 symbols; 256 declared `[RAN]`). `tools/smoke_test_notation.py` gains T4.6 (P3): 35/35 twice with `--docs-dir ..`; the inventory suite 38/38 twice; `p0_tables.py --check-doc` and `inventory_joint_knobs.py --check-index` OK `[RAN]`. S6: F-y to F-ab added. S8: the P3 numbers. |
 | 2026-10-01 | v1.4. Stage 4 continues: `P2_DSN_LOSS_AXES.md` drafted (the seven loss axes and the ten fixed knobs of the metric term; the loss written out from the code as one function of the knobs, eq. (P2.1)-(P2.13), with the miners read from the installed library's source, `pytorch_metric_learning` 1.6.3, and every constant recomputed `[RAN]`; the D-036 differences table; owns F-f, F-h, F-q with P5, and the new F-t to F-x). `E0_READERS_GUIDE_NOTATION.md` v1.2: the DSN-loss group appended (26 rows, 31 symbols). `tools/check_notation.py` extended for two index forms P2 needs (a primed declared index inside a script; a relation or a comma list inside a script) with a recursion guard for a parenthesised list before `\in`; tests T2.10-T2.12 and T4.4-T4.5 added (every written document is now in the suite): 34/34 twice with `--docs-dir ..`, 28/28 fixture-only `[RAN]`. S6: F-f extended (a second stale docstring, `joint_space.py:780-782`); F-t to F-x added. S8: the P2 constants. |
 | 2026-10-01 | v1.3. Stage 4 begins: `P1_ENCODER_AXES.md` drafted (the six encoder axes and the twelve fixed `BackboneConfig` knobs, the architecture as a closed-form function of the knobs with the stage layouts, output lengths and parameter counts over the searched grid `[RAN]`, the D-036 differences table, findings F-b, F-c, F-g, F-m and the new F-s). The parameter count reconciled: the cluster's 359708 is the count at `E = 12` (the runtime probe's default), 359450 at the runner's `E = 10` `[RAN]` (S8 corrected). E0 v1.1 appends 29 encoder-architecture symbols; `check_notation.py` reads `\text{}`/environments as prose, set-membership and arithmetic in scripts, and lets a declared base fall through to an indexed match (29/29 twice). Grounding searches for P1 run and reported in its S6 (PubMed: four queries, one PMC full text used; bioRxiv: no keyword search exists, a 30-day slice inspected). |
@@ -82,7 +83,7 @@ plan is re-issued when its content changes, not for status alone.
 
 | id | file | status | repo commit | KB copy | notes |
 |---|---|---|---|---|---|
-| 00 | `00_INDEX.md` | drafted | pending push (D-052) | `claude/joint_docs/00_INDEX.md` | this file; v1.5 |
+| 00 | `00_INDEX.md` | drafted | pending push (D-052; series sent 2026-10-02, D-054) | `claude/joint_docs/00_INDEX.md` | this file; v1.6 |
 | tools | `tools/inventory_joint_knobs.py`, `tools/smoke_test_inventory.py`, `tools/inventory.json`, `tools/p0_tables.py`, `tools/check_notation.py`, `tools/smoke_test_notation.py`, `tools/p2_numbers.py`, `tools/p3_numbers.py` | drafted | pending push (D-052) | -- | 31/31 twice `[RAN]` at v1 [corrected 2026-10-01: 38/38 twice at v1.1, `p0_tables.py` and tests T6.1-T6.6 added; at v1.2 `check_notation.py` with its own suite, 29/29 twice; at v1.4 the checker extended and the suite at 34/34 twice; at v1.5 `p3_numbers.py` added and the notation suite at 35/35 twice (T4.6)] |
 | P0 | `P0_PARAMETERS_OVERVIEW.md` | drafted | pending push (D-052) | `claude/joint_docs/P0_PARAMETERS_OVERVIEW.md` | v1.1; tables A, F, K generated, `--check-doc` OK x3; notation check OK |
 | P1 | `P1_ENCODER_AXES.md` | drafted | pending push (D-052) | -- | v1; notation check OK; owns F-b, F-c, F-g, F-m (encoder rows), F-s |
@@ -106,7 +107,11 @@ plan is re-issued when its content changes, not for status alone.
 ## 4. Source freeze
 
 - Repository `main` @ `834eb41` (2026-09-30 15:33 +0200), re-fetched
-  2026-10-01 from `origin/main`: unchanged `[RAN]`. The joint plan in the
+  2026-10-01 from `origin/main`: unchanged `[RAN]`. [2026-10-02] Re-fetched
+  again: `origin/main` is at `745edce` (one commit on `834eb41`, `hpc/dsn/`
+  cohort fields and the Giulia cohort config; it touches none of the files
+  the set reads or the inventory extracts, so the freeze stays at `834eb41`
+  until the Stage 7 rebase) `[RAN]`. The joint plan in the
   repository is v0.6.5; "v0.6.6" (the $\kappa_S$ correction named by
   `JOINT_DSN_NPE_USAGE_v1.md` v1.3 and `claude/METRIC_REPLICATE_v1_4.md`) is
   not in the repository, and `joint/stage4/joint_space.py:276-281` still says
@@ -952,6 +957,16 @@ LF-only for every `.py` and `.md`; the behavioural smoke test; the patch
 re-applied in a fresh clone and compared byte for byte with the tested
 files) and again on the whole series before it is sent. The KB copies of
 this index and of P0 are still written in the turn that changes them.
+
+[2026-10-02, D-054] The chat that wrote P0-P3 ended before the set was
+complete, so the seven commits written so far (`b961784`, `308ccc0`,
+`e0da315`, `922aac9`, `f9867f7`, `f37f4ca` and the commit carrying this
+note) were delivered as one `git format-patch` series against the
+re-fetched `origin/main` (`745edce`), applied by the user with `git am` and
+pushed; the next chat forks `docs/joint-docs` from the pushed state and
+continues under the same rule -- write, then one delivery per chat segment or
+at the end, never per turn. The Stage 7 rebase-and-recheck of the whole
+series stands.
 
 [corrected 2026-10-01] v1 of this section described a per-turn delivery
 (one tarball per turn, `git apply`, push, and a `git fetch` at the start of
