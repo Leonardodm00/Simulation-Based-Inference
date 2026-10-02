@@ -288,6 +288,9 @@
     "ptrain_format": "sparse_peaks",
     "ptrain_varname": "peak_train",
     "ptrain_name_pattern": "^ptrain_\\d+_DIV\\d+_\\w+_nbasal_\\d{4}_(\\d{3})\\.mat$",
-    "exclude_wells": []
+    "exclude_wells": [
+      "ptrain_44456_DIV35_100N0A_nbasal_0001",
+      "ptrain_45198_DIV35_100N0A_nbasal_0001"
+    ]
   }
 }
