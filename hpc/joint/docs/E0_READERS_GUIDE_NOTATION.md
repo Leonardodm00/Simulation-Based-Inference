@@ -3,12 +3,13 @@
 **Document E0 of the joint documentation set.** The master notation table
 and glossary for both sets (P0-P7, E1-E9); the reading map; the
 prerequisites; the running example. Index and status: `00_INDEX.md`.
-**Date:** 2026-10-02 (v1.3). **Applies to:** the repository
+**Date:** 2026-10-02 (v1.4). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037), and the
 project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-02 | v1.4. Appended the flow group (15 rows, 15 symbols; 272 declared `[RAN]`, the v1.3 count being 257 as `--list` reports it, not 256) for P4, under convention 14: the flow's base variable and transform, reserved there for the first chapter to need them, are now declared ($\zeta$, $p_\zeta$, $\mathcal{F}_\omega$, $\mathcal{F}_{\rm box}$) and convention 14 says so; nothing renamed. The checker is unchanged; smoke test T4.7 adds P4 to the suite. |
 | 2026-10-02 | v1.3. Appended the replicate-term group (13 rows, 13 symbols) for P3, under convention 14; nothing renamed. The checker is unchanged; smoke test T4.6 adds P3 to the suite. |
 | 2026-10-01 | v1.2. Appended the DSN-loss group (26 rows, 31 symbols) for P2, under convention 14; nothing renamed. The checker gained two index forms P2 needs (a primed declared index; a relation inside a script) and a recursion guard, `tools/check_notation.py`, smoke tests T2.10-T2.11, T4.4-T4.5. |
 | 2026-10-01 | v1.1. Appended the encoder-architecture group (29 symbols) for P1, under convention 14; nothing renamed. |
@@ -284,6 +285,22 @@ bold are headings, not symbols.
 | $I_{d_\theta}$ | the $d_\theta \times d_\theta$ identity matrix; not the mutual information $I(\cdot\,;\cdot)$ | matrix | -- | P3 |
 | $\mathcal{U}$ | the set of same-donor unordered row pairs of the real bank after surrogate rows are masked, $\lvert \mathcal{U} \rvert = N_{\rm pair}$ (`enumerate_donor_pairs`); not the bench arm $\mathcal{R}$ | set of index pairs | -- | P3 |
 | $\mathcal{B}_{\rm rep}$ | the replicate minibatch: the pairs drawn at one optimiser step, $\lvert \mathcal{B}_{\rm rep} \rvert = \min(B_{\rm rep}, N_{\rm pair})$ | subset of $\mathcal{U}$ | -- | P3 |
+| **Flow (P4)** | | | | |
+| $r$ | transform (stage) index along the flow's chain | $r \in \{1, \dots, n_{\rm tf}\}$ | -- | P4 |
+| $\mathcal{F}_{\rm box}$ | the box-to-unconstrained map prepended to the flow (sbi's `transform_to_unconstrained`, torch's `biject_to` of the prior's support, inverted), $\mathcal{F}_{\rm box} : \Theta \to \mathbb{R}^{d_\theta}$; no weights; not the Fisher matrix $F$, not the forward map $f$ | map | -- | P4 |
+| $\vartheta$ | the unconstrained parameter, $\vartheta = \mathcal{F}_{\rm box}(\theta)$, with $\vartheta^{(k)} = \mathrm{logit}((\theta^{(k)} - a_k)/(b_k - a_k))$ for each axis $k$, the plain logit on the unit cube; not $\theta$ | $\vartheta \in \mathbb{R}^{d_\theta}$ | dimensionless | P4 |
+| $\mathcal{F}_\omega$ | the flow's whole transform in zuko's direction, data to base: $\mathcal{F}_\omega(\cdot \mid z) : \Theta \to \mathbb{R}^{d_\theta}$ for each fixed $z$, the composition of $\mathcal{F}_{\rm box}$ and the stacked transforms; its inverse is the sampler; not $F$, not $f$ | map; weights $\omega$ | -- | P4 |
+| $\mathcal{F}^{(r)}_\omega$ | the $r$-th stacked autoregressive transform of the flow (zuko `MaskedAutoregressiveTransform` with spline univariate maps), $\mathbb{R}^{d_\theta} \to \mathbb{R}^{d_\theta}$ for each fixed $z$ | map | -- | P4 |
+| $v$ | the input vector of one stacked transform: the output of transform $r - 1$, and $\vartheta$ for $r = 1$; $v^{(k)}$ its $k$-th component; not $v_j$ (generalised eigenvector), not $v_c$ (class direction) | $v \in \mathbb{R}^{d_\theta}$ | dimensionless | P4 |
+| $n_\varphi$ | spline parameters per axis per transform, $n_\varphi = 3 K_{\rm bins} - 1$ | $\mathbb{N}$ | -- | P4 |
+| $\mathcal{C}^{(r)}_\omega$ | the conditioner (hyper-network) of transform $r$, a zuko `MaskedMLP`: $\mathbb{R}^{d_\theta + E} \to \mathbb{R}^{d_\theta \times n_\varphi}$, masked so that the parameters of axis $k$ depend on the axes before $k$ in the transform's order and on all of $z$; the only part of the flow that carries weights; not $C$ (class count), not $C_g$, not $\bar C$ | masked MLP | -- | P4 |
+| $\varphi$ | the spline parameters of one axis of one transform (zuko's `phi`): $K_{\rm bins}$ width logits, $K_{\rm bins}$ height logits, $K_{\rm bins} - 1$ interior log-slopes; $\varphi^{(r)}_k$ those of axis $k$ in transform $r$; not $\phi$ (bench latent), not $\psi$ | $\varphi \in \mathbb{R}^{n_\varphi}$ | dimensionless | P4 |
+| $S_{\rm rqs}$ | the monotonic rational-quadratic spline of zuko on $[-B_{\rm rqs}, B_{\rm rqs}]$ with $K_{\rm bins}$ bins and the identity outside, written $S_{\rm rqs}(\cdot\,; \varphi)$; not $S_{\rm mc}$, not $S_{\rm sil}$, not $S^{E-1}$ | map $\mathbb{R} \to \mathbb{R}$ | -- | P4 |
+| $B_{\rm rqs}$ | the spline's domain bound (zuko `bound`), 5, fixed below every flag of the stack; not $B_{\rm sim}$, not $B_{\rm blk}$ | $\mathbb{R}_{>0}$ | dimensionless | P4 |
+| $\delta_{\rm rqs}$ | the spline's slope floor (zuko `slope`), $10^{-3}$: interior slopes lie in $[\delta_{\rm rqs}, 1/\delta_{\rm rqs}]$; not $\delta_{\min}$, not $\delta_d$ | $\mathbb{R}_{>0}$ | dimensionless | P4 |
+| $\zeta$ | the flow's base variable, $\zeta = \mathcal{F}_\omega(\theta \mid z)$, standard normal under the flow; $\zeta^{(s)}$ the $s$-th base draw of a sample, $\zeta_i$ the image of row $i$; not $z$ (embedding), not $\xi$ (within-class residual) | $\zeta \in \mathbb{R}^{d_\theta}$ | dimensionless | P4 |
+| $p_\zeta$ | the base density: the standard normal on $\mathbb{R}^{d_\theta}$ (zuko `DiagNormal(0, I)`, buffers, no weights) | density on $\mathbb{R}^{d_\theta}$ | -- | P4 |
+| $n^{\rm live}_\omega$ | the flow weights the autoregressive masks leave live (the elements of the weight matrices the masks do not zero, plus every bias); $n_\omega$ counts every element, masked or not | $\mathbb{N}$ | -- | P4 |
 
 ### 1.1 Conventions
 
@@ -386,10 +403,14 @@ bold are headings, not symbols.
 13. **Hygiene.** ASCII only, LF only; math in `$...$`; a literal vertical
     bar never appears inside math in a table (`\mid`); code names in
     backticks are not symbols and are not scanned by the checker.
-14. **Reserved, not yet declared.** The flow's base variable and transform
-    (E2), the GP surrogate's mean and variance and the acquisition function
-    (E8), the bootstrap replicate index (E7). The chapter that first needs
-    them appends their rows here in its own turn.
+14. **Reserved, not yet declared.** The GP surrogate's mean and variance
+    and the acquisition function (E8), the bootstrap replicate index (E7).
+    The chapter that first needs them appends their rows here in its own
+    turn. [2026-10-02: the flow's base variable and transform, reserved
+    here for E2 at v1, were needed first by P4 and are declared in the
+    "Flow (P4)" group ($\zeta$, $p_\zeta$, $\mathcal{F}_\omega$,
+    $\mathcal{F}^{(r)}_\omega$, $\mathcal{F}_{\rm box}$); E2 uses them as
+    declared.]
 
 ---
 
@@ -805,9 +826,9 @@ locally.
   `834eb41`; convention 4 and the glossary follow the metric document `[KB]`
   and the set flags the repository text as superseded where it quotes it
   (Q9 default).
-- **Reserved symbols** (convention 14) are not declared yet; E2, E7 and E8
+- **Reserved symbols** (convention 14) are not declared yet; E7 and E8
   append them. Until then the checker would flag them, which is the intended
-  behaviour.
+  behaviour. [2026-10-02: E2's reserved symbols were appended by P4.]
 - **The checker's token grammar is pragmatic**, not a LaTeX parser: it
   reads accents, fonts, sub/superscripts and the two compound prefixes
   `\delta`, `\Delta`; a construct outside that grammar is reported as a
