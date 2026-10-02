@@ -23,6 +23,9 @@ Checks:
     F. THE SPECS FEED THE PIPELINE. The generated file is consumed by
        build_traces/build_splits and yields the culture count the inventory
        promised, with no culture spanning two splits.
+    G. EXCLUDE_WELLS (2026-10-01). A well named in cohort.exclude_wells is
+       left out of the records and reported; a name matching no well is
+       reported as a WARNING and --strict exits 3 on it.
 
 Run
 ---
@@ -328,6 +331,33 @@ def check_F_feeds_the_pipeline():
         shutil.rmtree(base, ignore_errors=True)
 
 
+def check_G_exclude_wells():
+    base = tempfile.mkdtemp(prefix="mea_specs_G_")
+    try:
+        cohort = build_fixture(base)
+        cohort["exclude_wells"] = ["ptrain_B3"]          # exists under every root
+        cfg_path = write_config(base, cohort)
+        if MMS.main(["--config", cfg_path, "--strict"]) != 0:
+            _fail("G: a valid exclusion must not fail --strict")
+        recs = json.load(open(os.path.join(base, "specs.json")))
+        n_roots_total = 2 * N_ROOTS
+        expected = n_roots_total * (len(WELLS) - 1) * N_SUB
+        if len(recs) != expected:
+            _fail("G: %d records, expected %d with ptrain_B3 excluded under %d roots"
+                  % (len(recs), expected, n_roots_total))
+        if any(r["culture"].endswith("__ptrain_B3") for r in recs):
+            _fail("G: an excluded well still produced records")
+        cohort["exclude_wells"] = ["ptrain_B3", "ptrain_ZZ"]   # ptrain_ZZ exists nowhere
+        cfg_path = write_config(base, cohort)
+        if MMS.main(["--config", cfg_path, "--strict"]) != 3:
+            _fail("G: --strict should exit 3 when an exclusion matches no well")
+        if MMS.main(["--config", cfg_path]) != 0:
+            _fail("G: without --strict the unmatched exclusion is a warning, not a failure")
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+    print("  [G] PASS  exclude_wells drops the well; an unmatched name warns, --strict exits 3")
+
+
 def main():
     print("CohortConfig / make_mea_specs smoke test")
     print("  fixture: 2 classes x %d roots x %d wells x %d subregions"
@@ -335,7 +365,7 @@ def main():
     checks = [check_A_round_trip_is_silent, check_A2_sigma_warning_fires,
               check_B_validation_raises,
               check_C_inventory, check_D_modes, check_E_missing_reported,
-              check_F_feeds_the_pipeline]
+              check_F_feeds_the_pipeline, check_G_exclude_wells]
     for fn in checks:
         fn()
     print("ALL CHECKS PASSED (%d)" % len(checks))

@@ -106,6 +106,7 @@ ORDER = [
     "smoke_test_batch_geometry.py",         # [C4] Eq. (2)/(3) + the caps (no torch)
     "smoke_test_config.py",
     "smoke_test_mea_specs.py",              # CohortConfig + make_mea_specs (no torch)
+    "smoke_test_cohort_fields.py",          # [2026-10-01] ptrain_* fields, exclude_wells, find_wells (no torch)
     "smoke_test_backbone.py",
     "smoke_test_augmentation.py",
     "smoke_test_data_pipeline.py",

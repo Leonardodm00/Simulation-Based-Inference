@@ -93,9 +93,15 @@ def build_records(cohort, verbose=True):
         "missing_roots": [], "empty_roots": [], "missing_output": [],
         "modes": {}, "wells_per_class": {}, "cultures": OrderedDict(),
         "n_sub_seen": set(),
+        # [2026-10-01] cohort.exclude_wells: the names skipped under some
+        # root, and the names that matched no well anywhere (a typo would
+        # otherwise exclude nothing, silently).
+        "excluded": [], "exclude_unmatched": [],
     }
     records = []
     seen_names, seen_cultures = {}, {}
+    exclude = list(getattr(cohort, "exclude_wells", []) or [])
+    excluded_seen = set()
 
     for c in range(cohort.n_classes()):
         cname = cohort.name_of_class(c)
@@ -105,11 +111,16 @@ def build_records(cohort, verbose=True):
         for root in roots:
             root = str(root)
             root_name = root_name_for(root)
-            wells = find_wells(root, cohort.well_glob)
+            wells = find_wells(root, cohort.well_glob, exclude=exclude)
 
             if wells is None:
                 report["missing_roots"].append(root)
                 continue
+            if exclude:
+                for w in (find_wells(root, cohort.well_glob) or []):
+                    if w in exclude and w not in wells:
+                        report["excluded"].append((root, w))
+                        excluded_seen.add(w)
             if not wells:
                 report["empty_roots"].append(root)
                 continue
@@ -158,6 +169,7 @@ def build_records(cohort, verbose=True):
                     records.append({"path": paths[0], "name": name,
                                     "condition": c, "culture": culture})
 
+    report["exclude_unmatched"] = [w for w in exclude if w not in excluded_seen]
     return records, report
 
 
@@ -205,6 +217,20 @@ def print_report(records, report, cohort, cfg):
             print("    %s / %s  ->  %s" % (os.path.basename(root), well, out_dir))
         if len(report["missing_output"]) > 10:
             print("    ... and %d more" % (len(report["missing_output"]) - 10))
+    if report.get("excluded"):
+        print("  excluded wells     : %d (cohort.exclude_wells)"
+              % len(report["excluded"]))
+        for root, well in report["excluded"]:
+            print("    %s / %s" % (os.path.basename(root), well))
+    if report.get("exclude_unmatched"):
+        # a name that matched no well anywhere: most likely a typo, and a
+        # typo must not pass as an exclusion that quietly did nothing
+        print("  WARNING: %d exclude_wells entry/entries match NO well under "
+              "any root: %s" % (len(report["exclude_unmatched"]),
+                                report["exclude_unmatched"]))
+        ok_excl = False
+    else:
+        ok_excl = True
 
     # ---- split feasibility, the thing that aborts a run at startup ---------
     print("")
@@ -240,7 +266,7 @@ def print_report(records, report, cohort, cfg):
         if u_eff < u_req:
             print("  NOTE: the request %d was CLAMPED to %d by the cohort."
                   % (u_req, u_eff))
-    return ok
+    return ok and ok_excl
 
 
 # --------------------------------------------------------------------------- #
@@ -310,8 +336,11 @@ def main(argv=None):
              float(cohort.w_size)))
 
     if args.strict and (report["missing_output"] or report["missing_roots"]
-                        or report["empty_roots"]):
-        print("\nABORT (--strict): the inventory is incomplete.")
+                        or report["empty_roots"]
+                        or report.get("exclude_unmatched")):
+        print("\nABORT (--strict): the inventory is incomplete"
+              + (" (and/or an exclude_wells entry matched no well)."
+                 if report.get("exclude_unmatched") else "."))
         return 3
 
     if args.dry_run:

@@ -32,11 +32,75 @@ __all__ = [
     "CohortConfig",
     "SUBREGION_PREFIX",
     "MULTICHANNEL_NAME",
+    "PTRAIN_FORMATS",
+    "DEFAULT_PTRAIN_FORMAT",
+    "DEFAULT_PTRAIN_VARNAME",
+    "DEFAULT_PTRAIN_NAME_PATTERN",
+    "validate_ptrain_fields",
     "root_name_for",
     "find_wells",
     "classify_output_dir",
     "expand",
 ]
+
+# --------------------------------------------------------------------------- #
+# how a cohort's per-electrode files are read (2026-10-01, Giulia cohort)
+# --------------------------------------------------------------------------- #
+# ONE definition, imported by Sbi-extractor (cohort_config.py, the extractor
+# library) so the config, the flags and the loader cannot disagree on the
+# vocabulary. The defaults are the pre-2026-10-01 behaviour exactly.
+PTRAIN_FORMATS = ("raster", "sparse_peaks")
+DEFAULT_PTRAIN_FORMAT = "raster"
+DEFAULT_PTRAIN_VARNAME = "ptrain"
+DEFAULT_PTRAIN_NAME_PATTERN = r"^ptrain_(\d+)\.mat$"
+
+# Characters a flag value must not contain. The three values are written
+# into extraction_flags.sh as EXTRA_FLAGS="..." and word-split unquoted by
+# the array job: whitespace would split a value, a double quote would end
+# the string, and * ? [ would be subject to pathname expansion.
+_FLAG_UNSAFE = " \t\r\n\"*?["
+
+
+def validate_ptrain_fields(ptrain_format, ptrain_varname, ptrain_name_pattern):
+    """Raise ValueError unless the three source-format fields are usable.
+
+    - ptrain_format in PTRAIN_FORMATS;
+    - ptrain_varname a MATLAB identifier ([A-Za-z][A-Za-z0-9_]*);
+    - ptrain_name_pattern a regex that compiles and has exactly ONE capture
+      group (the electrode index), free of the characters that would break
+      it as an unquoted shell word (see _FLAG_UNSAFE).
+    Returns None. Shared by CohortConfig.__post_init__ and the extractor's
+    CLI, so a bad value is refused at config time and again at load time.
+    """
+    import re
+    if ptrain_format not in PTRAIN_FORMATS:
+        raise ValueError("ptrain_format must be one of %r, got %r"
+                         % (PTRAIN_FORMATS, ptrain_format))
+    if (not isinstance(ptrain_varname, str)
+            or re.match(r"^[A-Za-z][A-Za-z0-9_]*$", ptrain_varname) is None):
+        raise ValueError("ptrain_varname must be a MATLAB identifier "
+                         "([A-Za-z][A-Za-z0-9_]*), got %r" % (ptrain_varname,))
+    if not isinstance(ptrain_name_pattern, str) or not ptrain_name_pattern:
+        raise ValueError("ptrain_name_pattern must be a non-empty regex, got %r"
+                         % (ptrain_name_pattern,))
+    bad = sorted(set(c for c in ptrain_name_pattern if c in _FLAG_UNSAFE))
+    if bad:
+        raise ValueError(
+            "ptrain_name_pattern %r contains %r, which cannot travel as an "
+            "unquoted shell word in EXTRA_FLAGS (no whitespace, no double "
+            "quote, no * ? [); write the class another way, e.g. \\d or \\w"
+            % (ptrain_name_pattern, bad))
+    try:
+        rx = re.compile(ptrain_name_pattern)
+    except re.error as exc:
+        raise ValueError("ptrain_name_pattern %r does not compile: %s"
+                         % (ptrain_name_pattern, exc))
+    if rx.groups != 1:
+        raise ValueError(
+            "ptrain_name_pattern %r has %d capture group(s); exactly one is "
+            "required, and it must capture the electrode's integer index"
+            % (ptrain_name_pattern, rx.groups))
+
 
 @dataclass
 class CohortConfig:
@@ -107,6 +171,38 @@ class CohortConfig:
     mfr_threshold: float = 0.1
     w_size: float = 0.02
     gaussian_window: float = 0.04
+
+    # [2026-10-01, Giulia cohort] HOW the per-electrode files are named and
+    # stored. The defaults reproduce the one format the extractor read until
+    # now (the DUP15HD 3Brain export): ptrain_<k>.mat holding a dense binary
+    # raster under the variable "ptrain". The Giulia recordings are
+    # ptrain_<well>_DIV35_<cond>_nbasal_0001_<rc>.mat and (per their sizes)
+    # not dense rasters, so a cohort DECLARES its format here; the extractor
+    # never guesses it from the file. The three values travel to the array
+    # job as flags (cohort_config.build_extra_flags) and are recorded in every
+    # fragment, so a manifest can say how its spikes were read.
+    #   ptrain_format        "raster"       dense (n_samples, 1) raster in
+    #                                       {0, 1}; a 1 is a spike
+    #                        "sparse_peaks" scipy.sparse (n_samples, 1) (or
+    #                                       (1, n_samples)); every stored
+    #                                       nonzero is a spike, its value
+    #                                       (an amplitude, say) is ignored
+    #   ptrain_varname       the MATLAB variable holding the train
+    #   ptrain_name_pattern  a regex with exactly ONE capture group, matched
+    #                        against the file basename; the group is the
+    #                        electrode's integer index k
+    #   exclude_wells        well folder names (immediate children of a root
+    #                        matching well_glob) left out of the cohort, e.g.
+    #                        wells with fewer than n_subsets x
+    #                        electrodes_per_subset electrodes at or above
+    #                        mfr_threshold, which the extractor would refuse
+    #                        and the cohort manifest would then refuse with
+    #                        them; a name that matches no well is an error at
+    #                        listing time, not a silent no-op
+    ptrain_format: str = "raster"
+    ptrain_varname: str = "ptrain"
+    ptrain_name_pattern: str = r"^ptrain_(\d+)\.mat$"
+    exclude_wells: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.class_roots:
@@ -200,6 +296,28 @@ class CohortConfig:
                     % (float(self.gaussian_window), sigma_bins,
                        float(self.w_size)), RuntimeWarning)
 
+        validate_ptrain_fields(self.ptrain_format, self.ptrain_varname,
+                               self.ptrain_name_pattern)
+        if isinstance(self.exclude_wells, str) or not isinstance(
+                self.exclude_wells, (list, tuple)):
+            raise ValueError(
+                "CohortConfig.exclude_wells must be a LIST of well folder "
+                "names, got %r" % (self.exclude_wells,))
+        seen = set()
+        for w in self.exclude_wells:
+            if not isinstance(w, str) or not w.strip():
+                raise ValueError(
+                    "CohortConfig.exclude_wells: every entry must be a "
+                    "non-empty well folder name, got %r" % (w,))
+            if "/" in w or os.sep in w:
+                raise ValueError(
+                    "CohortConfig.exclude_wells: %r is a path; give the well "
+                    "folder NAME (an immediate child of a root)" % (w,))
+            if w in seen:
+                raise ValueError(
+                    "CohortConfig.exclude_wells: duplicate entry %r" % (w,))
+            seen.add(w)
+
     # ----- convenience, used by make_mea_specs.py -----
     def n_classes(self):
         return len(self.class_roots)
@@ -269,20 +387,30 @@ def root_name_for(root):
     return "%s_%s" % (parent, leaf) if parent else leaf
 
 
-def find_wells(root, well_glob):
+def find_wells(root, well_glob, exclude=()):
     """Immediate child directories of `root` matching `well_glob`, sorted.
 
     Deliberately NOT recursive: the extractor reads one leaf well folder at a
     time, and recursing would sweep up intermediate Batch/ folders as if they
     were wells (see REAL_DATA_FINDINGS, "Command").
+
+    `exclude` (2026-10-01): well folder NAMES to leave out, normally
+    CohortConfig.exclude_wells. A name in `exclude` that is present under
+    this root is skipped here; whether every excluded name was found
+    somewhere is the caller's check (list_extraction_jobs.py aborts on an
+    unmatched name, make_mea_specs.py reports it), so a typo cannot exclude
+    nothing in silence.
     """
     import fnmatch
     if not os.path.isdir(root):
         return None                                  # signals "root missing"
+    excl = set(str(e) for e in (exclude or ()))
     out = []
     for entry in sorted(os.listdir(root)):
         full = os.path.join(root, entry)
         if os.path.isdir(full) and fnmatch.fnmatch(entry, well_glob):
+            if entry in excl:
+                continue
             out.append(entry)
     return out
 
