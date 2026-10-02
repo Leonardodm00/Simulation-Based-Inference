@@ -2,11 +2,12 @@
 
 **Document P0 of the joint documentation set.** Companions: P1-P7 (one per
 parameter block), E0 (master notation and glossary). Index and status:
-`00_INDEX.md`. **Date:** 2026-10-01 (v1.1). **Applies to:** the repository
+`00_INDEX.md`. **Date:** 2026-10-02 (v1.2). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037).
 
 | date | change |
 |---|---|
+| 2026-10-02 | v1.2. Three cells of Table D annotated from P6 (S3.8), no value changed: `--seed` plays three roles, not one (P6 F-as); the `--rank-split` / `--gate-split` parenthesis described the intention, the flags are labels and no gate split exists (P6 F-am); the `--n-train` cell's "at least 20 steps per epoch" is the trim rule's pass-based reading (P5 F-ag). The generated tables are untouched (`--check-doc` OK). |
 | 2026-10-01 | v1.1. Notation aligned with E0: the bare `T` of the table and of Table C is $T_{gg'}$ (the pair is part of the name), the bare `\lambda` of S3.2 note 3 is $\lambda_{\rm dsn}$; `tools/check_notation.py` now passes on this document. No value changed. |
 | 2026-10-01 | v1. Written from `tools/inventory.json` (546 rows at `834eb41`) and from the source; the three generated tables (A, F, K) are rendered by `tools/p0_tables.py` and checked with `--check-doc`. No literature claim is made here (S6). |
 
@@ -418,9 +419,9 @@ every subcommand, `common[need_shards]` on `argv` and `evaluate` only.
 |---|---|---|---|---|---|
 | `--campaign` | common | `S-A1`, `S-A2`, `S-A5`, `S-A25` | `S-A1` | which axes are free and which pinned (`CAMPAIGNS`, `joint_space.py:375-398`); the ledger directory | P6 |
 | `--p`, `--embedding-dim`, `--d-theta` | common | int | `26`, `12`, `26` | the shape anchors that resolve `hidden_features` and `n_posterior_draws`; **must match the bank** (on a bench bank pass `--d-theta 10 --p 10`, `[KB]` usage v1.3 S7) | P6 |
-| `--n-train` | common | int | `None` | the training-split size that trims `batch_size_npe` to the sizes giving at least 20 steps per epoch, or to `{256}` when none does (`default_joint_space`, `:305-306`) | P6 |
+| `--n-train` | common | int | `None` | the training-split size that trims `batch_size_npe` to the sizes giving at least 20 steps per epoch, or to `{256}` when none does (`default_joint_space`, `:305-306`) [extended 2026-10-02: "steps per epoch" is the rule's own pass-based reading; the joint loop's epoch is 25 steps at any batch size, so the rule trims by `n_train >= 20 b` for a pass the loop never runs (P5 F-ag); the jobs pass no `--n-train`] | P6 |
 | `--split-hash`, `--contract-digest` | common | str | `''` | identifiers folded into `trial_id`, so a trial is keyed by its configuration AND its data | P6 |
-| `--seed` | common | int | `0` | the seed handed to the runner | P6 |
+| `--seed` | common | int | `0` | the seed handed to the runner [extended 2026-10-02: also the `seeds` entry hashed into the trial id and the surrogate's `random_state`, one integer in three roles (P6 F-as)] | P6 |
 | `--n-points` | propose | int | `8` | configurations proposed per round (constant-liar batch) | P6 |
 | `--n-initial-points` | propose | int | `12` | random points before the GP takes over | P6 |
 | `--sigma-seed` | propose, status | float | `None` | the measured across-seed spread; its square is the GP's observation-noise variance; the escalation verdict's scale | P6 |
@@ -428,7 +429,7 @@ every subcommand, `common[need_shards]` on `argv` and `evaluate` only.
 | `--tag` | evaluate | str | `''` | marks a trial that must not enter the surrogate (a learning-curve point, a control) | P6 |
 | `--results-dir`, `--sim-shards`, `--real-shards`, `--out-dir`, `--runner`, `--dsn-main-dir`, `--sbi-hpc-dir`, `--dry-run`, `--config-json`, `--pending-id` | common / `common[need_shards]` / argv, evaluate | paths, flag | `tune_joint`, required, `None`, `runs_joint`, `DEFAULT_RUNNER`, `None`, `None`, `False`, `None`, `None` | plumbing: the ledger root, the banks, the runs, the runner script, the DSN and repository trees handed through to the runner, a dry run, the trial to run (by file or by pending id) | -- |
 | `--top` | status | int | `10` | rows of the ledger table printed | P6 |
-| `--top-k`, `--rank-split`, `--gate-split` | finalists | int, str, str | `3`, `sel`, `gate` | how many finalists, ranked on which split, gated on which split (rank and gate on different splits, or the test is anti-conservative) | P6 |
+| `--top-k`, `--rank-split`, `--gate-split` | finalists | int, str, str | `3`, `sel`, `gate` | how many finalists, ranked on which split, gated on which split (rank and gate on different splits, or the test is anti-conservative) [corrected 2026-10-02: the two strings are labels written into `finalists.json`; no code path selects a split by them, the objective is $L$ on the report split (P5 F-al), the gain the control test uses is `delta` from the same record, and the "SAME split" warning prints only when the two strings are equal, which at the defaults they are not (P6 F-am)] | P6 |
 | `--plan` / `--score`, `--n-control`, `--n-seeds`, `--alpha`, `--floor`, `--delta-min-provisional` | controls | flag, int, int, float, float, float | --, `5`, `1`, `0.05`, `0.0`, `nan` | the per-finalist shuffled controls: how many, with how many seeds, the Holm level, a floor on the gain, a provisional threshold while the controls run | P6 |
 | `default_joint_space(strict_semihard=1, n_posterior_draws_max=400)` | library | int, int | `1`, `400` | the fixed strictness the space declares (passed to the runner); the upper bound of $S_{\rm mc}$ | P6 |
 | `INACTIVE_CANONICAL` | library | dict | `joint_space.py:161-186` | the canonical values of the inactive axes: `log10_lambda_dsn 0.0`, `loss_type triplet`, `mining_strategy hard`, `margin 0.2`, `angular_alpha_deg 18.0`, `lambda_sep 0.1`, `log10_lambda_rep 0.0`, `warmup_frac_rep 0.0`, `n_posterior_draws` = its lower bound | P6 |

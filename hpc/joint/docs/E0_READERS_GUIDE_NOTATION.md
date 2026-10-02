@@ -3,12 +3,13 @@
 **Document E0 of the joint documentation set.** The master notation table
 and glossary for both sets (P0-P7, E1-E9); the reading map; the
 prerequisites; the running example. Index and status: `00_INDEX.md`.
-**Date:** 2026-10-02 (v1.5). **Applies to:** the repository
+**Date:** 2026-10-02 (v1.6). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037), and the
 project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-02 | v1.6. Appended the search-driver group (41 rows, 48 symbols) for P6, under convention 14: the GP surrogate's mean, standard deviation and acquisition margin, reserved for E8, are declared here because P6 needed them first, as the flow's symbols were by P4; nothing renamed. One row annotated, not changed: $L_{\rm sel}, L_{\rm gate}$ now also says that at `834eb41` no gate split exists and the driver's `--rank-split` / `--gate-split` are labels (P6 F-am). Convention 14 annotated. The checker is unchanged; smoke test T4.9 adds P6 to the suite. |
 | 2026-10-02 | v1.5. Appended the optimiser-and-schedule group (15 rows; 297 declared `[RAN]`) for P5, under convention 14; nothing renamed. One row annotated, not changed: $L_{\rm sel}$ keeps the plan's gloss "the search objective" and now says that at `834eb41` the tuner's objective `nll` is $L$ on the report split while $L_{\rm sel}$ feeds the stopping rule alone (P5 F-al), the assignment being an open decision. The checker is unchanged; smoke test T4.8 adds P5 to the suite. |
 | 2026-10-02 | v1.4. Appended the flow group (15 rows, 15 symbols; 272 declared `[RAN]`, the v1.3 count being 257 as `--list` reports it, not 256) for P4, under convention 14: the flow's base variable and transform, reserved there for the first chapter to need them, are now declared ($\zeta$, $p_\zeta$, $\mathcal{F}_\omega$, $\mathcal{F}_{\rm box}$) and convention 14 says so; nothing renamed. The checker is unchanged; smoke test T4.7 adds P4 to the suite. |
 | 2026-10-02 | v1.3. Appended the replicate-term group (13 rows, 13 symbols) for P3, under convention 14; nothing renamed. The checker is unchanged; smoke test T4.6 adds P3 to the suite. |
@@ -135,7 +136,7 @@ bold are headings, not symbols.
 | **Evaluation and decision** | | | | |
 | $\ell_i$ | per-row held-out NLL, $\ell_i = -\log q_\omega(\theta_i \mid z_i)$ | $\mathbb{R}$ | nats | E7 |
 | $L$ | held-out NLL of an arm: the mean of $\ell_i$ over a split (computed level; estimates $\mathcal{L}^{\rm sim}_{\rm NPE}$ at the fitted weights) | $\mathbb{R}$ | nats/row | E4 |
-| $L_{\rm sel}, L_{\rm gate}$ | $L$ on the selection split (the search objective, as the plan's S2.4 and E8 assign it) and on the gate split [2026-10-02: at `834eb41` the runner scores $L_{\rm sel}$ once per epoch for the stopping rule and the best-state restore only, and the tuner's objective `nll` is $L$ on the report split; which assignment is wanted is open, P5 F-al] | $\mathbb{R}$ | nats/row | E8 |
+| $L_{\rm sel}, L_{\rm gate}$ | $L$ on the selection split (the search objective, as the plan's S2.4 and E8 assign it) and on the gate split [2026-10-02: at `834eb41` the runner scores $L_{\rm sel}$ once per epoch for the stopping rule and the best-state restore only, and the tuner's objective `nll` is $L$ on the report split; which assignment is wanted is open, P5 F-al] [2026-10-02, P6 F-am: no gate split exists at `834eb41`; the driver's `--rank-split` and `--gate-split` are labels written into `finalists.json`, and the control test's gain is `delta` from the same report-split record] | $\mathbb{R}$ | nats/row | E8 |
 | $L_0$ | the prior floor, $L_0 = -\mathbb{E}_{p_\Theta} \log p_\Theta(\theta)$ | $\mathbb{R}$ | nats/row | E7 |
 | $\hat\Delta$ | the information gain, $\hat\Delta = L_0 - L$ | $\mathbb{R}$ | nats/row | E7 |
 | $\hat\Delta^{(k)}$ | per-axis gain on axis $k$ | $\mathbb{R}$ | nats | E7 |
@@ -320,6 +321,49 @@ bold are headings, not symbols.
 | $\varsigma_{\rm tr}, \varsigma_{\rm sel}, \varsigma_{\rm rep}$ | the three fractions of `grouped_split`, $(0.7, 0.15, 0.15)$, applied to the count of donors, not of rows; not $\sigma_b$, $\sigma_w$, $\sigma_{\rm seed}$ | $[0, 1]$, summing to 1 | -- | P5 |
 | $s_{\rm seed}$ | the run seed (`--seed`): the donor permutation of the split, the encoder's initialisation, the three stream generators ($s_{\rm seed} + 1, + 2, + 3$), the loop's dropout and posterior draws, the shuffled control ($s_{\rm seed} + 777$); not $s$ (draw index) | $\mathbb{N}_0$ | -- | P5 |
 
+| **Search driver (P6)** | | | | |
+| $\varkappa$ | search-axis index: the position of an axis in `JOINT_KNOB_ORDER`; not $\kappa_k$, not $\kappa_S$ | $\varkappa \in \{1, \dots, 23\}$ | -- | P6 |
+| $\mathcal{X}_\varkappa$, $\mathcal{X}$ | the range of search axis $\varkappa$ (an interval, an integer interval or a finite set) and the joint search space, their product (plan S5.1) | set; $\mathcal{X} = \prod_{\varkappa} \mathcal{X}_\varkappa$ | mixed | P6 |
+| $\mathrm{lo}_\varkappa, \mathrm{hi}_\varkappa$ | the two ends of a numeric search axis's range; not the prior box's $a_k, b_k$ | reals or integers, $\mathrm{lo}_\varkappa < \mathrm{hi}_\varkappa$ | as the axis | P6 |
+| $\mathcal{V}$ | the set of FREE axes of the campaign in play (`Campaign.free`); its complement is pinned | $\mathcal{V} \subseteq \{1, \dots, 23\}$ | -- | P6 |
+| $n_{\rm free}$ | the number of free axes, $\lvert \mathcal{V} \rvert$: 12, 19, 16, 23 for `S-A1`, `S-A2`, `S-A5`, `S-A25` | $\mathbb{N}$ | -- | P6 |
+| $n_{\rm dim}$ | the dimension of the surrogate's input after scikit-optimize's transformation (one-hot categoricals, log-scaled and unit-normalised numerics): 14, 25, 18, 29 | $\mathbb{N}$ | -- | P6 |
+| $\mathcal{X}_{\rm free}$ | the campaign's search space as the optimiser sees it, $\prod_{\varkappa \in \mathcal{V}} \mathcal{X}_\varkappa$ | set | mixed | P6 |
+| $\mathsf{c}$ | a configuration: one value per axis of `JOINT_KNOB_ORDER`, $\mathsf{c}_\varkappa \in \mathcal{X}_\varkappa$, plus the bookkeeping fields the code attaches; not the class $c$ | $\mathsf{c} \in \mathcal{X}$ | mixed | P6 |
+| $\mathsf{c}_{\rm dsn}, \mathsf{c}_{\rm rep}$ | the two switch coordinates of a configuration (`dsn_on`, `rep_on`) | $\{0, 1\}$ | -- | P6 |
+| $\mathsf{c}^{\rm can}_\varkappa$ | the canonical value of axis $\varkappa$: the `INACTIVE_CANONICAL` entry, with `n_posterior_draws` resolved to its lower bound $4 d_\theta$ | $\mathcal{X}_\varkappa$ | as the axis | P6 |
+| $\mathsf{x}$ | a search point: the free coordinates of a configuration in `JOINT_KNOB_ORDER`, the positional list scikit-optimize proposes and is told; not the window $x$ | $\mathsf{x} \in \mathcal{X}_{\rm free}$ | mixed | P6 |
+| $\mathcal{K}$ | canonicalisation (`canonicalise_config`): pins every coordinate the configuration does not read and projects the loss condition; idempotent; not $K$, not $K_{\rm bins}$, not $K_{\rm fin}$ | $\mathcal{K} : \mathcal{X} \to \mathcal{X}$ | -- | P6 |
+| $\Pi_{\rm leg}$ | the DSN's legality projection (`condition_space.project_condition`): moves only `strict_semihard`; not $\Pi_\theta$ | map on (mining, loss, filter) triples | -- | P6 |
+| $\imath$ | ledger-observation index: the $\imath$-th completed, untagged, finite trial of a campaign in file order; not the row index $i$ | $\imath \in \{1, \dots, n_{\rm obs}\}$ | -- | P6 |
+| $n_{\rm obs}$ | observations the surrogate is told: completed, untagged trials with a finite `nll` | $\mathbb{N}_0$ | -- | P6 |
+| $n_{\rm init}$ | random points before the surrogate is consulted (`--n-initial-points`, 12); positional | $\mathbb{N}$ | -- | P6 |
+| $n_{\rm batch}$ | configurations proposed per round (`--n-points`, 8) | $\mathbb{N}$ | -- | P6 |
+| $\bar L_{\rm obs}$, $s_{\rm obs}$ | mean and standard deviation of the observed objectives $L_1, \dots, L_{n_{\rm obs}}$, the standardisation scikit-learn applies before fitting the kernel (`normalize_y`) | $\mathbb{R}$, $\mathbb{R}_{\ge 0}$ | nats/row | P6 |
+| $\tilde L_\imath$ | the standardised target of observation $\imath$, $(L_\imath - \bar L_{\rm obs}) / s_{\rm obs}$ | $\mathbb{R}$ | dimensionless | P6 |
+| $k_{\rm GP}$ | the surrogate's covariance function on the transformed coordinates, $a_{\rm GP} k_{\rm M} + \sigma^2_{\rm noise} \mathbb{1}[\mathsf{x} = \mathsf{x}']$ (P6 eq. (P6.4)); not the axis index $k$ | $\mathcal{X}_{\rm free} \times \mathcal{X}_{\rm free} \to \mathbb{R}$ | dimensionless | P6 |
+| $k_{\rm M}$ | the Matern kernel of smoothness $5/2$ with one length scale per transformed coordinate, unit amplitude | kernel | dimensionless | P6 |
+| $a_{\rm GP}$ | the kernel's amplitude (`ConstantKernel`), fitted in $[0.01, 1000]$; not $a_k$, not $a_m$ | $\mathbb{R}_{>0}$ | dimensionless | P6 |
+| $\sigma_{\rm noise}$ | the surrogate's observation-noise standard deviation in standardised units; $\sigma^2_{\rm noise}$ is the `WhiteKernel` level, fixed at $\sigma_{\rm seed}^2$ when `--sigma-seed` is given and fitted otherwise; not $\sigma_{\rm seed}$ (P6 F-aq) | $\mathbb{R}_{\ge 0}$ | dimensionless | P6 |
+| $\mu_{\rm GP}$, $\sigma_{\rm GP}$ | the surrogate's posterior predictive mean and standard deviation at a point $\mathsf{x}$, un-standardised to nats/row (analytic with respect to the GP model, computed from the ledger); not $\mu_j$, $\mu^{(1)}_\tau$ | $\mathcal{X}_{\rm free} \to \mathbb{R}$, $\mathcal{X}_{\rm free} \to \mathbb{R}_{\ge 0}$ | nats/row | P6 |
+| $L_{\rm inc}$ | the incumbent: the smallest observed objective, $\min_\imath L_\imath$, lies included while a batch is built | $\mathbb{R}$ | nats/row | P6 |
+| $L_{\rm lie}$ | the constant-liar value told to the optimiser's copy for each point of a batch: $L_{\rm inc}$, or $0.0$ on an empty ledger | $\mathbb{R}$ | nats/row | P6 |
+| $\xi_{\rm EI}$ | the expected-improvement margin (scikit-optimize `xi`, 0.01); not the residual $\xi$ | $\mathbb{R}_{\ge 0}$ | nats/row | P6 |
+| $\Phi$ | the standard normal distribution function; $\Phi'$ its density | $\mathbb{R} \to (0, 1)$ | -- | P6 |
+| $\tau_{\rm stop}$ | the escalation threshold on the recent improvement of the best-so-far (`--sigma-seed`, or 0.0 without it); not the step index $\tau$ | $\mathbb{R}_{\ge 0}$ | nats/row | P6 |
+| $w_{\rm esc}$ | the escalation window, $\min(\max(5, \lfloor n_{\rm obs}/3 \rfloor), n_{\rm obs} - 1)$; not a width $w$ | $\mathbb{N}_0$ | observations | P6 |
+| $\delta_{\rm esc}$ | the recent improvement: the best-so-far before the window minus the best-so-far now; not $\delta_{\min}$, not $\delta_d$ | $\mathbb{R}_{\ge 0}$ | nats/row | P6 |
+| $\epsilon_{\rm edge}$ | the boundary band of a free numeric axis, $10^{-6} \max(1, \lvert \mathrm{lo}_\varkappa \rvert, \lvert \mathrm{hi}_\varkappa \rvert)$ (`rel_tol`); not $\epsilon_{\rm adam}$ | $\mathbb{R}_{>0}$ | as the axis | P6 |
+| $\jmath$ | finalist index, by rank on the objective; not the direction index $j$ | $\jmath \in \{1, \dots, K_{\rm fin}\}$ | -- | P6 |
+| $K_{\rm fin}$ | the number of finalists (`--top-k`, 3); the handoff's $K$, a letter this table gives to the classes of a metric batch | $\mathbb{N}$ | -- | P6 |
+| $n_{\rm ctrl}$ | shuffled-control runs per finalist (`--n-control`, 5) | $\mathbb{N}$ | -- | P6 |
+| $\hat\Delta^{\rm ctrl}_\jmath$ | the gain $L_0 - L$ of one control run of finalist $\jmath$ (the `delta` of a record tagged `control`; computed level) | $\mathbb{R}$ | nats/row | P6 |
+| $\bar\Delta^{\rm ctrl}_\jmath$, $s^{\rm ctrl}_\jmath$ | mean and sample standard deviation (`ddof=1`) of finalist $\jmath$'s $n_{\rm ctrl}$ control gains | $\mathbb{R}$, $\mathbb{R}_{\ge 0}$ | nats/row | P6 |
+| $t^{\rm ctrl}_\jmath$ | the per-finalist one-sided statistic of the handoff's eq. (S4.1), P6 eq. (P6.10) | $\mathbb{R}$ | dimensionless | P6 |
+| $\mathrm{p}_\jmath$, $\tilde{\mathrm{p}}_\jmath$ | its p-value, and the Holm-adjusted p-value; upright like $\mathrm{p}_{\rm grp}$, never the latent dimension $p$ | $(0, 1]$ | -- | P6 |
+| $\delta_{\rm floor}$ | the hard minimum a finalist's gain must exceed whatever its p-value (`--floor`, 0.0); not $\delta_{\min}$ | $\mathbb{R}$ | nats/row | P6 |
+| $s_{\rm perm}$ | the permutation seed written into a control's configuration (`shuffle_seed`, $1000 +$ the control's index); never read by the runner (P6 F-an); not $s$, not $s_{\rm seed}$ | $\mathbb{N}$ | -- | P6 |
+
 ### 1.1 Conventions
 
 1. **Conditional quantities are written conditionally, every time.**
@@ -428,7 +472,12 @@ bold are headings, not symbols.
     here for E2 at v1, were needed first by P4 and are declared in the
     "Flow (P4)" group ($\zeta$, $p_\zeta$, $\mathcal{F}_\omega$,
     $\mathcal{F}^{(r)}_\omega$, $\mathcal{F}_{\rm box}$); E2 uses them as
-    declared.]
+    declared.] [2026-10-02: the GP surrogate's mean and standard deviation
+    and the acquisition margin, reserved here for E8, were needed first by
+    P6 and are declared in the "Search driver (P6)" group ($\mu_{\rm GP}$,
+    $\sigma_{\rm GP}$, $\xi_{\rm EI}$, with the kernel $k_{\rm GP}$ and the
+    incumbent $L_{\rm inc}$); E8 uses them as declared. Still reserved: the
+    bootstrap replicate index (E7).]
 
 ---
 
