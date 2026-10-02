@@ -3,12 +3,13 @@
 **Document E0 of the joint documentation set.** The master notation table
 and glossary for both sets (P0-P7, E1-E9); the reading map; the
 prerequisites; the running example. Index and status: `00_INDEX.md`.
-**Date:** 2026-10-01 (v1.2). **Applies to:** the repository
+**Date:** 2026-10-02 (v1.3). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037), and the
 project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-02 | v1.3. Appended the replicate-term group (13 rows, 13 symbols) for P3, under convention 14; nothing renamed. The checker is unchanged; smoke test T4.6 adds P3 to the suite. |
 | 2026-10-01 | v1.2. Appended the DSN-loss group (26 rows, 31 symbols) for P2, under convention 14; nothing renamed. The checker gained two index forms P2 needs (a primed declared index; a relation inside a script) and a recursion guard, `tools/check_notation.py`, smoke tests T2.10-T2.11, T4.4-T4.5. |
 | 2026-10-01 | v1.1. Appended the encoder-architecture group (29 symbols) for P1, under convention 14; nothing renamed. |
 | 2026-10-01 | v1. Built from the joint plan's S1 (`JOINT_DSN_NPE_PLAN_v0_6.md` at `834eb41`, with its v0.6 collision repairs), the deck pack's `09_NOTATION_AND_GLOSSARY.md` (its conventions 1-12 and glossary), the metric document's notation (`METRIC_REPLICATE_v1_4.md`: the computed-versus-true covariance convention, $\kappa_S$, the draw and error symbols) and P0's table. Seventeen symbol repairs beyond the plan's two, each listed in S1.1 with what it replaces. The checker `tools/check_notation.py` (26 fixture checks, run twice `[RAN]`) reads this table and passes on P0 and on this document's own prose. |
@@ -269,6 +270,20 @@ bold are headings, not symbols.
 | $\mathcal{M}_{\rm trip}, \mathcal{M}_{\rm joint}, \mathcal{M}_{\rm jsep}$ | the activity masks: the loss hyper-parameters each `loss_type` reads (`condition_space.active_loss_hps`); not the bench axis sets $\mathcal{A}_{\rm lab}, \mathcal{A}_{\rm free}$ | sets of knobs | -- | P2 |
 | $\Pi$ | the legality projection of a (`mining_strategy`, `loss_type`, `strict_semihard`) triple onto a legal one (`condition_space.project_condition`); not the projector $\Pi_\theta$ | map on triples | -- | P2 |
 | $S_{\rm sil}$ | the cosine silhouette of an embedding cloud against its labels; not $S_{\rm mc}$ | $[-1, 1]$ | dimensionless | P2 |
+| **Replicate term (P3)** | | | | |
+| $\hat T^{\rm raw}_{gg'}$ | the replicate statistic before the $d_\theta / S_{\rm mc}$ subtraction, $\hat\Delta_{gg'}^\top (2 \bar C)^{-1} \hat\Delta_{gg'}$ (computed level; the metric document's eq. (76)); $\hat T_{gg'}$ is this minus $d_\theta / S_{\rm mc}$ | $\mathbb{R}_{\ge 0}$ | dimensionless | P3 |
+| $\ell_{\rm rep}$ | the per-pair replicate loss as the code evaluates it, with both clamps, P3 eq. (P3.7) (computed level); its batch mean times the ramp is the step's replicate term; not $\mathcal{L}^{\rm real}_{\rm rep}$, its expectation | $\mathbb{R}_{\ge 0}$ | dimensionless | P3 |
+| $r_{\rm rep}$ | the warm-up ramp of the replicate term, $r_{\rm rep}(t) = \min(1, t / t_{\rm warm})$ for $t_{\rm warm} > 0$ and $1$ for $t_{\rm warm} = 0$ (the metric document's `r(t)`); not $r_{\rm eff}$, not $\gamma_{\rm sep}$ | $[0, 1]$ | dimensionless | P3 |
+| $\epsilon_{\rm jit}$ | relative Cholesky jitter of the replicate term (`jitter`, `DEFAULT_JITTER`); not the TSNPE mass $\varepsilon$ | $\mathbb{R}_{>0}$ | dimensionless | P3 |
+| $T_{\rm floor}$ | the clamp on $\hat T_{gg'}$ and on the target before the logarithm (`t_floor`, `DEFAULT_T_FLOOR`); not $T_{gg'}$, not $T_{\rm win}$ | $\mathbb{R}_{>0}$ | dimensionless | P3 |
+| $p_{\rm min}$ | the clamp on $\hat p_{\rm eff}$ (`p_eff_min`, `DEFAULT_P_EFF_MIN`); not a density | $\mathbb{R}_{>0}$ | dimensionless | P3 |
+| $n_{\rm inv}$ | pairs of one replicate batch whose unclamped target $\hat p_{\rm eff}$ is non-positive (`n_p_eff_invalid`), summed per epoch in the history | $\mathbb{N}_0$ | pairs | P3 |
+| $n_{\rm neg}$ | pairs of the diagnostic set with $\hat T_{gg'} \le 0$ (`n_T_nonpositive` of `replicate_report`) | $\mathbb{N}_0$ | pairs | P3 |
+| $\mathrm{res}_S$ | the bias the subtraction leaves under the realised metric, $(\kappa_S - 1)(p_{\rm eff} + d_\theta / S_{\rm mc})$ (`FINITE_DRAW_CORRECTION_v1` eq. (88)); the subscript names its $S_{\rm mc}$-dependence | $\mathbb{R}_{\ge 0}$ | dimensionless | P3 |
+| $p_\times$ | the value of $p_{\rm eff}$ above which $\mathrm{res}_S$ exceeds $d_\theta / S_{\rm mc}$, written $p_\times(S_{\rm mc})$ (`FINITE_DRAW_CORRECTION_v1` eq. (89)); not a density | $\mathbb{R}$ | dimensionless | P3 |
+| $I_{d_\theta}$ | the $d_\theta \times d_\theta$ identity matrix; not the mutual information $I(\cdot\,;\cdot)$ | matrix | -- | P3 |
+| $\mathcal{U}$ | the set of same-donor unordered row pairs of the real bank after surrogate rows are masked, $\lvert \mathcal{U} \rvert = N_{\rm pair}$ (`enumerate_donor_pairs`); not the bench arm $\mathcal{R}$ | set of index pairs | -- | P3 |
+| $\mathcal{B}_{\rm rep}$ | the replicate minibatch: the pairs drawn at one optimiser step, $\lvert \mathcal{B}_{\rm rep} \rvert = \min(B_{\rm rep}, N_{\rm pair})$ | subset of $\mathcal{U}$ | -- | P3 |
 
 ### 1.1 Conventions
 
