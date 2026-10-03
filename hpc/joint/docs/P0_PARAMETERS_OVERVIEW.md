@@ -2,11 +2,12 @@
 
 **Document P0 of the joint documentation set.** Companions: P1-P7 (one per
 parameter block), E0 (master notation and glossary). Index and status:
-`00_INDEX.md`. **Date:** 2026-10-02 (v1.2). **Applies to:** the repository
+`00_INDEX.md`. **Date:** 2026-10-03 (v1.3). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037).
 
 | date | change |
 |---|---|
+| 2026-10-03 | v1.3. From P7 (S3.7), no value changed: Table C's `p_eff_min` row corrected -- a raw $\hat p_{\rm eff}$ in $(0, 10^{-3})$ is clamped but not counted as invalid, `n_invalid` counts only $\hat p_{\rm eff} \le 0$ (`joint_losses.py:320-322`); S3.7 notes that Table F's two `drift_period_s` rows are two objects ($T_{\rm gap}$ and $T_{\rm drift}$); S3.6 and S3.8 point to P7 for the bank job, the Stage 3b/3c jobs and the findings F-at to F-az. |
 | 2026-10-02 | v1.2. Three cells of Table D annotated from P6 (S3.8), no value changed: `--seed` plays three roles, not one (P6 F-as); the `--rank-split` / `--gate-split` parenthesis described the intention, the flags are labels and no gate split exists (P6 F-am); the `--n-train` cell's "at least 20 steps per epoch" is the trim rule's pass-based reading (P5 F-ag). The generated tables are untouched (`--check-doc` OK). |
 | 2026-10-01 | v1.1. Notation aligned with E0: the bare `T` of the table and of Table C is $T_{gg'}$ (the pair is part of the name), the bare `\lambda` of S3.2 note 3 is $\lambda_{\rm dsn}$; `tools/check_notation.py` now passes on this document. No value changed. |
 | 2026-10-01 | v1. Written from `tools/inventory.json` (546 rows at `834eb41`) and from the source; the three generated tables (A, F, K) are rendered by `tools/p0_tables.py` and checked with `--check-doc`. No literature claim is made here (S6). |
@@ -394,7 +395,7 @@ be "about" it.
 | `ReplicateConsistencyLoss.correct_mc` | `True` | `joint_losses.py:264` | subtracts $d_\theta / S_{\rm mc}$ from $T_{gg'}$ (plan eq. 3h); the residual $\kappa_S$ is not corrected (F-e) | P3 |
 | `ReplicateConsistencyLoss.jitter` | `1e-6` x mean diagonal | `joint_losses.py:79`, `:184-190` | relative jitter added to $\bar C$ before the Cholesky factorisation | P3 |
 | `ReplicateConsistencyLoss.t_floor` | `1e-8` | `joint_losses.py:80`, `:232-235` | clamp on $T_{gg'}$ and on $p_{\rm eff}$ before the logs of plan eq. (3c) | P3 |
-| `ReplicateConsistencyLoss.p_eff_min` | `1e-3` | `joint_losses.py:83`, `:320-322` | below this, $p_{\rm eff}$ is clamped and the pair counted as invalid | P3 |
+| `ReplicateConsistencyLoss.p_eff_min` | `1e-3` | `joint_losses.py:83`, `:320-322` | below this, $p_{\rm eff}$ is clamped and the pair counted as invalid [corrected 2026-10-03: below $10^{-3}$ the raw $\hat p_{\rm eff}$ is clamped up to $10^{-3}$, but `n_invalid` counts only $\hat p_{\rm eff} \le 0$ (`:321-322`), so a pair in $(0, 10^{-3})$ is clamped and not counted; P7 S3.7] | P3 |
 | $\Sigma_0$ | `diag(1/12)` on the unit box | `run_joint_arms.py:514-515`, `joint_losses.py:168-177` | the prior covariance of plan eq. (9); `analytic`, the box second moment; spans all $d_\theta$ axes (D17 option (c)) | P3 |
 | prior of the flow | `BoxUniform(0, 1)^{d_theta}` | `run_joint_arms.py:385-388` | the prior `posterior_nn` needs for `z_score_theta="transform_to_unconstrained"`; `analytic` | P4 |
 | `z_score_theta`, `z_score_x` | `"transform_to_unconstrained"`, `"none"` | `joint_model.py:197-198` | how sbi standardises $\theta$ and $x$ before the flow | P4 |
@@ -449,7 +450,8 @@ training job scripts recognise the variables below and nothing else.
 The Stage 1 bank job (`stage1/jobs/build_latent_bank.pbs`: `ARM`, `OUT_DIR`,
 `N_TRACES`, `WELLS_PER_DONOR`, `N_WINDOWS`, `T_WIN`, `FS`, `PI`, `GAP_MODES`,
 `N_PER_THETA`, `PROVIDER` (`reference`!), `SEED`, `MAX_RECORDS`) and the
-Stage 3b/3c jobs are P7's.
+Stage 3b/3c jobs are P7's. [2026-10-03: written out in P7 S3.4, Table P7.5,
+with the resources of all eight job files and what each forwards.]
 
 ### 3.7 Table F -- the same knob, different names and defaults
 
@@ -565,6 +567,12 @@ defaults: `batch_size_npe` (space) is `--b-sim` (runner) is `B_SIM` (job);
 driver's `--embedding-dim` anchor, which need not equal it -- the anchor
 resolves the range the axis is searched in, the axis is the value trained.
 
+One row of Table F is not one knob [2026-10-03, P7 S1.1 convention 4]: the
+two `drift_period_s` rows are two objects that share a field name, the gap
+(c)'s drift period $T_{\rm gap}$ (`GapSpec`, 120 s, bench arm R only) and
+the nuisance drift's period $T_{\rm drift}$ (`NuisanceSpec`, 600 s, both
+bench arms).
+
 ### 3.8 Upstream: the knobs that shape the problem before training
 
 A bank's knobs are not training knobs, but they fix what training sees:
@@ -585,7 +593,13 @@ window grid (`--n-windows`, `--T-win`, `--fs`, hence $W$), `--n-neurons`,
 components, `NU_COMPONENTS`, at three levels, `NU_LEVELS`: `latent_nuisance.py:42-54`, `:75-91`) are the knobs; the
 scale convention of $x$ differs by provider (`per_unit_mean` for `bench`,
 `sum_over_units` otherwise) and the nuisance scales were calibrated against
-the other convention (`[KB]` usage v1.3 S3.5, open).
+the other convention (`[KB]` usage v1.3 S3.5, open). [2026-10-03, P7: the
+bank is less inert than this list reads. Its identity fields are
+shard-local and every consumer reads them as bank-global (F-at); bench arm R
+built at bench arm S's `SEED` repeats its draws (F-aw); the gap (a) is a
+different perturbation on each provider and raises on `bench` (F-av);
+Stage 3c simulates through the DSN provider whatever built the bank
+(F-au); the bank job forwards 15 of the builder's 22 flags (P7 S3.1).]
 
 ### 3.9 Table K -- the alphabetical index of knobs
 

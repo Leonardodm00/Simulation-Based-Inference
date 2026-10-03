@@ -12,7 +12,7 @@ the library constants behind them (`INACTIVE_CANONICAL`, the fixed
 `strict_semihard` and `n_posterior_draws_max` of `default_joint_space`, the
 boundary tolerance `rel_tol`). Master notation: E0. The chapter that explains
 Bayesian optimisation itself -- the surrogate, the acquisition function,
-nested campaigns -- is E8. **Date:** 2026-10-02 (v1). **Applies to:** the
+nested campaigns -- is E8. **Date:** 2026-10-03 (v1.1). **Applies to:** the
 repository `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037):
 `stage4/joint_space.py`, `stage4/npe_tune_joint.py`,
 `stage4/jobs/joint_tune.pbs`, `stage4/jobs/launch_joint_tune.sh`,
@@ -43,6 +43,7 @@ source by `ast` and executed on its own `[RAN]` B4.
 
 | date | change |
 |---|---|
+| 2026-10-03 | v1.1. One correction, nothing else changed: the multilevel SBI paper (Hikida et al.) was flagged PREPRINT, not peer-reviewed, in S6; the project PDF's p.1 carries the NeurIPS 2025 conference line, so the flag is marked [corrected 2026-10-03]. Evidence: `[KB-PDF p.1]`, read in the P7 turn (P7 S6). |
 | 2026-10-02 | v1. Written from `stage4/joint_space.py` and `stage4/npe_tune_joint.py` (both read in full), `stage4/jobs/joint_tune.pbs` and `stage4/jobs/launch_joint_tune.sh` (read in full), `stage4/smoke_test_joint_space.py:1-60, 547-680`, `stage4/smoke_test_joint_tune.py:1-60, 403-500, 600-615`, `npe_tune_search.py:60-110, 195-300, 340-436`, `npe_tune_ledger.py:95-145`, `npe_tune_gates.py:160-305`, `npe_diagnostics.py:408-422`, `dsn/condition_space.py:105-130, 192-260`, `stage3/run_joint_arms.py:174-202, 372-382, 519-540`, `dsn/search.py:206, 806-830, 880-975`, `dsn/hpc/Config/config_l3c_joint_search.json:217-218`, `config_mea_joint_full.davinci.json:226-227`, `npe_tune.py:434-470, 969-1077`; the plan S5.1, S5.2, Stage 4, S8 (D4), S2.4, S4.4; `HANDOFF_DELTA_MIN_PER_CONFIG_v1.md` (read in full); scikit-optimize 0.10.2 (`optimizer.py:241-242, 269-275, 298-325, 355-383, 384-468, 470-500, 532-610, 640`, `utils.py:364-392, 411-430`, `gpr.py:189-245`, `acquisition.py:40-41, 247-320`), scikit-learn's `_gpr.py` `fit` (1.6.1 `:269-274`; 1.9.1 the same lines of logic, read from the installed file); `[KB]` `JOINT_DSN_NPE_USAGE_v1.md` v1.3 S7, S9, S10, `claude/SBI_decisions_and_ideas_log.md` v1.21 (D-037, D-038, D-039, D-052, D-054), P0 Table D, P4 S3.3.1, P5 S3.3.4 and S3.8; `[KB-PDF]` the practical guide p.32, BayesFlow p.13, the frontier review p.4, Goncalves et al. p.3, p.16, the multilevel preprint p.3, pages as cited in S6. Every number of S3.1-S3.7 computed by the new `tools/p6_numbers.py` `[RAN]`, run twice with identical output. Findings F-am to F-as added; F-a, F-b, F-d, F-f, F-j, F-o, F-r, F-s, F-u, F-w, F-ad, F-al carried or extended. Grounding searches of S6 run and reported. |
 
 **Abstract.** Stage 4 turns the parameter documents P1-P5 into an experiment:
@@ -1510,7 +1511,7 @@ as inference engines for likelihood-free inference -- the other sense of
 convention 5); Goncalves PJ et al. (eLife 2020, the project PDF), p.3, p.16
 (grid search as the alternative SNPE replaces), p.30 (the same references);
 Hikida Y et al. *Multilevel neural simulation-based inference* (arXiv, the
-project PDF; **PREPRINT, not peer-reviewed**), p.3 (GP surrogates among the
+project PDF; **PREPRINT, not peer-reviewed** [corrected 2026-10-03: the PDF's p.1 carries the line "39th Conference on Neural Information Processing Systems (NeurIPS 2025)", so the project PDF is the NeurIPS 2025 paper, peer-reviewed as a conference paper; P7 S6]), p.3 (GP surrogates among the
 methods it positions against).
 
 **Repository `[REPO]`** at `834eb41`, read 2026-10-02: the files and lines of

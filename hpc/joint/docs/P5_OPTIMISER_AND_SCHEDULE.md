@@ -10,7 +10,7 @@ fixed `one_minus_beta2`), the early-stopping `patience`, the grouped
 train / selection / report split and its fractions, the run `seed` and the
 generators it feeds, and the constants torch fixes below any flag. Master
 notation: E0. The chapter that explains the loop as an experimental design
--- three streams, two domains, the arms -- is E4. **Date:** 2026-10-02 (v1).
+-- three streams, two domains, the arms -- is E4. **Date:** 2026-10-03 (v1.1).
 **Applies to:** the repository `Simulation-Based-Inference` at `834eb41`,
 `hpc/joint/` (D-037): `stage2/joint_train.py`, `stage2/joint_batches.py`,
 `stage3/run_joint_arms.py`, `stage3/jobs/joint_arms.pbs`,
@@ -31,6 +31,7 @@ numpy replica of the torch source, `tools/p5_numbers.py` `[RAN]`.
 
 | date | change |
 |---|---|
+| 2026-10-03 | v1.1. One correction, nothing else changed: the multilevel SBI paper (Hikida et al.) was flagged PREPRINT, not peer-reviewed, at its two citations (S3.5, S6); the project PDF's p.1 carries the NeurIPS 2025 conference line, so both are marked [corrected 2026-10-03]. Evidence: `[KB-PDF p.1]`, read in the P7 turn (P7 S6). |
 | 2026-10-02 | v1. Written from `stage2/joint_train.py` and `stage2/joint_batches.py` (read in full), `stage3/run_joint_arms.py:75-168, 205-271, 334-382, 440-534, 578-634`, `stage3/jobs/joint_arms.pbs:3-4, 50-117`, `stage4/jobs/joint_tune.pbs:3-4, 60-161`, `stage4/joint_space.py:30-50, 119-145, 212-331, 441-472, 697-722, 761-814`, `stage4/npe_tune_joint.py:82-253, 266-296, 342-348, 444-535`, `dsn/config.py:695-770, 835-875, 882-934, 1176-1197`, `dsn/Documentation/TUNING_1_searched_axes.md` S3.5-S3.7, `TUNING_2_fixed_knobs.md` S3.2, S3.4, the DSN JSON configs under `dsn/hpc/Config/` (the optimiser ranges and the refit values), `npe_tune_search.py:95-170, 295-330`, `npe_model.py:76-100, 196-215`, `npe_tune_train.py:60-100, 225-260`; the `sbi` 0.27.0 wheel (`inference/trainers/base.py:280-290, 384-400, 474-540, 1037-1110, 1121-1165, 1225-1255`; `inference/trainers/npe/npe_base.py:252-320`); torch 2.10.0 (`optim/adamw.py:20-97`, `optim/adam.py:139-160, 396-440, 528-547`, `nn/utils/clip_grad.py:121-232`); the plan S2.2, S2.4, S5.1 ("Epoch semantics"), Stage 2, Stage 3; `[KB]` `JOINT_DSN_NPE_USAGE_v1.md` S5, deck `03_SEC_B` B.4; `[KB-PDF]` the practical guide, Goncalves et al. 2020, BayesFlow, the compositional-SBI paper, the flow-matching paper, the trust-crisis paper, the multilevel preprint and the RVNP paper, pages as cited in S6. Every number of S3.1-S3.5 recomputed by the new torch-free `tools/p5_numbers.py` `[RAN]`, run twice with identical output. Findings F-ag to F-al added; F-c, F-d, F-g, F-i, F-l, F-m, F-q, F-r owned or co-owned. Grounding searches of S6 run and reported. |
 
 **Abstract.** Four axes of the joint search -- the learning rate, the
@@ -824,7 +825,7 @@ What the knowledge base records as sbi's defaults agrees with the wheel:
 batch size 200, Adam optimizer with learning rate $5 \times 10^{-4}$"
 (`[KB-PDF p.40]`, the practical guide's DDM appendix), and the multilevel
 preprint's description of the same criterion with 20 % of the data held out
-(`[KB-PDF p.9]`, **PREPRINT, not peer-reviewed**). Goncalves et al. trained
+(`[KB-PDF p.9]`, **PREPRINT, not peer-reviewed** [corrected 2026-10-03: its p.1 carries the NeurIPS 2025 conference line, so it is peer-reviewed as a conference paper; P7 S6]). Goncalves et al. trained
 with "ADAM with default settings" (`[KB-PDF p.19]`); in PubMed Central,
 Boelts et al. (eLife 2022, [DOI](https://doi.org/10.7554/eLife.77220))
 state that their networks were trained "using the maximum likelihood loss
@@ -1183,7 +1184,7 @@ crisis in simulation-based inference?* (TMLR 2022, the project PDF): p.17,
 Tables 2-4 (NPE at batch 128, 64 on the gravitational-wave task, 100
 epochs, learning rate $10^{-3}$ on every task). Hikida
 Y et al. *Multilevel neural simulation-based inference* (arXiv, the project
-PDF; **PREPRINT, not peer-reviewed**): p.9 (sbi's 20-epoch criterion, 20 %
+PDF; **PREPRINT, not peer-reviewed** [corrected 2026-10-03: the PDF's p.1 carries the line "39th Conference on Neural Information Processing Systems (NeurIPS 2025)", so the project PDF is the NeurIPS 2025 paper, peer-reviewed as a conference paper; P7 S6]): p.9 (sbi's 20-epoch criterion, 20 %
 validation), p.27 (a patience parameter), p.30 (400 epochs). O'Callaghan M,
 Mandel KS, Gilmore G. *Misspecification-robust amortised simulation-based
 inference using variational methods* (the project PDF; the PDF's first page

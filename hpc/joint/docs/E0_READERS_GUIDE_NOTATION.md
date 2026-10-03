@@ -3,12 +3,13 @@
 **Document E0 of the joint documentation set.** The master notation table
 and glossary for both sets (P0-P7, E1-E9); the reading map; the
 prerequisites; the running example. Index and status: `00_INDEX.md`.
-**Date:** 2026-10-02 (v1.6). **Applies to:** the repository
+**Date:** 2026-10-03 (v1.7). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037), and the
 project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-03 | v1.7. Appended the upstream group (30 rows, 43 symbols; 388 declared `[RAN]`) for P7, under convention 14: the bank's shard and seed symbols ($S_{\rm sh}$, $\mathsf{k}$, $s_{\rm base}$, $N_{\rm don}$, $n_{\rm db}$, $N^{\rm bank}_{\rm tr}$), the pair fractions $r_{\rm same}$, $r_{\rm well}$, the gap's and the nuisance's constants and components, the nuisance map's two parts and the stored window $x^{\rm obs}$, and the Stage 3b/3c symbols ($\theta^{\rm fl}$, $n_{\rm fl}$, $S_{\rm post}$, $m^{\rm fl}$ / $\hat m^{\rm fl}$, $\Sigma_{\rm fl}$, $h_{\rm fd}$, $n_{\rm fd}$, $n_{\rm probe}$, $n_{\rm ker}$); nothing renamed. Two rows annotated, not changed: $x$ (`per_unit_mean` is one provider's convention; the stored array on the bench is $x^{\rm obs}$, which can be negative) and $N_{\rm tr}, J$ (`--n-traces` is a per-shard count; the plan's `G` is $N^{\rm bank}_{\rm tr}$). The checker is unchanged; smoke test T4.10 adds P7 to the suite. |
 | 2026-10-02 | v1.6. Appended the search-driver group (41 rows, 48 symbols) for P6, under convention 14: the GP surrogate's mean, standard deviation and acquisition margin, reserved for E8, are declared here because P6 needed them first, as the flow's symbols were by P4; nothing renamed. One row annotated, not changed: $L_{\rm sel}, L_{\rm gate}$ now also says that at `834eb41` no gate split exists and the driver's `--rank-split` / `--gate-split` are labels (P6 F-am). Convention 14 annotated. The checker is unchanged; smoke test T4.9 adds P6 to the suite. |
 | 2026-10-02 | v1.5. Appended the optimiser-and-schedule group (15 rows; 297 declared `[RAN]`) for P5, under convention 14; nothing renamed. One row annotated, not changed: $L_{\rm sel}$ keeps the plan's gloss "the search objective" and now says that at `834eb41` the tuner's objective `nll` is $L$ on the report split while $L_{\rm sel}$ feeds the stopping rule alone (P5 F-al), the assignment being an open decision. The checker is unchanged; smoke test T4.8 adds P5 to the suite. |
 | 2026-10-02 | v1.4. Appended the flow group (15 rows, 15 symbols; 272 declared `[RAN]`, the v1.3 count being 257 as `--list` reports it, not 256) for P4, under convention 14: the flow's base variable and transform, reserved there for the first chapter to need them, are now declared ($\zeta$, $p_\zeta$, $\mathcal{F}_\omega$, $\mathcal{F}_{\rm box}$) and convention 14 says so; nothing renamed. The checker is unchanged; smoke test T4.7 adds P4 to the suite. |
@@ -61,7 +62,7 @@ bold are headings, not symbols.
 | $n$ | a generic count, always qualified in prose (rows of a split, draws, ...) | $\mathbb{N}$ | -- | E2 |
 | $d$ | two senses, stated at each use: the degrees of freedom of a chi-square or Wishart law ($\chi^2_d$, $\mathcal{W}_d$); the index of a compound in $\delta_d$ | $\mathbb{N}$; index | -- | E5; E7 |
 | **Data: windows and banks** | | | | |
-| $x$ | one IFR window: the pooled instantaneous firing rate of one subregion over $T_{\rm win}$ | $x \in \mathbb{R}^{W}_{\ge 0}$ | Hz on the cohort; counts per bin per unit on the bench (`per_unit_mean`) | E1 |
+| $x$ | one IFR window: the pooled instantaneous firing rate of one subregion over $T_{\rm win}$ [2026-10-03, P7: `per_unit_mean` is the `bench` provider's convention only; the `dsn` and `reference` providers store the undivided sum over units (`sum_over_units`); on the bench the array a shard stores is $x^{\rm obs}$, the window after the nuisance map, which the additive part can make negative (P7 S3.2)] | $x \in \mathbb{R}^{W}_{\ge 0}$ | Hz on the cohort; counts per bin per unit on the bench (`per_unit_mean`) | E1 |
 | $W$ | window length in samples, $W = \mathrm{round}(T_{\rm win} f_s)$ | $\mathbb{N}$ | samples | E1 |
 | $T_{\rm win}$ | window duration | $\mathbb{R}_{>0}$ | s | E1 |
 | $f_s$ | IFR sampling rate, $f_s = 1 / \Delta t$ | $\mathbb{R}_{>0}$ | Hz | E1 |
@@ -213,7 +214,7 @@ bold are headings, not symbols.
 | $m_{c,k}$ | bench class centre of class $c$ on label axis $k$ | $(0, 1)$ | dimensionless | E6 |
 | $\mathcal{TN}$ | the truncated normal law of plan eq. (7) | distribution on $(0, 1)$ | -- | E6 |
 | $\mathcal{T}_\nu$ | the observation-level nuisance transformation of the bench, plan eq. (8), applied to a trace (the plan's `T_{\nu_g}[.]`) | map on traces | -- | E6 |
-| $N_{\rm tr}, J$ | bench traces (cultures) and windows per trace (`--n-traces`, `--n-windows`; the plan's `G`, `J`) | $\mathbb{N}$ | -- | E6 |
+| $N_{\rm tr}, J$ | bench traces (cultures) and windows per trace (`--n-traces`, `--n-windows`; the plan's `G`, `J`) [2026-10-03, P7: `--n-traces` counts the traces of ONE shard, so $N_{\rm tr}$ is a per-shard count; the plan's `G` (S4.4, 4000) is the total of a bank arm, written $N^{\rm bank}_{\rm tr} = S_{\rm sh} N_{\rm tr}$ in the P7 group] | $\mathbb{N}$ | -- | E6 |
 | $N_{\rm neu}$ | bench neurons per trace (`--n-neurons`; the plan's `N`) | $\mathbb{N}$ | -- | E6 |
 | $n_{\rm rl}$ | realisations per $\theta$ in a bank (`--n-per-theta`) | $\mathbb{N}$ | -- | E6 |
 | **Encoder architecture (P1)** | | | | |
@@ -363,6 +364,38 @@ bold are headings, not symbols.
 | $\mathrm{p}_\jmath$, $\tilde{\mathrm{p}}_\jmath$ | its p-value, and the Holm-adjusted p-value; upright like $\mathrm{p}_{\rm grp}$, never the latent dimension $p$ | $(0, 1]$ | -- | P6 |
 | $\delta_{\rm floor}$ | the hard minimum a finalist's gain must exceed whatever its p-value (`--floor`, 0.0); not $\delta_{\min}$ | $\mathbb{R}$ | nats/row | P6 |
 | $s_{\rm perm}$ | the permutation seed written into a control's configuration (`shuffle_seed`, $1000 +$ the control's index); never read by the runner (P6 F-an); not $s$, not $s_{\rm seed}$ | $\mathbb{N}$ | -- | P6 |
+
+| **Upstream: the bank and the post-hoc stages (P7)** | | | | |
+| $S_{\rm sh}$ | shards in one arm of a bank: the elements of its `build_latent_bank.pbs` array; not $S_{\rm mc}$, not $S_{\rm post}$ | $\mathbb{N}$ | -- | P7 |
+| $\mathsf{k}$ | shard index (`--shard-index`, the array's `PBS_ARRAY_INDEX`); not the axis index $k$ | $\mathsf{k} \in \{0, \dots, S_{\rm sh} - 1\}$ | -- | P7 |
+| $s_{\rm base}$ | base seed of one shard, $s_{\rm base} = 1000003\, s_{\rm seed} + \mathsf{k}$ (`build_latent_bank.py:192`): seeds the donors' $\theta$ and classes, the nuisance draws and, hashed with each well's key, the realisation seeds; the arm does not enter it (P7 F-aw); not $s_{\rm seed}$ | $\mathbb{N}_0$ | -- | P7 |
+| $N_{\rm don}$ | donors in one shard, $N_{\rm tr} / n_{\rm wd}$; not $G_{\rm don}$ (the cohort's donors) | $\mathbb{N}$ | -- | P7 |
+| $n_{\rm db}$ | donors per nuisance batch (`--donors-per-batch`) | $\mathbb{N}$ | -- | P7 |
+| $N^{\rm bank}_{\rm tr}$ | traces in one arm of a bank, $S_{\rm sh} N_{\rm tr}$ (the plan's `G` of S4.4) | $\mathbb{N}$ | -- | P7 |
+| $r_{\rm same}, r_{\rm well}$ | the fractions of the enumerated pairs $\mathcal{U}$ whose two rows come from one shard's donor (and so share $\theta$), and from two wells of one shard's donor (the plan's replicate pair); not $r_{\rm eff}$, $r_{\rm rep}$ | $[0, 1]$ | -- | P7 |
+| $\phi^{\rm nat}_k$ | physical image of bench latent axis $k$ (a `BenchBurstParams` field), $a^{\rm nat}_k (1 - \phi^{(k)}) + b^{\rm nat}_k \phi^{(k)}$ when no gap acts; $a^{\rm nat}_k, b^{\rm nat}_k$ are the `BENCH_AXES` bounds | real | as axis $k$ | P7 |
+| $\delta_{\rm shift}$ | displacement of each free axis's range under the gap (a) at $\pi = 1$, as a fraction of the range's width (`GapSpec.shift_max`); not $\delta_{\min}$, $\delta_d$, $\delta_{\rm rqs}$, $\delta_{\rm esc}$, $\delta_{\rm floor}$ | $\mathbb{R}_{\ge 0}$ | dimensionless | P7 |
+| $A_{\rm gap}$ | amplitude of the gap (c)'s drift at $\pi = 1$, relative to the trace's mean (`drift_amp_max`); not $A$, not $A_{\rm head}$ | $\mathbb{R}_{\ge 0}$ | dimensionless | P7 |
+| $T_{\rm gap}, T_{\rm drift}$ | periods of the gap (c)'s drift (`GapSpec.drift_period_s`) and of the nuisance drift (`NuisanceSpec.drift_period_s`): two objects that share one field name; not $T_{\rm win}$, $T_{\rm floor}$ | $\mathbb{R}_{>0}$ | s | P7 |
+| $f_{\rm con}$ | fraction of a trace's windows the gap (d) replaces at $\pi = 1$ (`contam_frac_max`); not the forward map $f$ | $[0, 1]$ | -- | P7 |
+| $\nu_{\rm gain}, \nu_{\rm base}, \nu_{\rm thr}, \nu_{\rm drop}, \nu_{\rm drift}$ | the five components of $\nu$ in `NU_COMPONENTS` order: log gain, additive baseline, detection-threshold shift, dropout logit, drift amplitude ($\nu^{(m)}$, $m = 1, \dots, 5$) | $\mathbb{R}$ each | dimensionless; units of $x$ for $\nu_{\rm base}$, $\nu_{\rm drift}$ | P7 |
+| $\nu^{\rm bat}, \nu^{\rm don}, \nu^{\rm wel}$ | the batch, donor and well contributions to one well's $\nu$, $\nu = \nu^{\rm bat} + \nu^{\rm don} + \nu^{\rm wel}$ | $\mathbb{R}^{d_\nu}$ each | as $\nu$ | P7 |
+| $\sigma^{\rm bat}_m, \sigma^{\rm don}_m, \sigma^{\rm wel}_m$ | standard deviations of component $m$ of those contributions (`NuisanceSpec.scales`); not $\sigma_b$, $\sigma_w$ | $\mathbb{R}_{\ge 0}$ | as component $m$ | P7 |
+| $\sigma^{\rm tot}_m$ | total standard deviation of component $m$ of $\nu$, P7 eq. (P7.4) | $\mathbb{R}_{\ge 0}$ | as component $m$ | P7 |
+| $\nu^{0}_{\rm drop}$ | the dropout logit at $\nu = 0$ (`dropout_logit0`) | $\mathbb{R}$ | -- | P7 |
+| $\kappa_{\rm thr}$ | sensitivity of the detected rate to the threshold shift (`NuisanceSpec.kappa`); not $\kappa_k$, not $\kappa_S$ | $\mathbb{R}_{\ge 0}$ | -- | P7 |
+| $n_{\rm alive}$ | electrodes left after the dropout component acts, at least 1 | $\{1, \dots, n_e\}$ | -- | P7 |
+| $\gamma_\nu, \beta_\nu$ | the multiplicative and additive parts of the nuisance map (`nuisance_affine`'s `A` and `b`), $\beta_\nu$ a function of $t_{\rm abs}$; not $\gamma_{\rm wd}$, $\gamma_{\rm sep}$, $\gamma_{\rm clip}$, $\beta_1$, $\beta_2$ | $\gamma_\nu \in \mathbb{R}_{>0}$; $\beta_\nu : [0, J T_{\rm win}) \to \mathbb{R}$ | --; units of $x$ | P7 |
+| $t_{\rm abs}$ | time since the start of a trace: absolute across its windows, so a drift is one function over the trace; not the training progress $t$ | $[0, J T_{\rm win})$ | s | P7 |
+| $x^{\rm obs}$ | a window after the nuisance map: the array a bench shard stores under `x`; $x$ is the provider's output before it | $\mathbb{R}^{W}$, can be negative | as $x$ | P7 |
+| $\theta^{\rm fl}$ | the evaluation point of Stage 3c's floors and aliasing test: the bank's mean $\theta$, clipped to $[0.05, 0.95]$ on each axis; not a well's $\theta^*$ | $(0, 1)^{d_\theta}$ | dimensionless | P7 |
+| $n_{\rm fl}$ | draws of each floor (`--n-floor-draws`) | $\mathbb{N}$ | -- | P7 |
+| $S_{\rm post}$ | posterior draws per window in Stage 3c (`--n-post-draws`); not $S_{\rm mc}$ | $\mathbb{N}$ | draws | P7 |
+| $m^{\rm fl}, \hat m^{\rm fl}$ | for one floor draw: the mean over its $J$ windows of the flow's posterior means, $\mathbb{E}_{q_\omega}[\theta \mid x_i]$ for each fixed window $x_i$ (analytic level), and the same mean with $S_{\rm post}$ draws per window (computed level) | $\mathbb{R}^{d_\theta}$ | param units | P7 |
+| $\Sigma_{\rm fl}$ | the floor covariance the code computes: the sample covariance (`ddof=1`) of $\hat m^{\rm fl}$ over the $n_{\rm fl}$ draws of one floor (computed level) | PSD $d_\theta \times d_\theta$ | (param units)$^2$ | P7 |
+| $h_{\rm fd}, n_{\rm fd}$ | the finite-difference step of $J_\theta$, in unit-box units (`--fd-step`), and the seeds the two Jacobians are averaged over (`--fd-seeds`) | $\mathbb{R}_{>0}$; $\mathbb{N}$ | dimensionless; -- | P7 |
+| $n_{\rm probe}$ | rows of each bank the Stage 3b probes read (`--max-probe-rows`) | $\mathbb{N}$ | rows | P7 |
+| $n_{\rm ker}$ | kernel axes named by `--kernel-axes` | $\mathbb{N}_0$ | -- | P7 |
 
 ### 1.1 Conventions
 
