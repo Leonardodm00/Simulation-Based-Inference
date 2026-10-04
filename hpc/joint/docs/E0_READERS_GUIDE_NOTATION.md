@@ -3,12 +3,13 @@
 **Document E0 of the joint documentation set.** The master notation table
 and glossary for both sets (P0-P7, E1-E9); the reading map; the
 prerequisites; the running example. Index and status: `00_INDEX.md`.
-**Date:** 2026-10-04 (v1.8). **Applies to:** the repository
+**Date:** 2026-10-04 (v1.9). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037), and the
 project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-04 | v1.9. For E2, two symbols added under convention 14 (390 declared `[RAN]`): $p_{\rm ev}$, the joint law of $(\theta, z)$ on the rows a score is computed on, and $\Delta$, the population information gain that $\hat\Delta$ estimates (the analytic counterpart R8 asks for; not $\Delta_{gg'}$). Annotated, not changed: $p_\Theta$ (the bench prior is plan eq. (7), not uniform; its entropy at the bank job's defaults), $L_0$ (its computed form, a mean over the rows scored, and when it estimates the row's expression) and $\hat\Delta$ (a lower bound on the information only when the rows' $\theta$-marginal is the floor's prior, E2 eq. (E2.5)). Corrected: the type of $H$, which for a continuous argument is a differential entropy in $\mathbb{R}$, not $\mathbb{R}_{\ge 0}$ [corrected 2026-10-04]. Glossary: "z-scoring / unconstrained transform", "Normalising flow" and "Information gain" annotated; four entries added (forward KL and mass-covering, proposal posterior, gain identity, leakage). "First used in" moved to E2 for $H$, $I$, $\ell_i$, $L$, $L_0$, $\hat\Delta$, and to "E2 (named)" for $B_{\rm sim}$, $\mathcal{B}_{\rm sim}$, $\delta_{\min}$, $\tau_{\rm ov}$; the prerequisites row on information theory notes E2. The checker is unchanged; smoke test T4.12 adds E2 to the suite. |
 | 2026-10-04 | v1.8. For E1, no symbol added (388 declared, unchanged `[RAN]`). Annotated, not changed: convention 2 (the log rule does not apply to the three Weibull kernel axes, which are linear whatever their span -- `p0_conn` spans exactly one decade; `EXTRACTOR_USAGE.md` S6.4; E1 eq. (E1.1)); the row of $p_{\rm sim}$ (its conditionals and marginals named by their arguments: the realised graph's law and the likelihood given the graph, E1 eq. (E1.2); the prior predictive $p_{\rm sim}(x)$, E1 eq. (E1.3)); the row of $x$ (on the cohort the unit is Hz per electrode: extractor eq. (3) divides by $n_e$); the glossary's "Two data domains" (the shift is covariate shift in the strict sense only when the simulator is well specified, E1 S3.6). The "First used in" column moved to E1 for the objects E1 establishes ($p_\Theta$, $p_{\rm sim}$, $\nu$, $\mathcal{N}$) and reads "E1 (named); En" for the eighteen rows E1 names before chapter En develops them. Five glossary entries added at E1's place (prior predictive, covariate shift, simulation gap, closed-world assumption, activity floor). The checker is unchanged; smoke test T4.11 adds E1 to the suite. |
 | 2026-10-03 | v1.7. Appended the upstream group (30 rows, 43 symbols; 388 declared `[RAN]`) for P7, under convention 14: the bank's shard and seed symbols ($S_{\rm sh}$, $\mathsf{k}$, $s_{\rm base}$, $N_{\rm don}$, $n_{\rm db}$, $N^{\rm bank}_{\rm tr}$), the pair fractions $r_{\rm same}$, $r_{\rm well}$, the gap's and the nuisance's constants and components, the nuisance map's two parts and the stored window $x^{\rm obs}$, and the Stage 3b/3c symbols ($\theta^{\rm fl}$, $n_{\rm fl}$, $S_{\rm post}$, $m^{\rm fl}$ / $\hat m^{\rm fl}$, $\Sigma_{\rm fl}$, $h_{\rm fd}$, $n_{\rm fd}$, $n_{\rm probe}$, $n_{\rm ker}$); nothing renamed. Two rows annotated, not changed: $x$ (`per_unit_mean` is one provider's convention; the stored array on the bench is $x^{\rm obs}$, which can be negative) and $N_{\rm tr}, J$ (`--n-traces` is a per-shard count; the plan's `G` is $N^{\rm bank}_{\rm tr}$). The checker is unchanged; smoke test T4.10 adds P7 to the suite. |
 | 2026-10-02 | v1.6. Appended the search-driver group (41 rows, 48 symbols) for P6, under convention 14: the GP surrogate's mean, standard deviation and acquisition margin, reserved for E8, are declared here because P6 needed them first, as the flow's symbols were by P4; nothing renamed. One row annotated, not changed: $L_{\rm sel}, L_{\rm gate}$ now also says that at `834eb41` no gate split exists and the driver's `--rank-split` / `--gate-split` are labels (P6 F-am). Convention 14 annotated. The checker is unchanged; smoke test T4.9 adds P6 to the suite. |
@@ -87,9 +88,10 @@ bold are headings, not symbols.
 | $\theta^{\rm topo}$ | the Weibull connectivity-kernel axes (`p0_conn`, `d0_conn`, `beta_conn`) | subvector of $\theta$, $\mathbb{R}^3$ | mixed | E1 |
 | $\theta^*$ | the true parameter of one well; measured on the bench, derivation-only on real data | $\theta^* \in \Theta$ | mixed | E1 (named); E5 |
 | $\theta^{(s)}_g$ | the $s$-th posterior draw for well $g$, i.i.d. from $q_\omega(\cdot \mid z_g)$ for each fixed $z_g$ | $\Theta$ | mixed | E5 |
-| $p_\Theta$ | the prior density, uniform on $\Theta$ in inference coordinates; written $p_\Theta(\theta)$ (the plan's `p(\theta)`) | density on $\Theta$ | (param units)$^{-d_\theta}$ | E1 |
+| $p_\Theta$ | the prior density, uniform on $\Theta$ in inference coordinates; written $p_\Theta(\theta)$ (the plan's `p(\theta)`) [2026-10-04, E2: on the bench the prior is plan eq. (7), the class mixture of truncated normals on the label axes and uniforms on the free axes, so there $p_\Theta$ is not uniform; its differential entropy is $-5.19$ nats at the bank job's defaults (E2 S3.3, `[RAN]`)] | density on $\Theta$ | (param units)$^{-d_\theta}$ | E1 |
 | $p_{\rm sim}$ | the simulator's joint law, $p_{\rm sim}(\theta, x) = p_\Theta(\theta)\, p_{\rm sim}(x \mid \theta)$; its conditional $p_{\rm sim}(\theta \mid x)$ is the true posterior that NPE targets [2026-10-04, E1: its conditionals and marginals are named by their arguments -- the realised graph's law $p_{\rm sim}(\mathcal{G} \mid \theta^{\rm topo})$ and the likelihood given the graph, E1 eq. (E1.2); the prior predictive $p_{\rm sim}(x)$, E1 eq. (E1.3)] | density on $\Theta \times \mathbb{R}^{W}$ | -- | E1 |
 | $p_{\rm real}$ | the law of real windows, $p_{\rm real}(x)$; unknown, sampled by the cohort | density on $\mathbb{R}^{W}$ | -- | E1 |
+| $p_{\rm ev}$ | the joint law of $(\theta, z)$ on the rows a score is computed on -- a held-out simulated split, the bench's pseudo-real arm, an activity-filtered bank -- with $z = h_\psi(x)$ at the fitted $\psi$; marginals and conditionals named by their arguments | law on $\Theta \times S^{E-1}$ | -- | E2 |
 | $\mathcal{G}$ | a realised connectivity graph drawn from the kernel at fixed $\theta^{\rm topo}$; a latent inside the likelihood, not a parameter | adjacency matrix | -- | E1 |
 | $\nu$ | observation-level nuisance (gain, baseline, threshold shift, electrode dropout, drift); acts on the observation map, outside $\Theta$ | $\nu \in \mathcal{N}$ | mixed | E1 |
 | $\mathcal{N}$ | the nuisance space | a set, $\mathbb{R}^{d_\nu}$ in the bench's parameterisation | -- | E1 |
@@ -115,7 +117,7 @@ bold are headings, not symbols.
 | $\xi$ | within-class residual of an embedding, $\xi = z - \bar z_c$ (the deck's `\eta`) | $\mathbb{R}^{E}$ | dimensionless | E3 |
 | $r_{\rm eff}$ | participation-ratio effective rank of an embedding cloud | $[1, E]$ | -- | E1 (named); E3 |
 | $\rho_{\rm grad}$ | cosine between the NPE and DSN terms' gradients with respect to $\psi$ | $[-1, 1]$ | -- | E4 |
-| $I(\cdot\,;\cdot)$, $H[\cdot]$ | mutual information; entropy, both in nats | $\mathbb{R}_{\ge 0}$ | nats | E3 |
+| $I(\cdot\,;\cdot)$, $H[\cdot]$ | mutual information; entropy, both in nats [corrected 2026-10-04, E2: for a continuous argument $H$ is a differential entropy, which can be negative and is at most 0 on the unit cube, so only $I$ is non-negative; the law is named in the subscript, as in $H_{p_{\rm sim}}[\theta \mid z]$ and $I_{p_{\rm sim}}(\theta; z)$ (E2 S1.1)] | $I \in \mathbb{R}_{\ge 0}$; $H \in \mathbb{R}$ [corrected 2026-10-04: was $\mathbb{R}_{\ge 0}$ for both] | nats | E2 |
 | **Objective, losses, training** | | | | |
 | $\mathcal{L}$ | the joint objective of plan eq. (1), $\mathcal{L}(\psi, \omega)$ | $\mathbb{R}$ | nats/row plus dimensionless terms | E1 (named); E4 |
 | $\mathcal{L}^{\rm sim}_{\rm NPE}$ | expected NLL of $\theta$ given $h_\psi(x)$ under $p_{\rm sim}$, plan eq. (1a); analytic level, estimated by $L$ | $\mathbb{R}$ | nats/row | E1 (named); E2 |
@@ -126,8 +128,8 @@ bold are headings, not symbols.
 | $\lambda_{\rm sep}$ | the scheduled weight of the ETF separation term inside $\ell_{\rm DSN}$, written $\lambda_{\rm sep}(t)$ (`lambda_sep`, `sep_warmup_frac`) | $\mathbb{R}_{\ge 0}$ | dimensionless | E3 |
 | $m_{\cos}$ | triplet cosine margin (`margin`) | $(0, 1)$ | dimensionless | E3 |
 | $\alpha$ | angular half-angle of the angular hinge (`angular_alpha_deg`); never a test level (S1.1) | $(0^\circ, 90^\circ)$ | degrees | E3 |
-| $B_{\rm sim}, B_{\rm met}, B_{\rm rep}$ | rows per optimiser step in the simulated, metric and replicate streams (`--b-sim`, `--b-met`, `--b-rep`) | $\mathbb{N}$ | rows; pairs for $B_{\rm rep}$ | E4 |
-| $\mathcal{B}_{\rm sim}$ | one i.i.d. prior-faithful minibatch of simulated rows | index set of size $B_{\rm sim}$ | -- | E4 |
+| $B_{\rm sim}, B_{\rm met}, B_{\rm rep}$ | rows per optimiser step in the simulated, metric and replicate streams (`--b-sim`, `--b-met`, `--b-rep`) | $\mathbb{N}$ | rows; pairs for $B_{\rm rep}$ | E2 (named); E4 |
+| $\mathcal{B}_{\rm sim}$ | one i.i.d. prior-faithful minibatch of simulated rows | index set of size $B_{\rm sim}$ | -- | E2 (named); E4 |
 | $X^{\rm real}_{\rm met}, y^{\rm real}_{\rm met}$ | the DSN's class-balanced real batch and its labels | batch of $B_{\rm met}$ rows; labels in $\{0, \dots, C-1\}$ | -- | E3 |
 | $\mathcal{T}_{\rm mined}$ | the triplets the miner selects from a batch | a set of index triples | -- | E3 |
 | $t_{\rm warm}$ | fraction of training before $\lambda_{\rm rep}$ ramps in (`warmup_frac_rep`) | $[0, 1)$ | -- | E5 |
@@ -136,14 +138,15 @@ bold are headings, not symbols.
 | $\gamma_{\rm wd}$ | the AdamW decoupled weight-decay coefficient (`weight_decay`) | $\mathbb{R}_{\ge 0}$ | dimensionless | E4 |
 | $n_{\rm ep}, n_{\rm step}$ | epochs, and optimiser steps per epoch (`epochs`, `steps_per_epoch`) | $\mathbb{N}$ | -- | E4 |
 | **Evaluation and decision** | | | | |
-| $\ell_i$ | per-row held-out NLL, $\ell_i = -\log q_\omega(\theta_i \mid z_i)$ | $\mathbb{R}$ | nats | E7 |
-| $L$ | held-out NLL of an arm: the mean of $\ell_i$ over a split (computed level; estimates $\mathcal{L}^{\rm sim}_{\rm NPE}$ at the fitted weights) | $\mathbb{R}$ | nats/row | E4 |
+| $\ell_i$ | per-row held-out NLL, $\ell_i = -\log q_\omega(\theta_i \mid z_i)$ | $\mathbb{R}$ | nats | E2 |
+| $L$ | held-out NLL of an arm: the mean of $\ell_i$ over a split (computed level; estimates $\mathcal{L}^{\rm sim}_{\rm NPE}$ at the fitted weights) | $\mathbb{R}$ | nats/row | E2 |
 | $L_{\rm sel}, L_{\rm gate}$ | $L$ on the selection split (the search objective, as the plan's S2.4 and E8 assign it) and on the gate split [2026-10-02: at `834eb41` the runner scores $L_{\rm sel}$ once per epoch for the stopping rule and the best-state restore only, and the tuner's objective `nll` is $L$ on the report split; which assignment is wanted is open, P5 F-al] [2026-10-02, P6 F-am: no gate split exists at `834eb41`; the driver's `--rank-split` and `--gate-split` are labels written into `finalists.json`, and the control test's gain is `delta` from the same report-split record] | $\mathbb{R}$ | nats/row | E8 |
-| $L_0$ | the prior floor, $L_0 = -\mathbb{E}_{p_\Theta} \log p_\Theta(\theta)$ | $\mathbb{R}$ | nats/row | E7 |
-| $\hat\Delta$ | the information gain, $\hat\Delta = L_0 - L$ | $\mathbb{R}$ | nats/row | E7 |
+| $L_0$ | the prior floor, $L_0 = -\mathbb{E}_{p_\Theta} \log p_\Theta(\theta)$ [2026-10-04, E2: as computed (`mc_prior_floor`; the standalone tuner's `prior_floor`), $L_0$ is the mean of $-\log p_\Theta(\theta_i)$ over the rows scored, an estimate of $\mathbb{E}_{p_{\rm ev}}[-\log p_\Theta(\theta)]$ (computed level); it estimates this row's expression when the rows' $\theta$-marginal is $p_\Theta$, as on the bench, and equals it exactly whatever the rows when $p_\Theta$ is uniform: 0 on the unit cube, the sum of the logs of the box's widths in inference coordinates (E2 S3.3)] | $\mathbb{R}$ | nats/row | E2 |
+| $\hat\Delta$ | the information gain, $\hat\Delta = L_0 - L$ [2026-10-04, E2: the computed estimate of $\Delta$; a lower bound on $I_{p_{\rm ev}}(\theta; z)$ only when the rows' $\theta$-marginal is the floor's prior, E2 eq. (E2.5)] | $\mathbb{R}$ | nats/row | E2 |
+| $\Delta$ | the population information gain, $\Delta = \mathbb{E}_{p_{\rm ev}}[-\log p_\Theta(\theta)] - \mathbb{E}_{p_{\rm ev}}[-\log q_\omega(\theta \mid z)]$ (analytic level), estimated by $\hat\Delta$; E2 eq. (E2.5) splits it into an information, a marginal and a flow-error term; not $\Delta_{gg'}$ | $\mathbb{R}$ | nats/row | E2 |
 | $\hat\Delta^{(k)}$ | per-axis gain on axis $k$ | $\mathbb{R}$ | nats | E7 |
 | $\hat\Delta_{{\rm lab}\mid c}$ | within-class gain on the label axes $\mathcal{A}_{\rm lab}$ (the plan's `\hat\Delta_{S|c}`) | $\mathbb{R}$ | nats | E7 |
-| $\delta_{\min}$ | the "learned nothing" floor of gate G1: the gain of the shuffled-pairs control, which an arm must exceed | $\mathbb{R}$ | nats/row | E7 |
+| $\delta_{\min}$ | the "learned nothing" floor of gate G1: the gain of the shuffled-pairs control, which an arm must exceed | $\mathbb{R}$ | nats/row | E2 (named); E7 |
 | $\kappa_k$ | posterior contraction on axis $k$, $1 - \mathrm{Var}[\theta^{(k)} \mid z] / \mathrm{Var}_{p_\Theta}[\theta^{(k)}]$ | $(-\infty, 1]$ | -- | E7 |
 | $d_i$ | paired per-row NLL difference between two arms on the same held-out row | $\mathbb{R}$ | nats | E7 |
 | $D$ | population mean of $d_i$ (analytic level); $D > 0$ means the first arm is worse | $\mathbb{R}$ | nats/row | E7 |
@@ -211,7 +214,7 @@ bold are headings, not symbols.
 | $\pi$ | simulation-gap severity of the pseudo-real bench arm; $\pi = 0$ means no gap (`--pi`) | $[0, 1]$ | -- | E1 (named); E6 |
 | $\mathcal{S}, \mathcal{R}$ | the bench's simulated and pseudo-real arms (`--arm S`, `--arm R`) | arms | -- | E1 (named); E6 |
 | $p_0, p_\pi$ | the base and the perturbed bench generators (laws of a trace) | generative laws | -- | E6 |
-| $\tau_{\rm ov}$ | within-class spread of the label axes on the bench (`--tau-ov`) | $\mathbb{R}_{>0}$ | dimensionless | E6 |
+| $\tau_{\rm ov}$ | within-class spread of the label axes on the bench (`--tau-ov`) | $\mathbb{R}_{>0}$ | dimensionless | E2 (named); E6 |
 | $m_{c,k}$ | bench class centre of class $c$ on label axis $k$ | $(0, 1)$ | dimensionless | E6 |
 | $\mathcal{TN}$ | the truncated normal law of plan eq. (7) | distribution on $(0, 1)$ | -- | E6 |
 | $\mathcal{T}_\nu$ | the observation-level nuisance transformation of the bench, plan eq. (8), applied to a trace (the plan's `T_{\nu_g}[.]`) | map on traces | -- | E6 |
@@ -588,14 +591,37 @@ differs* is flagged where it does.
 - **Negative log-likelihood (NLL)** -- the training loss of NPE and the
   held-out score of every arm: $-\log q_\omega(\theta \mid z)$ per row, in
   nats. E2, E7.
+- **Forward KL / mass-covering** -- the expected NLL is the posterior's
+  conditional entropy plus the expected KL from the posterior to the flow
+  (E2 eq. (E2.2)); the forward direction penalises missing mass more than
+  added mass, so an imperfect flow errs wide, which is not a coverage
+  guarantee. E2.
+- **Proposal posterior** -- the target of maximum likelihood when $\theta$
+  is drawn from a proposal instead of the prior: the posterior reweighted by
+  proposal over prior (APT eq. (1)); a filter on $x$, such as the activity
+  floor, leaves the target unchanged at every kept window. E2.
+- **Gain identity** -- the population gain $\Delta$ is the information
+  $I_{p_{\rm ev}}(\theta; z)$, plus $\mathrm{KL}(p_{\rm ev}(\theta) \,\|\, p_\Theta)$,
+  minus the flow's expected KL error (E2 eq. (E2.5)): the gain bounds the
+  information from below only when the scored rows' $\theta$-marginal is the
+  floor's prior. E2, E7.
+- **Leakage** -- estimator mass outside the prior's support; the logit box
+  map removes it by construction. E2; P4.
 - **Normalising flow** -- an invertible, differentiable map from a base
   density to the target, whose density is read off by the change of
   variables; **neural spline flow (NSF)** uses rational-quadratic splines
   with $K_{\rm bins}$ bins as the elementwise transforms; **zuko** is the
   library, reached through **sbi**'s `posterior_nn`. E2; P4.
+  [2026-10-04, E2: zuko's NSF is masked autoregressive, not coupling: one
+  conditioner pass per stage for a density, $d_\theta$ per stage for a draw
+  (E2 S3.5).]
 - **z-scoring / unconstrained transform** -- sbi's standardisation of
   $\theta$ (`z_score_theta="transform_to_unconstrained"` maps the box to
   $\mathbb{R}^{d_\theta}$) and of $x$ (`"none"` here). E2; P4.
+  [2026-10-04, E2: two different kinds of map -- standardisation is affine,
+  with a constant Jacobian; the unconstrained transform is the logit, which
+  changes the support to the box; the joint stack uses the second and
+  standardises nothing (E2 S3.6).]
 - **Summary network / DSN (Deep Summary Network)** -- the encoder $h_\psi$,
   a RegNet-style 1D CNN with GroupNorm and an L2-normalised output; trained
   jointly here, frozen in the earlier pipeline. E3; P1.
@@ -683,7 +709,10 @@ differs* is flagged where it does.
   plus a JSON sidecar recording $p$, $W$, the label axes, the scale
   convention and the contract digest. E6; P7.
 - **Information gain $\hat\Delta$** -- prior floor minus held-out NLL; a
-  variational lower bound on $I(\theta\,; z)$. E7.
+  variational lower bound on $I(\theta\,; z)$. E7. [2026-10-04, E2: a lower
+  bound only when the scored rows' $\theta$-marginal is the floor's prior,
+  as for the bench runner; otherwise its expectation $\Delta$ adds
+  $\mathrm{KL}(p_{\rm ev}(\theta) \,\|\, p_\Theta)$, E2 eq. (E2.5).]
 - **Referee versus teacher** -- the label used to evaluate an encoder
   (referee) rather than to train it (teacher). E7.
 - **Posterior contraction $\kappa_k$** -- one minus the ratio of posterior to
@@ -804,7 +833,7 @@ and where each is first needed:
 | probability: densities, conditioning, expectation, variance and covariance as operators; Bayes' rule `[textbook]` | E1 | any graduate probability text; E2 states Bayes' rule in the SBI form |
 | linear algebra: PSD and PD matrices, Cholesky factors, generalised eigenproblems of a pair of matrices, the Mahalanobis form, projectors and pseudo-inverses `[textbook]` | E5, E7 | E5 S2 defines the generalised eigenproblem it uses; E7 the projector |
 | Monte Carlo: sample means and covariances as estimators, their bias and variance in $S_{\rm mc}$ `[textbook]` | E5 | E5 derives the one case that matters, plan eq. (3h) |
-| information theory: entropy, mutual information, the data-processing inequality `[textbook]` | E3 | E3 S2 states the inequality it needs |
+| information theory: entropy, mutual information, the data-processing inequality `[textbook]` | E2, E3 | E3 S2 states the inequality it needs [2026-10-04: E2 S3.2 states it first, as eq. (E2.4), with entropy read as differential entropy (E2 S1.1)] |
 | deep learning: a feed-forward network as a parameterised map, gradient descent, minibatches, the chain rule through composed maps `[textbook]` | E2, E3 | E4 says exactly which gradients reach which weights |
 | the change-of-variables formula for densities `[textbook]` | E2 | E2 derives the flow's density from it |
 | hypothesis tests: a null, a test statistic, a p-value, multiplicity `[textbook]` | E5, E7, E8 | E8 states Holm's rule |

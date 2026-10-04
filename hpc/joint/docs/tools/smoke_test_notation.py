@@ -219,7 +219,8 @@ def test_real(docs_dir):
     # not exist yet is skipped, so the suite grows with the set.
     docs = ("P0_PARAMETERS_OVERVIEW.md", "P1_ENCODER_AXES.md", "P2_DSN_LOSS_AXES.md",
             "P3_REPLICATE_AXES.md", "P4_FLOW_AXES.md", "P5_OPTIMISER_AND_SCHEDULE.md",
-            "P6_SEARCH_DRIVER.md", "P7_UPSTREAM_AND_JOBS.md", "E1_THE_PROBLEM.md")
+            "P6_SEARCH_DRIVER.md", "P7_UPSTREAM_AND_JOBS.md", "E1_THE_PROBLEM.md",
+            "E2_NPE_AND_FLOWS.md")
     for n, name in enumerate(docs, 3):
         path = os.path.join(docs_dir, name)
         if not os.path.isfile(path):

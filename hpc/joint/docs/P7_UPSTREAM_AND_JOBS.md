@@ -19,8 +19,8 @@ the flags of Stages 3b and 3c, which act after training
 The training variables the jobs carry (`EPOCHS`, `B_SIM`, `LAMBDA_DSN`,
 ...) are P1-P5's, the search driver's P6's. Master notation: E0. The
 chapter that explains the bench itself -- the generator, the two arms, the
-gap, the nuisance and realisation latents -- is E6. **Date:** 2026-10-03
-(v1). **Applies to:** the repository `Simulation-Based-Inference` at
+gap, the nuisance and realisation latents -- is E6. **Date:** 2026-10-04
+(v1.1). **Applies to:** the repository `Simulation-Based-Inference` at
 `834eb41` (`origin/main` is at `2c0a06d`, and `git diff --stat 834eb41
 origin/main` is empty over `hpc/joint` outside `docs/` and over the DSN
 modules the providers import `[RAN]`), `hpc/joint/` (D-037): `stage1/` (the
@@ -45,6 +45,7 @@ identical output.
 
 | date | change |
 |---|---|
+| 2026-10-04 | v1.1. One correction and one formatting repair, nothing else changed: S3.2 (b) repeated `simplex_centres`'s docstring in calling the bench's class centres the vertices of a regular simplex; for $C \ge 3$ they are not (finding F-ba, owner E6), and the sentence is marked [corrected 2026-10-04]; four inline formulas broken across two lines (that one, one more in S3.2 (c) and two in Appendix A.2) are rejoined onto one line each, so that the notation checker reads them; no symbol changed. Evidence: `latent_sbi_simulator.py:128-155` read, and the centres' geometry computed against the DSN's `_class_center_vectors` (`hpc/dsn/latent_burst_generator.py:460-527`) by `tools/e2_numbers.py` B4 `[RAN]` (E2 S5). |
 | 2026-10-03 | v1. Written from `stage1/build_latent_bank.py`, `latent_bank.py`, `latent_sbi_simulator.py`, `latent_nuisance.py`, `latent_gap.py`, `latent_realisation.py`, `bench_burst_provider.py`, `bench_burst_generator.py`, `demo_classes_generate.py`, `demo_classes_plot.py`, every job file under `stage1/jobs/`, `stage3/jobs/`, `stage3b/jobs/`, `stage3c/jobs/`, `stage4/jobs/` (all read in full), `stage3b/run_stage3b.py`, `stage3c/run_stage3c.py`, `stage3c/floor_core.py`, `nuisance_floor.py`, `realisation_floor.py` (read in full), `stage3c/aliasing.py:54-154`, `stage3c/stratify.py:136-196`, `stage3b/domain_objective.py:62-150`, `stage3b/encoder_probes.py:76-125`, `stage3/probe_dsn_runtime.py:1-40, 315-360`, `stage3/run_joint_arms.py:110-200, 262-470, 470-659`, `stage2/joint_batches.py:1-216`, `stage1/smoke_test_latent_sbi.py:20-125, 542-600`, `stage1/smoke_test_bench_provider.py:88-118`, `hpc/dsn/latent_burst_generator.py:193-206, 252-305`; the plan S2.6, S4.0-S4.5, Stage 1, Stage 3b, Stage 3c, S8 (D10, D11); `[KB]` `JOINT_DSN_NPE_USAGE_v1.md` v1.3 S1-S10, `claude/PLAN_2026-10-01_giulia_hpc_stages.md` v1.7 S3 (B5, B6), S5 (G0, G4, G5), `claude/deck_pack/07_SEC_F_bench_and_stages.md`, `claude/REPLICATE_LOSS_GUARDS_v1.md` S3.7, `HPC_PATHS.md` sec. 5-7, P0, P3 S3.8, P5 S3.3, P6 S3.8; `[KB-PDF]` Schmitt et al. p.5-6, p.11-12, the multilevel paper (NeurIPS 2025) p.1. Every number computed by the new `tools/p7_numbers.py` `[RAN]`. Findings F-at to F-az added; F-n, F-t, F-aa, F-ab, F-ae and F-ar carried on their bank or job side. Grounding searches of S6 run and reported. |
 
 **Abstract.** One would expect a simulation bank's knobs to be data
@@ -439,11 +440,20 @@ $(0 - m_{c,k})/\tau_{\rm ov}$ and $(1 - m_{c,k})/\tau_{\rm ov}$, `:158-162`);
 on each free axis $\phi^{(k)}$ is uniform on $(0, 1)$; the result is clipped
 one float64 machine epsilon inside each end of $(0, 1)$ and asserted strictly
 inside the box (`:190-194`). The class centres are `simplex_centres`: the vertices
-of a regular $(C-1)$-simplex placed on the first $\min(\lvert
-\mathcal{A}_{\rm lab} \rvert, C - 1)$ label axes, the remaining label axes
+of a regular $(C-1)$-simplex placed on the first
+$\min(\lvert \mathcal{A}_{\rm lab} \rvert, C - 1)$ label axes, the remaining label axes
 cycling those coordinates so that no label axis is constant across classes,
-scaled to radius 0.30 about 0.5 (`:128-151`); on the `dsn` provider the DSN's
-own `_class_center_vectors`, clipped to $[10^{-6}, 1 - 10^{-6}]$
+scaled to radius 0.30 about 0.5 (`:128-151`); [corrected 2026-10-04, E2: the
+vertices are not those of a regular simplex for $C \ge 3$. The construction
+starts from the $C - 1$ unit coordinate vectors of $\mathbb{R}^{C-1}$ and
+the origin, whose mutual distances are $\sqrt{2}$ and 1, and only
+translates and rescales them; at $C = 3$ on the seven label axes of the
+`bench` provider the centred centres' pairwise cosines are $-0.803$,
+$-0.434$ and $-0.189$ instead of $-0.5$ each, while the DSN's
+`_class_center_vectors`, used by the `dsn` provider, gives $-0.5$ each
+`[RAN]` (E2 S5, `tools/e2_numbers.py` B4; finding F-ba)] on the `dsn`
+provider the DSN's own `_class_center_vectors`, clipped to
+$[10^{-6}, 1 - 10^{-6}]$
 (`:385-412`). The classes, the centres and the prior's shape are E6's
 subject; here they matter because `--n-classes`, `--n-label-axes` and
 `--tau-ov` set them, and because the free axes' uniform draw is what
@@ -500,8 +510,8 @@ $$n_{\rm alive} = n_e \ \text{ for } \ \nu_{\rm drop} < \ln \frac{1}{2 n_e - 1} 
 
 (at the threshold itself the rounding decides: Python rounds a half to the
 even integer, so at the defaults 8.5 electrodes round to 8), which at the
-defaults is a threshold of $1.1668$, i.e. $3.176\,
-\sigma^{\rm tot}_4$: under the Gaussian draw of eq. (P7.4) a well loses an
+defaults is a threshold of $1.1668$, i.e.
+$3.176\, \sigma^{\rm tot}_4$: under the Gaussian draw of eq. (P7.4) a well loses an
 electrode with probability $7.5 \times 10^{-4}$, a second one beyond
 $6.51\, \sigma^{\rm tot}_4$ with probability $3.9 \times 10^{-11}$ (analytic
 level), and the gain steps from 1 to $8/9$ at the threshold `[RAN]` B5. In
@@ -1181,8 +1191,8 @@ nuisance floor gives every draw its own donor and well key and ONE batch key,
 `"B"` (`nuisance_floor.py:44-47`), so it varies $\nu^{\rm don} + \nu^{\rm wel}$
 and holds $\nu^{\rm bat}$ at one draw -- one third of each component's
 variance at the default scales, which equals the variance of a same-donor
-difference, $2 (\sigma^{\rm wel}_m)^2$, because $\sigma^{\rm don}_m =
-\sigma^{\rm wel}_m$ there `[RAN]` B5; and the simulations run through the DSN
+difference, $2 (\sigma^{\rm wel}_m)^2$, because
+$\sigma^{\rm don}_m = \sigma^{\rm wel}_m$ there `[RAN]` B5; and the simulations run through the DSN
 provider (F-au).
 
 **The concentration gate** (`--kernel-axes`, `KERNEL_AXES`, empty; $n_{\rm ker}$
@@ -1214,8 +1224,8 @@ $h_{\rm fd}$ in the unit box, one-sided at the box's edge
 component's total standard deviation, with an 8-fold step to tell a
 quantised component from an inert one (`aliasing.py:105-154`); both averaged
 over $n_{\rm fd}$ seeds (`run_stage3c.py:225-233`). At the defaults the
-dropout component is the quantised one: a step of $0.5 \times 0.3674 =
-0.1837$ leaves the gain at 1 on both sides, the 8-fold step 1.4697 moves it
+dropout component is the quantised one: a step of
+$0.5 \times 0.3674 = 0.1837$ leaves the gain at 1 on both sides, the 8-fold step 1.4697 moves it
 to $8/9$ on one side `[RAN]` B5 (eq. (P7.5)), so its column of $J_\nu$ is the
 small-step difference, exactly zero, with the quantised flag set
 (`aliasing.py:140-153`). From the two Jacobians the stage reads the
