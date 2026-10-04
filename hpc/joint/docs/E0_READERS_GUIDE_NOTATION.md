@@ -3,12 +3,13 @@
 **Document E0 of the joint documentation set.** The master notation table
 and glossary for both sets (P0-P7, E1-E9); the reading map; the
 prerequisites; the running example. Index and status: `00_INDEX.md`.
-**Date:** 2026-10-03 (v1.7). **Applies to:** the repository
+**Date:** 2026-10-04 (v1.8). **Applies to:** the repository
 `Simulation-Based-Inference` at `834eb41`, `hpc/joint/` (D-037), and the
 project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-04 | v1.8. For E1, no symbol added (388 declared, unchanged `[RAN]`). Annotated, not changed: convention 2 (the log rule does not apply to the three Weibull kernel axes, which are linear whatever their span -- `p0_conn` spans exactly one decade; `EXTRACTOR_USAGE.md` S6.4; E1 eq. (E1.1)); the row of $p_{\rm sim}$ (its conditionals and marginals named by their arguments: the realised graph's law and the likelihood given the graph, E1 eq. (E1.2); the prior predictive $p_{\rm sim}(x)$, E1 eq. (E1.3)); the row of $x$ (on the cohort the unit is Hz per electrode: extractor eq. (3) divides by $n_e$); the glossary's "Two data domains" (the shift is covariate shift in the strict sense only when the simulator is well specified, E1 S3.6). The "First used in" column moved to E1 for the objects E1 establishes ($p_\Theta$, $p_{\rm sim}$, $\nu$, $\mathcal{N}$) and reads "E1 (named); En" for the eighteen rows E1 names before chapter En develops them. Five glossary entries added at E1's place (prior predictive, covariate shift, simulation gap, closed-world assumption, activity floor). The checker is unchanged; smoke test T4.11 adds E1 to the suite. |
 | 2026-10-03 | v1.7. Appended the upstream group (30 rows, 43 symbols; 388 declared `[RAN]`) for P7, under convention 14: the bank's shard and seed symbols ($S_{\rm sh}$, $\mathsf{k}$, $s_{\rm base}$, $N_{\rm don}$, $n_{\rm db}$, $N^{\rm bank}_{\rm tr}$), the pair fractions $r_{\rm same}$, $r_{\rm well}$, the gap's and the nuisance's constants and components, the nuisance map's two parts and the stored window $x^{\rm obs}$, and the Stage 3b/3c symbols ($\theta^{\rm fl}$, $n_{\rm fl}$, $S_{\rm post}$, $m^{\rm fl}$ / $\hat m^{\rm fl}$, $\Sigma_{\rm fl}$, $h_{\rm fd}$, $n_{\rm fd}$, $n_{\rm probe}$, $n_{\rm ker}$); nothing renamed. Two rows annotated, not changed: $x$ (`per_unit_mean` is one provider's convention; the stored array on the bench is $x^{\rm obs}$, which can be negative) and $N_{\rm tr}, J$ (`--n-traces` is a per-shard count; the plan's `G` is $N^{\rm bank}_{\rm tr}$). The checker is unchanged; smoke test T4.10 adds P7 to the suite. |
 | 2026-10-02 | v1.6. Appended the search-driver group (41 rows, 48 symbols) for P6, under convention 14: the GP surrogate's mean, standard deviation and acquisition margin, reserved for E8, are declared here because P6 needed them first, as the flow's symbols were by P4; nothing renamed. One row annotated, not changed: $L_{\rm sel}, L_{\rm gate}$ now also says that at `834eb41` no gate split exists and the driver's `--rank-split` / `--gate-split` are labels (P6 F-am). Convention 14 annotated. The checker is unchanged; smoke test T4.9 adds P6 to the suite. |
 | 2026-10-02 | v1.5. Appended the optimiser-and-schedule group (15 rows; 297 declared `[RAN]`) for P5, under convention 14; nothing renamed. One row annotated, not changed: $L_{\rm sel}$ keeps the plan's gloss "the search objective" and now says that at `834eb41` the tuner's objective `nll` is $L$ on the report split while $L_{\rm sel}$ feeds the stopping rule alone (P5 F-al), the assignment being an open decision. The checker is unchanged; smoke test T4.8 adds P5 to the suite. |
@@ -56,13 +57,13 @@ bold are headings, not symbols.
 | $j$ | direction index: the $j$-th generalised eigendirection of a pair of matrices | $j \in \{1, \dots, d_\theta\}$ | -- | E5 |
 | $s$ | posterior-draw index | $s \in \{1, \dots, S_{\rm mc}\}$ | -- | E5 |
 | $m$ | nuisance-direction index | $m \in \{1, \dots, d_\nu\}$ | -- | E7 |
-| $g, g'$ | two wells (cultures) of one donor | indices into the real bank | -- | E5 |
+| $g, g'$ | two wells (cultures) of one donor | indices into the real bank | -- | E1 (named); E5 |
 | $P$ | a donor | index | -- | E5 |
 | $t$ | training progress, as a fraction of the planned optimiser steps | $t \in [0, 1]$ | -- | E4 |
 | $n$ | a generic count, always qualified in prose (rows of a split, draws, ...) | $\mathbb{N}$ | -- | E2 |
 | $d$ | two senses, stated at each use: the degrees of freedom of a chi-square or Wishart law ($\chi^2_d$, $\mathcal{W}_d$); the index of a compound in $\delta_d$ | $\mathbb{N}$; index | -- | E5; E7 |
 | **Data: windows and banks** | | | | |
-| $x$ | one IFR window: the pooled instantaneous firing rate of one subregion over $T_{\rm win}$ [2026-10-03, P7: `per_unit_mean` is the `bench` provider's convention only; the `dsn` and `reference` providers store the undivided sum over units (`sum_over_units`); on the bench the array a shard stores is $x^{\rm obs}$, the window after the nuisance map, which the additive part can make negative (P7 S3.2)] | $x \in \mathbb{R}^{W}_{\ge 0}$ | Hz on the cohort; counts per bin per unit on the bench (`per_unit_mean`) | E1 |
+| $x$ | one IFR window: the pooled instantaneous firing rate of one subregion over $T_{\rm win}$ [2026-10-03, P7: `per_unit_mean` is the `bench` provider's convention only; the `dsn` and `reference` providers store the undivided sum over units (`sum_over_units`); on the bench the array a shard stores is $x^{\rm obs}$, the window after the nuisance map, which the additive part can make negative (P7 S3.2)] [2026-10-04, E1: on the cohort the unit is Hz per electrode -- extractor eq. (3) divides the smoothed count by $n_e$ (E1 S3.2)] | $x \in \mathbb{R}^{W}_{\ge 0}$ | Hz on the cohort; counts per bin per unit on the bench (`per_unit_mean`) | E1 |
 | $W$ | window length in samples, $W = \mathrm{round}(T_{\rm win} f_s)$ | $\mathbb{N}$ | samples | E1 |
 | $T_{\rm win}$ | window duration | $\mathbb{R}_{>0}$ | s | E1 |
 | $f_s$ | IFR sampling rate, $f_s = 1 / \Delta t$ | $\mathbb{R}_{>0}$ | Hz | E1 |
@@ -72,7 +73,7 @@ bold are headings, not symbols.
 | $n_{\rm win}$ | windows per culture after windowing (the plan's `N` in its S2.7) | $\mathbb{N}$ | -- | E1 |
 | $G$ | number of real cultures (wells) in the cohort | $\mathbb{N}$ | -- | E1 |
 | $G_{\rm don}$ | number of distinct donors behind them | $\mathbb{N}$ | -- | E1 |
-| $N_{\rm pair}$ | same-donor well pairs available | $\mathbb{N}$ | pairs | E5 |
+| $N_{\rm pair}$ | same-donor well pairs available | $\mathbb{N}$ | pairs | E1 (named); E5 |
 | $N_{\rm train}$ | rows of the training split (the search's `n_train` anchor) | $\mathbb{N}$ | rows | E4 |
 | $p$ | latent dimension of a bank, as its sidecar records it (`n_latent`; the search's `--p` anchor). Bare $p$ is never a density: every density carries a subscript (S1.1) | $\mathbb{N}$ | -- | E6 |
 | $\mathcal{D}$ | a dataset of rows, qualified in prose (`sim`, `met`, `rep`, a split) | a finite set of rows | -- | E2 |
@@ -84,44 +85,44 @@ bold are headings, not symbols.
 | $a_k^{\rm nat}, b_k^{\rm nat}$ | the same bounds in natural units; on a log axis $a_k = \ln a_k^{\rm nat}$ | $0 < a_k^{\rm nat} < b_k^{\rm nat}$ on log axes | physical | E1 |
 | $\theta^{\rm ns}$ | the neuron/synapse block of $\theta$ (23 axes on the cohort); descriptive only | subvector of $\theta$ | mixed | E1 |
 | $\theta^{\rm topo}$ | the Weibull connectivity-kernel axes (`p0_conn`, `d0_conn`, `beta_conn`) | subvector of $\theta$, $\mathbb{R}^3$ | mixed | E1 |
-| $\theta^*$ | the true parameter of one well; measured on the bench, derivation-only on real data | $\theta^* \in \Theta$ | mixed | E5 |
+| $\theta^*$ | the true parameter of one well; measured on the bench, derivation-only on real data | $\theta^* \in \Theta$ | mixed | E1 (named); E5 |
 | $\theta^{(s)}_g$ | the $s$-th posterior draw for well $g$, i.i.d. from $q_\omega(\cdot \mid z_g)$ for each fixed $z_g$ | $\Theta$ | mixed | E5 |
-| $p_\Theta$ | the prior density, uniform on $\Theta$ in inference coordinates; written $p_\Theta(\theta)$ (the plan's `p(\theta)`) | density on $\Theta$ | (param units)$^{-d_\theta}$ | E2 |
-| $p_{\rm sim}$ | the simulator's joint law, $p_{\rm sim}(\theta, x) = p_\Theta(\theta)\, p_{\rm sim}(x \mid \theta)$; its conditional $p_{\rm sim}(\theta \mid x)$ is the true posterior that NPE targets | density on $\Theta \times \mathbb{R}^{W}$ | -- | E2 |
+| $p_\Theta$ | the prior density, uniform on $\Theta$ in inference coordinates; written $p_\Theta(\theta)$ (the plan's `p(\theta)`) | density on $\Theta$ | (param units)$^{-d_\theta}$ | E1 |
+| $p_{\rm sim}$ | the simulator's joint law, $p_{\rm sim}(\theta, x) = p_\Theta(\theta)\, p_{\rm sim}(x \mid \theta)$; its conditional $p_{\rm sim}(\theta \mid x)$ is the true posterior that NPE targets [2026-10-04, E1: its conditionals and marginals are named by their arguments -- the realised graph's law $p_{\rm sim}(\mathcal{G} \mid \theta^{\rm topo})$ and the likelihood given the graph, E1 eq. (E1.2); the prior predictive $p_{\rm sim}(x)$, E1 eq. (E1.3)] | density on $\Theta \times \mathbb{R}^{W}$ | -- | E1 |
 | $p_{\rm real}$ | the law of real windows, $p_{\rm real}(x)$; unknown, sampled by the cohort | density on $\mathbb{R}^{W}$ | -- | E1 |
 | $\mathcal{G}$ | a realised connectivity graph drawn from the kernel at fixed $\theta^{\rm topo}$; a latent inside the likelihood, not a parameter | adjacency matrix | -- | E1 |
-| $\nu$ | observation-level nuisance (gain, baseline, threshold shift, electrode dropout, drift); acts on the observation map, outside $\Theta$ | $\nu \in \mathcal{N}$ | mixed | E6 |
-| $\mathcal{N}$ | the nuisance space | a set, $\mathbb{R}^{d_\nu}$ in the bench's parameterisation | -- | E6 |
+| $\nu$ | observation-level nuisance (gain, baseline, threshold shift, electrode dropout, drift); acts on the observation map, outside $\Theta$ | $\nu \in \mathcal{N}$ | mixed | E1 |
+| $\mathcal{N}$ | the nuisance space | a set, $\mathbb{R}^{d_\nu}$ in the bench's parameterisation | -- | E1 |
 | $d_\nu$ | nuisance dimension | $\mathbb{N}$ | -- | E6 |
-| $\phi$ | the bench generator's latent factor vector; on the bench $\theta := \phi$ | $\phi \in (0, 1)^{d_\theta}$ | dimensionless | E6 |
+| $\phi$ | the bench generator's latent factor vector; on the bench $\theta := \phi$ | $\phi \in (0, 1)^{d_\theta}$ | dimensionless | E1 (named); E6 |
 | $\mathcal{A}_{\rm lab}, \mathcal{A}_{\rm free}$ | label-carrying and label-irrelevant axes of the bench latent (the plan's `S`, `F`) | disjoint index sets, $\mathcal{A}_{\rm lab} \cup \mathcal{A}_{\rm free} = \{1, \dots, d_\theta\}$ | -- | E6 |
 | $c$ | phenotype (class) label | $c \in \{0, \dots, C - 1\}$ | -- | E1 |
 | $C$ | number of classes (`n_classes`); never a covariance (S1.1) | $\mathbb{N}$ | -- | E1 |
 | **Networks and embeddings** | | | | |
 | $h_\psi$ | the encoder (DSN backbone), $h_\psi : \mathbb{R}^{W} \to S^{E-1}$ | map; weights $\psi$ | -- | E1 |
-| $\psi$ | encoder weights | $\psi \in \mathbb{R}^{n_\psi}$ | -- | E3 |
-| $n_\psi, n_\omega$ | number of encoder and flow weights | $\mathbb{N}$ | -- | E3 |
+| $\psi$ | encoder weights | $\psi \in \mathbb{R}^{n_\psi}$ | -- | E1 (named); E3 |
+| $n_\psi, n_\omega$ | number of encoder and flow weights | $\mathbb{N}$ | -- | E1 (named); E3 |
 | $\psi^\star$ | the encoder weights arm `A0` converged to (the warm start of `A3`) | $\mathbb{R}^{n_\psi}$ | -- | E4 |
 | $z$ | the embedding of a window, $z = h_\psi(x)$, L2-normalised | $z \in S^{E-1} \subset \mathbb{R}^{E}$ | dimensionless | E1 |
 | $S^{E-1}$ | the unit sphere in $\mathbb{R}^{E}$ | $\{z \in \mathbb{R}^{E} : z^\top z = 1\}$ | -- | E1 |
 | $E$ | embedding dimension (`embedding_size`) | $\mathbb{N}$ | -- | E1 |
-| $q_\omega$ | the conditional flow (zuko NSF through sbi), written $q_\omega(\theta \mid z)$: a density on $\Theta$ for each fixed $z$ | conditional density; weights $\omega$ | (param units)$^{-d_\theta}$ | E2 |
-| $\omega$ | flow weights | $\omega \in \mathbb{R}^{n_\omega}$ | -- | E2 |
+| $q_\omega$ | the conditional flow (zuko NSF through sbi), written $q_\omega(\theta \mid z)$: a density on $\Theta$ for each fixed $z$ | conditional density; weights $\omega$ | (param units)$^{-d_\theta}$ | E1 (named); E2 |
+| $\omega$ | flow weights | $\omega \in \mathbb{R}^{n_\omega}$ | -- | E1 (named); E2 |
 | $K_{\rm bins}$ | bins of each rational-quadratic spline of the flow (`num_bins`) | $\mathbb{N}$ | -- | E2 |
 | $n_{\rm tf}$ | transforms stacked in the flow (`num_transforms`) | $\mathbb{N}$ | -- | E2 |
 | $n_{\rm hid}$ | hidden features of each transform's conditioner (`hidden_features`) | $\mathbb{N}$ | -- | E2 |
 | $\bar z_c$ | mean embedding of class $c$ (the deck's `\mu_c`); at the collapse point one point per class on a simplex ETF | $\bar z_c \in \mathbb{R}^{E}$ | dimensionless | E3 |
 | $\xi$ | within-class residual of an embedding, $\xi = z - \bar z_c$ (the deck's `\eta`) | $\mathbb{R}^{E}$ | dimensionless | E3 |
-| $r_{\rm eff}$ | participation-ratio effective rank of an embedding cloud | $[1, E]$ | -- | E3 |
+| $r_{\rm eff}$ | participation-ratio effective rank of an embedding cloud | $[1, E]$ | -- | E1 (named); E3 |
 | $\rho_{\rm grad}$ | cosine between the NPE and DSN terms' gradients with respect to $\psi$ | $[-1, 1]$ | -- | E4 |
 | $I(\cdot\,;\cdot)$, $H[\cdot]$ | mutual information; entropy, both in nats | $\mathbb{R}_{\ge 0}$ | nats | E3 |
 | **Objective, losses, training** | | | | |
-| $\mathcal{L}$ | the joint objective of plan eq. (1), $\mathcal{L}(\psi, \omega)$ | $\mathbb{R}$ | nats/row plus dimensionless terms | E4 |
-| $\mathcal{L}^{\rm sim}_{\rm NPE}$ | expected NLL of $\theta$ given $h_\psi(x)$ under $p_{\rm sim}$, plan eq. (1a); analytic level, estimated by $L$ | $\mathbb{R}$ | nats/row | E2 |
-| $\mathcal{L}^{\rm real}_{\rm DSN}$ | expectation of $\ell_{\rm DSN}$ over real class-labelled windows | $\mathbb{R}_{\ge 0}$ | dimensionless | E3 |
-| $\ell_{\rm DSN}$ | the composite metric loss of one batch: triplet margin + angular hinge + $\lambda_{\rm sep}(t)$ times the simplex-ETF separation penalty | $\mathbb{R}_{\ge 0}$ | dimensionless | E3 |
-| $\mathcal{L}^{\rm real}_{\rm rep}$ | the replicate-consistency loss on same-donor pairs, plan eq. (3c) | $\mathbb{R}_{\ge 0}$ | dimensionless | E5 |
-| $\lambda_{\rm dsn}, \lambda_{\rm rep}$ | weights of the DSN and replicate terms in $\mathcal{L}$ | $\mathbb{R}_{\ge 0}$ | dimensionless | E4 |
+| $\mathcal{L}$ | the joint objective of plan eq. (1), $\mathcal{L}(\psi, \omega)$ | $\mathbb{R}$ | nats/row plus dimensionless terms | E1 (named); E4 |
+| $\mathcal{L}^{\rm sim}_{\rm NPE}$ | expected NLL of $\theta$ given $h_\psi(x)$ under $p_{\rm sim}$, plan eq. (1a); analytic level, estimated by $L$ | $\mathbb{R}$ | nats/row | E1 (named); E2 |
+| $\mathcal{L}^{\rm real}_{\rm DSN}$ | expectation of $\ell_{\rm DSN}$ over real class-labelled windows | $\mathbb{R}_{\ge 0}$ | dimensionless | E1 (named); E3 |
+| $\ell_{\rm DSN}$ | the composite metric loss of one batch: triplet margin + angular hinge + $\lambda_{\rm sep}(t)$ times the simplex-ETF separation penalty | $\mathbb{R}_{\ge 0}$ | dimensionless | E1 (named); E3 |
+| $\mathcal{L}^{\rm real}_{\rm rep}$ | the replicate-consistency loss on same-donor pairs, plan eq. (3c) | $\mathbb{R}_{\ge 0}$ | dimensionless | E1 (named); E5 |
+| $\lambda_{\rm dsn}, \lambda_{\rm rep}$ | weights of the DSN and replicate terms in $\mathcal{L}$ | $\mathbb{R}_{\ge 0}$ | dimensionless | E1 (named); E4 |
 | $\lambda_{\rm sep}$ | the scheduled weight of the ETF separation term inside $\ell_{\rm DSN}$, written $\lambda_{\rm sep}(t)$ (`lambda_sep`, `sep_warmup_frac`) | $\mathbb{R}_{\ge 0}$ | dimensionless | E3 |
 | $m_{\cos}$ | triplet cosine margin (`margin`) | $(0, 1)$ | dimensionless | E3 |
 | $\alpha$ | angular half-angle of the angular hinge (`angular_alpha_deg`); never a test level (S1.1) | $(0^\circ, 90^\circ)$ | degrees | E3 |
@@ -155,7 +156,7 @@ bold are headings, not symbols.
 | $n_{\rm seed}$ | seeds per arm | $\mathbb{N}$ | -- | E7 |
 | $M_{\rm ens}$ | ensemble members (independent (encoder, flow) pairs); never the metric $M$ | $\mathbb{N}$ | -- | E7 |
 | $\alpha_{\rm H}$ | the family-wise level of the Holm step-down over finalists (`--alpha`) | $(0, 1)$ | -- | E8 |
-| $\mathrm{p}_{\rm grp}$ | group-aware permutation p-value of the misspecification gate (the deck's `p_{group}`) | $(0, 1]$ | -- | E7 |
+| $\mathrm{p}_{\rm grp}$ | group-aware permutation p-value of the misspecification gate (the deck's `p_{group}`) | $(0, 1]$ | -- | E1 (named); E7 |
 | $\varepsilon$ | per-window truncation mass of TSNPE, named in E1 and E7 only | $(0, 0.5)$ | -- | E1 |
 | **The replicate statistic and its justification** | | | | |
 | $m_g$ | culture-level posterior mean, $m_g = \mathbb{E}_{q_\omega}[\theta \mid x_g]$ for each fixed $x_g$, over all $d_\theta$ axes (analytic level) | $\mathbb{R}^{d_\theta}$ | param units | E5 |
@@ -207,8 +208,8 @@ bold are headings, not symbols.
 | $n_y$ | dimension of that summary | $\mathbb{N}$ | -- | E7 |
 | $\Delta y_g$ | predicted post-treatment change of culture $g$, plan eq. (6) | $\mathbb{R}^{n_y}$ | as $f$ | E7 |
 | **The bench** | | | | |
-| $\pi$ | simulation-gap severity of the pseudo-real bench arm; $\pi = 0$ means no gap (`--pi`) | $[0, 1]$ | -- | E6 |
-| $\mathcal{S}, \mathcal{R}$ | the bench's simulated and pseudo-real arms (`--arm S`, `--arm R`) | arms | -- | E6 |
+| $\pi$ | simulation-gap severity of the pseudo-real bench arm; $\pi = 0$ means no gap (`--pi`) | $[0, 1]$ | -- | E1 (named); E6 |
+| $\mathcal{S}, \mathcal{R}$ | the bench's simulated and pseudo-real arms (`--arm S`, `--arm R`) | arms | -- | E1 (named); E6 |
 | $p_0, p_\pi$ | the base and the perturbed bench generators (laws of a trace) | generative laws | -- | E6 |
 | $\tau_{\rm ov}$ | within-class spread of the label axes on the bench (`--tau-ov`) | $\mathbb{R}_{>0}$ | dimensionless | E6 |
 | $m_{c,k}$ | bench class centre of class $c$ on label axis $k$ | $(0, 1)$ | dimensionless | E6 |
@@ -408,7 +409,11 @@ bold are headings, not symbols.
 2. **Inference coordinates.** An axis of $\theta$ is stored as $\ln$ of its
    natural value iff both bounds are positive and the box spans at least one
    decade; on the DUP15HD bank that is 17 axes, the other 9 are linear `[KB]`
-   (deck 09, convention 3). Boxes, distances, covariances and $\Sigma_0$ live
+   (deck 09, convention 3). [2026-10-04, E1: the rule does not apply to the
+   three Weibull kernel axes, which the export stores linear whatever their
+   span -- `p0_conn` has bounds $[0.1, 1.0]$, exactly one decade, and would
+   otherwise be stored as $\ln$ against a linear box (`EXTRACTOR_USAGE.md`
+   S6.4); E1 eq. (E1.1) states the rule with the exception.] Boxes, distances, covariances and $\Sigma_0$ live
    in these coordinates; natural-unit bounds carry the superscript
    $a_k^{\rm nat}, b_k^{\rm nat}$.
 3. **$d_\theta$ for the parameter dimension; bare $p$ for a bank's latent
@@ -548,6 +553,26 @@ differs* is flagged where it does.
 - **Two data domains** -- simulated windows, which carry $\theta$, and real
   windows, which carry at most a label $c$ and a donor; the covariate shift
   between them is what the bench's gap knob $\pi$ imitates. E1, E6.
+  [2026-10-04, E1 S3.6: the shift is covariate shift in the strict sense
+  only when the simulator is well specified for the culture; otherwise it is
+  a simulation gap, which the gap knob imitates as well.]
+- **Prior predictive** -- the law of simulated windows when $\theta$ is
+  drawn from the prior, $p_{\rm sim}(x)$; the NPE term is trained under it
+  (E1 eq. (E1.4)). E1, E2.
+- **Covariate shift** -- a training and a deployment law that share the
+  conditional law of the target given the input and differ in the law of
+  the input; it still matters for a conditional density estimator, which is
+  fitted where the training inputs lie. E1.
+- **Simulation gap / misspecification** -- the simulator with its prior is
+  not the process that generated the observed data; in SBI the definition
+  that matters compares the prior predictive with the data law, not only the
+  likelihood with it. E1, E6.
+- **Closed-world assumption** -- training under the prior predictive as if
+  it were the law the network will be queried under. E1.
+- **Activity floor (MFR filter)** -- a window is kept only if its mean
+  firing rate is at least 0.1 Hz per electrode, on both arms; it leaves the
+  posterior unchanged at every passing window and changes the training
+  law's marginals (E1 eq. (E1.5)). E1, E7.
 - **Amortised inference** -- one network answers for any $z$ without
   re-training; the opposite of a per-observation fit. *Everyday meaning
   differs*: nothing is paid off, the cost is moved up front. E1, E2.
