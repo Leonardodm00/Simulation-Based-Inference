@@ -17,6 +17,7 @@ miners and triplet loss the term is built from.
 
 | date | change |
 |---|---|
+| 2026-10-05 | v1.2. One dated note from E4, nothing else changed: S3.3.2's "What it represents, plainly" now marks "at $10$ it dominates every step" as the weighted-sum reading and gives the AdamW one -- a weight acts on the encoder coordinate by coordinate against the two gradients' sizes and saturates at both ends (E4 eq. (E4.6)), and on the flow only through the clip's step-to-step variation (E4 eq. (E4.5)). Evidence: E4 S3.4; `tools/e4_numbers.py` B2 `[RAN 2026-10-05]`. |
 | 2026-10-05 | v1.1. Dated notes from E3, nothing else changed: the glossary's "Collapse", S3.2's closing reading of the constants, the flow bullet of S3.6, and the S3.7 rows "collapse" and "pre-training without balance" now carry the conditions E3 derives -- the expected loss is zero exactly at class collapse only under `joint_sep` (E3 eq. (E3.3)), the margin and the half-angle constrain the residual's size and not its information (E3 eq. (E3.9)), the cap on what the flow can distinguish needs an exact code on the rows the flow is scored on (E3 eq. (E3.6)), `r_eff` is met at $C = 2$ by a constant encoder or a thin line (F-bb), and at $C \ge 3$ the pre-training's two-class batches change the separation target (F-bc). Evidence: E3 S3.4-S3.7; `tools/e3_numbers.py` B2-B4 `[RAN 2026-10-05]`. |
 | 2026-10-01 | v1. Written from `hpc/dsn/dsn_joint_loss.py` (read in full), `hpc/dsn/train.py` `build_loss_and_miner` (`:216-351`) and its notation block (`:55-97`), `hpc/dsn/condition_space.py` (read in full), `hpc/dsn/config.py` (`TrainConfig` `:615-724`, `SearchConfig` `:899-930`, `:1002-1004`), `hpc/dsn/hpc/preflight_config.py:140-200`, `hpc/dsn/Documentation/TUNING_1_searched_axes.md` S3.9-3.14, 3.17, `TUNING_2_fixed_knobs.md` S3.3, `THEORY_joint_condition_search.md` S3.3, 3.6, 3.7; `joint/stage2/dsn_loss_adapter.py`, `joint_batches.py`, `joint_train.py` (all read in full), `joint/stage3/run_joint_arms.py` (the loss path), `joint/stage4/joint_space.py` (the loss block, the canonicalisation, the campaigns), `joint/stage4/npe_tune_joint.py:86-227`, `joint/stage3/jobs/joint_arms.pbs:50-115`; the installed library's source, `pytorch_metric_learning` 1.6.3 (`distances/base_distance.py`, `losses/triplet_margin_loss.py`, `miners/triplet_margin_miner.py`, `miners/batch_easy_hard_miner.py`, `utils/loss_and_miner_utils.py`, `reducers/threshold_reducer.py`), read from the wheel. The constants and identities of S3.2 recomputed in the sandbox `[RAN]`. Findings F-t to F-x added; F-f extended. Grounding searches of S6 run and reported. |
 
@@ -669,7 +670,13 @@ docstrings that still quote $0.3$ are F-f.
   is dimensionless and of order the margin (eq. (P2.4): a fully violated
   triplet costs about $m_{\rm sq}$), so the same $\lambda_{\rm dsn}$ means
   different things on different banks; that is why it is searched over four
-  decades.
+  decades. [corrected 2026-10-05, E4 S3.4: "dominates every step" is the
+  weighted-sum reading; under AdamW a weight moves the encoder's update only
+  against the two terms' gradient sizes, coordinate by coordinate, and
+  saturates at both ends, E4 eq. (E4.6), so whether $10$ dominates depends on
+  those sizes, which no record keeps (F-bd); on the flow's weights, for a
+  given encoder trajectory, it acts only through the clip's variation from
+  step to step, E4 eq. (E4.5).]
 - **What it changes, analytically.** Eq. (P2.11) and plan eq. (2): the
   gradient on $\psi$ is the NPE gradient plus $\lambda_{\rm dsn}$ times the
   metric gradient. The sign of their cosine, $\rho_{\rm grad}$, is prediction

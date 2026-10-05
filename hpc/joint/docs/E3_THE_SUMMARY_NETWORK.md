@@ -12,6 +12,7 @@ and the project documents and PDFs named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-05 | v1.1. One dated note from E4, nothing else changed: S3.6's "The two pre-trained arms, mirrored" now says that `A0s`'s pre-training reads every simulated row, the selection and report splits' included (E4 F-be), so the transfer condition is met by construction on its secondary endpoint and binds on arm $\mathcal{R}$ only when that arm is drawn at its own `SEED` (F-aw). Evidence: E4 S3.7-S3.8; `run_joint_arms.py:452-459, 498-502` at `834eb41` `[REPO]`; `tools/e4_numbers.py` B1 `[RAN 2026-10-05]`. |
 | 2026-10-05 | v1. Written from P1 S3.2 (the backbone, eqs. (P1.1)-(P1.10), cited and not repeated), P2 S3.2-S3.7 (the loss, eqs. (P2.1)-(P2.13)), E2 (eqs. (E2.4)-(E2.5)), the plan `JOINT_DSN_NPE_PLAN_v0_6.md` (repository, v0.6.5: S2.3, lines 251-311; the approximations, line 1702), the design handoff `HANDOFF_joint_dsn_npe_design.md` (R1-R4, lines 104-107; S12 item 1, lines 312-317), `hpc/dsn/Documentation/THEORY_joint_condition_search.md` S3.7.1 and S3.7.5, `hpc/dsn/metrics.py:1-131`, `stage3/joint_diagnostics.py:107-146`, `stage3b/encoder_probes.py:156-163`, `stage3/run_joint_arms.py:560, 595, 607-608`, `stage3/smoke_test_joint_arms.py:174-183`, `stage1/latent_sbi_simulator.py:128-237, 314-343`, `stage1/build_latent_bank.py:211-248` and the r2 encoder's configuration `hpc/dsn/hpc/Config/refit_mea_joint_full_r2_l0_t82.json`; the deck's section C (KB, v1.1); `SBI_PIPELINE.md` S4-S6; the project PDFs of BayesFlow, the Practical Guide, Goncalves et al. and the Frontier of SBI, at the pages cited; five PubMed Central full texts (S6); PubMed and bioRxiv searched (S6). Every `[RAN]` number is printed by the new torch-free `tools/e3_numbers.py` (two identical runs). New symbols $\hat c$, $\Sigma_z$ and $\hat\Sigma_z$, $h_{\rm b}$, $\rho_{\rm cap}$ (E0 v1.10, convention 14). Two findings: F-bb (r_eff is scale-free and is logged without a scale) and F-bc (at $C \ge 3$ the pre-training's uniform batches can change the separation target), both owned here. Dated notes added to E1 S3.8 (b), E2 S3.8 and P2 (the glossary's "Collapse", S3.2's closing reading, S3.6 and two rows of the S3.7 table). |
 
 **Abstract.** The encoder reduces a window of $W = 18000$ samples to $E$
@@ -659,7 +660,14 @@ those two points too. Conversely, in `A0s` the metric stream is simulated
 with the generator's labels: the loss constrains $h_\psi$ on the domain the
 flow uses, and a collapse of the training windows bounds the scored split's
 information as far as the encoder maps held-out simulated windows the way it
-maps training ones `[reasoning]`. The design handoff draws the first half of
+maps training ones `[reasoning]`. [2026-10-05, E4 F-be: `A0s`'s pre-training
+reads every simulated row, the selection and report splits' included, so on
+its secondary endpoint the scored windows are among the encoder's own training
+windows and the condition is met by construction; it binds on arm
+$\mathcal{R}$ when that arm is drawn at its own `SEED` (F-aw), and at the
+job's defaults and $\pi = 0$ arm $\mathcal{R}$'s windows are copies of rows
+`A0s` has read (E4 S3.7).]
+The design handoff draws the first half of
 this line -- "the log C ceiling holds on the real arm (2 points) but does
 not transfer to the sim arm by `r_eff = 1.017` alone" (R3) `[REPO]`. One
 clause of that sentence needs its own condition (R2): on the real arm no

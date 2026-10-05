@@ -12,6 +12,7 @@ and PDFs named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-05 | v1.2. One dated note from E4, nothing else changed: S3.7's "Two senses of amortised" now says that the grouped split keeping a culture's windows together is the simulated arm's, that the real arm is not split at Stage 3 -- so the pseudo-real endpoint is held out in $\theta$ and not in $x$ for `A0`, `A2`, `A3`, `A5` -- that a real-arm culture holdout is plan D9's open question and Stage 6's design, and that on the bench `A0s`, `A2s`, `A_ref` and `shuffled` read no real window either. Evidence: E4 S3.7; `run_joint_arms.py:369, 491-508, 553-556` at `834eb41` `[REPO]`. |
 | 2026-10-05 | v1.1. One dated note from E3, nothing else changed: S3.8 (b) now says which embedding cloud bears on the reading (the simulated arm's, on which the flow is trained and scored) and that neither measured $r_{\rm eff}$ bounds the information, which needs an exact code on that law. Evidence: E3 S3.6-S3.8, eq. (E3.6); `tools/e3_numbers.py` B2 `[RAN 2026-10-05]`. |
 | 2026-10-04 | v1. Written from `SBI_PIPELINE.md` (S1-S13), `EXTRACTOR_USAGE.md` v8.12 (S4, S5.1, S6.1, S6.4), `HPC_PATHS.md` (S3b, S4, S4a), deck `02_SEC_A_pipeline_today.md`, the plan `JOINT_DSN_NPE_PLAN_v0_6.md` (repository, v0.6.5: abstract, S1, S2.1, S2.2, S2.5, S2.6, S2.7, S4.0) and E0 v1.7; the project PDFs *The frontier of simulation-based inference*, *Simulation-Based Inference: A Practical Guide* and *Detecting Model Misspecification in Amortized Bayesian Inference* read in full; PubMed and bioRxiv searched (S6). Every `[RAN]` number is printed by `tools/e1_numbers.py` (two identical runs), which reads the r2 encoder's configuration from `834eb41` with `git show`. No new symbol: E0 v1.8 annotates convention 2 (the kernel axes are linear whatever their span), the rows of $p_{\rm sim}$ (its extension to the realised graph and its $x$-marginal) and $x$ (Hz per electrode on the cohort) and the glossary's "Two data domains", adds five glossary entries, and moves the "First used in" column to E1 for the 22 rows E1 uses first. |
 
@@ -769,9 +770,15 @@ surrogate "agnostic about the observed data" -- only arm `A1` is: `A0` and
 `A2` fit the encoder on the cohort's labelled windows, and `A5` on its
 replicate pairs, so the trained networks depend on the very windows they are
 later applied to. That dependence is what pipeline O5 calls circularity for
-the witness and the truncation region `[KB]`, and it is why the splits keep
-a culture's windows together, so that whole cultures are held out (plan S1,
-convention (iv); E4, E7).
+the witness and the truncation region `[KB]`, and it is why the splits keep a
+culture's windows together, so that whole cultures are held out (plan S1,
+convention (iv); E4, E7). [2026-10-05, E4 S3.7: at Stage 3 the runner's
+grouped split is of the simulated arm, by donor; the real arm is not split --
+every real window feeds the real streams and is scored by the pseudo-real
+endpoint, so for `A0`, `A2`, `A3` and `A5` that endpoint is held out in
+$\theta$ and not in $x$, and a culture holdout on the real arm is plan D9's
+open question and Stage 6's design, not built. On the bench, `A0s`, `A2s`,
+`A_ref` and `shuffled` read no real window either.]
 
 **Where TSNPE sits.** The pipeline's earlier route was truncated sequential
 NPE: draw from each real window's posterior, keep the per-window HPR at mass

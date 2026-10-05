@@ -45,6 +45,7 @@ identical output.
 
 | date | change |
 |---|---|
+| 2026-10-05 | v1.2. One dated note from E4, nothing else changed: convention 5 ("Held-out") now says for which arms arm R's rows are held out in its first sense -- those that draw no real stream (`A1`, `A0s`, `A2s`, `A_ref`, `shuffled`) -- and that for `A0`, `A2`, `A3` and `A5` the pseudo-real endpoint is held out in $\theta$ alone. Evidence: E4 S3.7; `run_joint_arms.py:452-459, 491-508` at `834eb41` `[REPO]`. |
 | 2026-10-04 | v1.1. One correction and one formatting repair, nothing else changed: S3.2 (b) repeated `simplex_centres`'s docstring in calling the bench's class centres the vertices of a regular simplex; for $C \ge 3$ they are not (finding F-ba, owner E6), and the sentence is marked [corrected 2026-10-04]; four inline formulas broken across two lines (that one, one more in S3.2 (c) and two in Appendix A.2) are rejoined onto one line each, so that the notation checker reads them; no symbol changed. Evidence: `latent_sbi_simulator.py:128-155` read, and the centres' geometry computed against the DSN's `_class_center_vectors` (`hpc/dsn/latent_burst_generator.py:460-527`) by `tools/e2_numbers.py` B4 `[RAN]` (E2 S5). |
 | 2026-10-03 | v1. Written from `stage1/build_latent_bank.py`, `latent_bank.py`, `latent_sbi_simulator.py`, `latent_nuisance.py`, `latent_gap.py`, `latent_realisation.py`, `bench_burst_provider.py`, `bench_burst_generator.py`, `demo_classes_generate.py`, `demo_classes_plot.py`, every job file under `stage1/jobs/`, `stage3/jobs/`, `stage3b/jobs/`, `stage3c/jobs/`, `stage4/jobs/` (all read in full), `stage3b/run_stage3b.py`, `stage3c/run_stage3c.py`, `stage3c/floor_core.py`, `nuisance_floor.py`, `realisation_floor.py` (read in full), `stage3c/aliasing.py:54-154`, `stage3c/stratify.py:136-196`, `stage3b/domain_objective.py:62-150`, `stage3b/encoder_probes.py:76-125`, `stage3/probe_dsn_runtime.py:1-40, 315-360`, `stage3/run_joint_arms.py:110-200, 262-470, 470-659`, `stage2/joint_batches.py:1-216`, `stage1/smoke_test_latent_sbi.py:20-125, 542-600`, `stage1/smoke_test_bench_provider.py:88-118`, `hpc/dsn/latent_burst_generator.py:193-206, 252-305`; the plan S2.6, S4.0-S4.5, Stage 1, Stage 3b, Stage 3c, S8 (D10, D11); `[KB]` `JOINT_DSN_NPE_USAGE_v1.md` v1.3 S1-S10, `claude/PLAN_2026-10-01_giulia_hpc_stages.md` v1.7 S3 (B5, B6), S5 (G0, G4, G5), `claude/deck_pack/07_SEC_F_bench_and_stages.md`, `claude/REPLICATE_LOSS_GUARDS_v1.md` S3.7, `HPC_PATHS.md` sec. 5-7, P0, P3 S3.8, P5 S3.3, P6 S3.8; `[KB-PDF]` Schmitt et al. p.5-6, p.11-12, the multilevel paper (NeurIPS 2025) p.1. Every number computed by the new `tools/p7_numbers.py` `[RAN]`. Findings F-at to F-az added; F-n, F-t, F-aa, F-ab, F-ae and F-ar carried on their bank or job side. Grounding searches of S6 run and reported. |
 
@@ -215,10 +216,14 @@ E0 v1.7 declares in its group "Upstream: the bank and the post-hoc stages
    relative to the trace's mean) are two objects whose dataclass fields share
    the name `drift_period_s`; P0 Table F lists them as one knob with two
    defaults, which they are not.
-5. **"Held-out"** (R6) means a row no training loss of the run read. A row
-   of bench arm R is held out from the NPE loss by construction (its
-   $\theta$ is withheld); F-aw shows rows that are held out in that sense and
-   are nevertheless copies of training rows.
+5. **"Held-out"** (R6) means a row no training loss of the run read. A row of
+   bench arm R is held out from the NPE loss by construction (its $\theta$ is
+   withheld); F-aw shows rows that are held out in that sense and are
+   nevertheless copies of training rows. [2026-10-05, E4 S3.7: in the first
+   sense the rows of arm R are held out only for the arms that draw no real
+   stream -- `A1`, `A0s`, `A2s`, `A_ref`, `shuffled`; `A0`, `A2` and `A3` read
+   their $x$ and class in the metric loss and `A5` their $x$ in the replicate
+   loss, so for these the pseudo-real endpoint is held out in $\theta$ alone.]
 6. **Levels** (R8, E0 convention 4). The pair fractions $r_{\rm same}$,
    $r_{\rm well}$ of eq. (P7.9) are properties of the layout (analytic) and
    are also counted on a built bank (computed); the two agree exactly
