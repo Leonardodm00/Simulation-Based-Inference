@@ -13,6 +13,7 @@ project documents and PDFs named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-05 | v1.1. One dated correction from E3, nothing else changed: S3.8's forward reference to the label ceiling now carries its conditions (an embedding with at most $C$ values on the scored simulated rows; a loss whose expected value is zero exactly there only under `joint_sep`), and "is that collapse's signature" is marked [corrected 2026-10-05]: $r_{\rm eff} = 1.000$ is consistent with a two-point collapse of the real windows without identifying it. Evidence: E3 S3.4-S3.8, eqs. (E3.3), (E3.6); `tools/e3_numbers.py` B2-B4 `[RAN 2026-10-05]`. |
 | 2026-10-04 | v1. Written from P4 S3.2 and S3.4 (the flow as built, cited and not repeated), E1 (eqs. (E1.2), (E1.5), S3.6-S3.8), the plan `JOINT_DSN_NPE_PLAN_v0_6.md` (repository, v0.6.5: S2.2, S2.3 (P8), S5.2, eq. (1a)), `stage2/joint_model.py:34, 130-132, 219`, `stage3/joint_diagnostics.py:63-83`, `stage3/run_joint_arms.py:530-558`, `stage1/latent_sbi_simulator.py:1-12, 128-219`, `stage1/latent_gap.py:9-24`, `stage1/build_latent_bank.py:52-160` (read for a row filter: none), `stage1/bench_burst_provider.py:82-97`, `hpc/dsn/latent_burst_generator.py:460-527`, `hpc/npe_tune_score.py:1-110` and `hpc/npe_tune.py:296-341, 434-461` (mapping only, D-037); the `sbi` 0.27.0 wheel (`inference/__init__.py:15-23, 50-58`, `inference/trainers/npe/npe_base.py:493-526`, `inference/trainers/npe/npe_c.py:39, 129-202, 327-385`, `inference/posteriors/direct_posterior.py:25-39`); the project PDFs of the normalising-flows review, the Practical Guide, BayesFlow, APT, Goncalves et al., sbi reloaded and flow-matching posterior estimation, at the pages cited; PubMed and bioRxiv searched (S6). Every `[RAN]` number is printed by the new torch-free `tools/e2_numbers.py` (two identical runs). New symbols $p_{\rm ev}$ and $\Delta$ (E0 v1.9, convention 14); E0 rows of $p_\Theta$, $H$, $L_0$ and $\hat\Delta$ annotated. One code finding, F-ba (owner E6): the bench's class centres are not a regular simplex for $C \ge 3$, met while computing the bench prior's entropy (S3.3); P7 S3.2 (b) corrected accordingly. S5 relates the standalone tuner's box floor to the plan's P8 (a mapping observation, D-037). |
 
 **Abstract.** The simulator of E1 cannot evaluate its own likelihood, yet
@@ -925,7 +926,14 @@ most $\ln C$ nats about $\theta$ -- 0.693 at $C = 2$ -- whatever the
 encoder's size `[KB]` (deck 04 C.2), so by (E2.5) the bench-style gain of an
 arm whose encoder sits there is capped at $\ln C$ whatever the flow; the
 measured real-arm $r_{\rm eff} = 1.000$ of the r2 encoder (E1 S3.1) is that
-collapse's signature (deck 04 C.3).
+collapse's signature (deck 04 C.3). [corrected 2026-10-05, E3 S3.4-S3.8:
+the cap holds for an embedding with at most $C$ values on the scored
+simulated rows, E3 eq. (E3.6), and the DSN loss's expected value is zero
+exactly at such a code only under `joint_sep`, E3 eq. (E3.3); a collapse of
+the real windows bounds nothing about the simulated ones by itself; and
+$r_{\rm eff} = 1.000$ is consistent with a two-point collapse of the real
+windows without identifying it -- it measures dimension, and on the sphere
+a printed 1.000 also allows a short arc (E3 S3.7).]
 
 So the flow's address is the KL term of eq. (E2.5): the loss reports it only
 added to an information term the flow does not control, and E3 opens that

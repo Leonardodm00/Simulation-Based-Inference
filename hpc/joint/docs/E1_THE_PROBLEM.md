@@ -12,6 +12,7 @@ and PDFs named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-05 | v1.1. One dated note from E3, nothing else changed: S3.8 (b) now says which embedding cloud bears on the reading (the simulated arm's, on which the flow is trained and scored) and that neither measured $r_{\rm eff}$ bounds the information, which needs an exact code on that law. Evidence: E3 S3.6-S3.8, eq. (E3.6); `tools/e3_numbers.py` B2 `[RAN 2026-10-05]`. |
 | 2026-10-04 | v1. Written from `SBI_PIPELINE.md` (S1-S13), `EXTRACTOR_USAGE.md` v8.12 (S4, S5.1, S6.1, S6.4), `HPC_PATHS.md` (S3b, S4, S4a), deck `02_SEC_A_pipeline_today.md`, the plan `JOINT_DSN_NPE_PLAN_v0_6.md` (repository, v0.6.5: abstract, S1, S2.1, S2.2, S2.5, S2.6, S2.7, S4.0) and E0 v1.7; the project PDFs *The frontier of simulation-based inference*, *Simulation-Based Inference: A Practical Guide* and *Detecting Model Misspecification in Amortized Bayesian Inference* read in full; PubMed and bioRxiv searched (S6). Every `[RAN]` number is printed by `tools/e1_numbers.py` (two identical runs), which reads the r2 encoder's configuration from `834eb41` with `git show`. No new symbol: E0 v1.8 annotates convention 2 (the kernel axes are linear whatever their span), the rows of $p_{\rm sim}$ (its extension to the realised graph and its $x$-marginal) and $x$ (Hz per electrode on the cohort) and the glossary's "Two data domains", adds five glossary entries, and moves the "First used in" column to E1 for the 22 rows E1 uses first. |
 
 **Abstract.** The project wants, for each recorded culture, a posterior
@@ -812,7 +813,12 @@ readings of `SBI_PIPELINE.md` O1 can be restated as claims about objects.
   is this reading's evidence (S3.1). Under `A0` the encoder was never
   trained to carry $\theta$ (S3.6, first bullet); the joint arms let the NPE
   likelihood train $\psi$ (plan S2.2), and E3 shows why a label loss caps
-  what $z$ can carry.
+  what $z$ can carry. [2026-10-05, E3 S3.6-S3.8: the cloud that bears on
+  (b) is the simulated arm's ($r_{\rm eff} = 1.017$), because the flow is
+  trained and scored on simulated $z$; the real arm's 1.000 bears on what
+  the encoder does to real windows; and neither value bounds the
+  information, which needs an exact code on the scored law -- a
+  cardinality, not a dimension, E3 eq. (E3.6).]
 - **(c) Off-manifold at real windows: the simulator.** On simulated windows
   the posterior may be informative while real windows sit where
   $p_{\rm sim}(x)$ has little mass -- the second case of S3.6, with the

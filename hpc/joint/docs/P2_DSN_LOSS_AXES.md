@@ -17,6 +17,7 @@ miners and triplet loss the term is built from.
 
 | date | change |
 |---|---|
+| 2026-10-05 | v1.1. Dated notes from E3, nothing else changed: the glossary's "Collapse", S3.2's closing reading of the constants, the flow bullet of S3.6, and the S3.7 rows "collapse" and "pre-training without balance" now carry the conditions E3 derives -- the expected loss is zero exactly at class collapse only under `joint_sep` (E3 eq. (E3.3)), the margin and the half-angle constrain the residual's size and not its information (E3 eq. (E3.9)), the cap on what the flow can distinguish needs an exact code on the rows the flow is scored on (E3 eq. (E3.6)), `r_eff` is met at $C = 2$ by a constant encoder or a thin line (F-bb), and at $C \ge 3$ the pre-training's two-class batches change the separation target (F-bc). Evidence: E3 S3.4-S3.7; `tools/e3_numbers.py` B2-B4 `[RAN 2026-10-05]`. |
 | 2026-10-01 | v1. Written from `hpc/dsn/dsn_joint_loss.py` (read in full), `hpc/dsn/train.py` `build_loss_and_miner` (`:216-351`) and its notation block (`:55-97`), `hpc/dsn/condition_space.py` (read in full), `hpc/dsn/config.py` (`TrainConfig` `:615-724`, `SearchConfig` `:899-930`, `:1002-1004`), `hpc/dsn/hpc/preflight_config.py:140-200`, `hpc/dsn/Documentation/TUNING_1_searched_axes.md` S3.9-3.14, 3.17, `TUNING_2_fixed_knobs.md` S3.3, `THEORY_joint_condition_search.md` S3.3, 3.6, 3.7; `joint/stage2/dsn_loss_adapter.py`, `joint_batches.py`, `joint_train.py` (all read in full), `joint/stage3/run_joint_arms.py` (the loss path), `joint/stage4/joint_space.py` (the loss block, the canonicalisation, the campaigns), `joint/stage4/npe_tune_joint.py:86-227`, `joint/stage3/jobs/joint_arms.pbs:50-115`; the installed library's source, `pytorch_metric_learning` 1.6.3 (`distances/base_distance.py`, `losses/triplet_margin_loss.py`, `miners/triplet_margin_miner.py`, `miners/batch_easy_hard_miner.py`, `utils/loss_and_miner_utils.py`, `reducers/threshold_reducer.py`), read from the wheel. The constants and identities of S3.2 recomputed in the sandbox `[RAN]`. Findings F-t to F-x added; F-f extended. Grounding searches of S6 run and reported. |
 
 **Abstract.** The seven axes of the `dsn_loss` block are the only axes of
@@ -212,7 +213,13 @@ Ordered by first appearance.
   off, the block's axes are pinned and the term's weight is 0. S3.3.
 - **Collapse** -- the state in which every window of a class maps to one
   point; the global minimum of the composite loss and the reason the metric
-  term caps the information an encoder can carry (E3). S3.7.
+  term caps the information an encoder can carry (E3). S3.7. [corrected
+  2026-10-05, E3 S3.4, S3.6: a global minimiser -- the zero of the expected
+  loss -- and the only one only under `joint_sep` with
+  $\lambda_{\rm sep} > 0$, E3 eq. (E3.3); under `triplet` and `joint`
+  every geometry with separated classes is a zero; and the cap on
+  information needs the collapse to hold on the rows the gain is scored on,
+  E3 eq. (E3.6).]
 
 ## 3. Main body
 
@@ -561,7 +568,12 @@ $[0.1, 1.0]$ at $C = 2$ `[RAN]`. Both readings say the same thing in E3's
 language: $m_{\cos}$ and $\alpha$ set the width of the channel the
 within-class residual $\xi$ must pass through, and the composite loss's
 minimum is the collapse of each class to one point on a simplex ETF
-(`[KB]` deck C.2-C.3; S3.7).
+(`[KB]` deck C.2-C.3; S3.7). [corrected 2026-10-05, E3 S3.4, S3.6:
+$m_{\cos}$ and $\alpha$ constrain the residual's size, which bounds its
+information only through a noise or resolution scale, E3 eq. (E3.9); under
+the strict filter and the easy-positive miners they constrain only how
+close the nearest negative may come; and the expected loss's zero is the
+collapse only under `joint_sep`, E3 eq. (E3.3).]
 
 Table P2.1 fixes the constants over the searched ranges and at the pins.
 
@@ -948,6 +960,11 @@ P documents own.
   (`[KB]` deck C.6). The flow $q_\omega$ is untouched by the term, but what
   it conditions on is: at the collapse point $z$ is a relabelling of $c$ and
   $q_\omega(\theta \mid z)$ can distinguish at most $C$ things (E3).
+  [2026-10-05, E3 eqs. (E3.6)-(E3.7): a relabelling of $\hat c$, the class
+  read off $z$, which is $c$ only where the code makes no error; and at
+  most $C$ things only where the collapse is exact on the rows the flow is
+  trained and scored on, which for `A0` are simulated windows the metric
+  term never sees.]
 - **With the replicate term (P3).** Both terms act on $\psi$ through real
   rows; the replicate term never sees a label and the metric term never sees
   a pair. S-A25 is the only campaign with both free.
@@ -983,14 +1000,14 @@ simulated labels, `:607-608`), `config`.
 | failure | mechanism | first visible number | source |
 |---|---|---|---|
 | dead metric term | $\mathcal{T}_{\rm strict}$ empty every step: no admissible semi-hard negative, or a band too narrow for the batch's geometry (eq. (P2.6a)); the loss returns 0 and raises nothing | `history[].dsn` exactly `0.0` at every epoch and `history[].rho_grad` `NaN` (zero DSN gradient); `n_strict` would say it directly but is not logged (F-v) | `[REPO]` `dsn_joint_loss.py:320-323`; `joint_train.py:96-99` |
-| collapse | the minimum of (P2.10): within-class residual $\xi \to 0$, class directions at the ETF; reached fastest at large $\lambda_{\rm dsn}$, small $\alpha$, `hard` mining | `r_eff` $\to C - 1$ (prediction P3: 1 at $C = 2$), `cluster_silhouette` $\to 1$, `delta_hat` at or below $\log C$ (0.693 nats at $C = 2$) | `[KB]` deck C.2-C.3, C.6 |
+| collapse | the minimum of (P2.10): within-class residual $\xi \to 0$, class directions at the ETF; reached fastest at large $\lambda_{\rm dsn}$, small $\alpha$, `hard` mining [2026-10-05, E3: the zero of the expected loss under `joint_sep` only, E3 eq. (E3.3); `r_eff` $\to C - 1$ is also met at $C = 2$ by a constant encoder or a thin line (F-bb), so read it with the cluster scores; `delta_hat` at or below $\log C$ needs an exact code on the scored rows and E2's first case, E3 eq. (E3.6)] | `r_eff` $\to C - 1$ (prediction P3: 1 at $C = 2$), `cluster_silhouette` $\to 1$, `delta_hat` at or below $\log C$ (0.693 nats at $C = 2$) | `[KB]` deck C.2-C.3, C.6 |
 | the label ceiling mistaken for a good fit | a high `cluster_ari` and silhouette with a `delta_hat` that cannot exceed $\log C$: the encoder did what it was asked | `delta_hat` against $\log C$; per-axis `contraction` flat across the free axes | `[KB]` deck C.2 (P8, P9) |
 | unreachable margin | $m_{\cos}$ near 1 asserts a geometry the cloud cannot reach; the hinge is active on every triplet all run | `history[].dsn` high and flat, staying at the margin's scale instead of falling toward 0 | `[REPO]` TUNING_1 S3.9 (the standalone's reading) |
 | vacuous angle | $\alpha \ge 30^\circ$: floor $\le 0$, the hinge contributes nothing | not reachable: the range ends at $20^\circ$ | `[RAN]` Table P2.1 |
 | opposed pairing | an easy-positive miner with a small $\alpha$ or a large $\lambda_{\rm sep}$: the miner resists what the hinge and the ETF term demand | no single number; read the winning condition beside the score (THEORY S3.7.5's advice) | `[REPO]` `preflight_config.py:176-185` |
 | wrong class count in the ETF target | $C$ from the simulated bank's `cls` while the metric stream is the real cohort: real labels $\ge C$ are silently dropped from the class statistics, or $K < C$ every batch | nothing in the record; `sep_n_classes` is exposed by the loss and not logged | F-t, F-v |
 | ramp without horizon | $\tau_{\rm sep} > 0$ with `total_steps` `None`: the adapter raises (`dsn_loss_adapter.py:169-173`); inside the DSN module the same case would reach a `warnings.warn` with `warnings` not imported (F-x) | a `ValueError` at build time (joint path); unreachable from the joint path otherwise | `[REPO]` |
-| pre-training without balance | `A0`/`A0s` draw uniform batches: a batch can lack a class, making $K < 2$ and $\mathcal{L}_{\rm sep} = 0$, or hold no positive for an anchor | nothing per step; the encoder-only log prints `l_DSN` four times (`:164-165`) | `[REPO]` `run_joint_arms.py:158` |
+| pre-training without balance | `A0`/`A0s` draw uniform batches: a batch can lack a class, making $K < 2$ and $\mathcal{L}_{\rm sep} = 0$, or hold no positive for an anchor [2026-10-05, E3 S3.4: at $C \ge 3$ a batch with two valid classes sets that pair's separation target to $-1$, so the expected loss has no exact zero; F-bc] | nothing per step; the encoder-only log prints `l_DSN` four times (`:164-165`) | `[REPO]` `run_joint_arms.py:158` |
 | ledger says one filter, runner trains another | would occur if `spec.fixed["strict_semihard"]` and `--strict-semihard` disagreed; `build_argv` passes it, so they do not (unlike F-a, F-b) | `config.strict_semihard` in the record equals the space's value; the **projected** value is not recorded separately | `[REPO]` `npe_tune_joint.py:206-211` |
 
 ### 3.8 Findings this document owns

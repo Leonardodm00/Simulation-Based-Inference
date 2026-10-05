@@ -9,6 +9,7 @@ project documents named in S6.
 
 | date | change |
 |---|---|
+| 2026-10-05 | v1.10. For E3, five symbols added under convention 14 (395 declared `[RAN]`): $\hat c$, the class read off an embedding (an estimate of $c$, not $c$); $\Sigma_z$ and $\hat\Sigma_z$, the analytic and computed covariance of an embedding cloud; $h_{\rm b}$, the binary entropy function of Fano's inequality; $\rho_{\rm cap}$, the angular radius of a test cap. Annotated, not changed: the row of $r_{\rm eff}$ (its formula, scale-freeness, the sphere's two-point fact, and F-bb's zero-covariance values; its type now reads "for a non-zero covariance"), and the glossary's "Collapse", "Label ceiling" and "Effective rank" (the senses and conditions of E3 S3.4-S3.7). The checker is unchanged; smoke test T4.13 adds E3 to the suite. |
 | 2026-10-04 | v1.9. For E2, two symbols added under convention 14 (390 declared `[RAN]`): $p_{\rm ev}$, the joint law of $(\theta, z)$ on the rows a score is computed on, and $\Delta$, the population information gain that $\hat\Delta$ estimates (the analytic counterpart R8 asks for; not $\Delta_{gg'}$). Annotated, not changed: $p_\Theta$ (the bench prior is plan eq. (7), not uniform; its entropy at the bank job's defaults), $L_0$ (its computed form, a mean over the rows scored, and when it estimates the row's expression) and $\hat\Delta$ (a lower bound on the information only when the rows' $\theta$-marginal is the floor's prior, E2 eq. (E2.5)). Corrected: the type of $H$, which for a continuous argument is a differential entropy in $\mathbb{R}$, not $\mathbb{R}_{\ge 0}$ [corrected 2026-10-04]. Glossary: "z-scoring / unconstrained transform", "Normalising flow" and "Information gain" annotated; four entries added (forward KL and mass-covering, proposal posterior, gain identity, leakage). "First used in" moved to E2 for $H$, $I$, $\ell_i$, $L$, $L_0$, $\hat\Delta$, and to "E2 (named)" for $B_{\rm sim}$, $\mathcal{B}_{\rm sim}$, $\delta_{\min}$, $\tau_{\rm ov}$; the prerequisites row on information theory notes E2. The checker is unchanged; smoke test T4.12 adds E2 to the suite. |
 | 2026-10-04 | v1.8. For E1, no symbol added (388 declared, unchanged `[RAN]`). Annotated, not changed: convention 2 (the log rule does not apply to the three Weibull kernel axes, which are linear whatever their span -- `p0_conn` spans exactly one decade; `EXTRACTOR_USAGE.md` S6.4; E1 eq. (E1.1)); the row of $p_{\rm sim}$ (its conditionals and marginals named by their arguments: the realised graph's law and the likelihood given the graph, E1 eq. (E1.2); the prior predictive $p_{\rm sim}(x)$, E1 eq. (E1.3)); the row of $x$ (on the cohort the unit is Hz per electrode: extractor eq. (3) divides by $n_e$); the glossary's "Two data domains" (the shift is covariate shift in the strict sense only when the simulator is well specified, E1 S3.6). The "First used in" column moved to E1 for the objects E1 establishes ($p_\Theta$, $p_{\rm sim}$, $\nu$, $\mathcal{N}$) and reads "E1 (named); En" for the eighteen rows E1 names before chapter En develops them. Five glossary entries added at E1's place (prior predictive, covariate shift, simulation gap, closed-world assumption, activity floor). The checker is unchanged; smoke test T4.11 adds E1 to the suite. |
 | 2026-10-03 | v1.7. Appended the upstream group (30 rows, 43 symbols; 388 declared `[RAN]`) for P7, under convention 14: the bank's shard and seed symbols ($S_{\rm sh}$, $\mathsf{k}$, $s_{\rm base}$, $N_{\rm don}$, $n_{\rm db}$, $N^{\rm bank}_{\rm tr}$), the pair fractions $r_{\rm same}$, $r_{\rm well}$, the gap's and the nuisance's constants and components, the nuisance map's two parts and the stored window $x^{\rm obs}$, and the Stage 3b/3c symbols ($\theta^{\rm fl}$, $n_{\rm fl}$, $S_{\rm post}$, $m^{\rm fl}$ / $\hat m^{\rm fl}$, $\Sigma_{\rm fl}$, $h_{\rm fd}$, $n_{\rm fd}$, $n_{\rm probe}$, $n_{\rm ker}$); nothing renamed. Two rows annotated, not changed: $x$ (`per_unit_mean` is one provider's convention; the stored array on the bench is $x^{\rm obs}$, which can be negative) and $N_{\rm tr}, J$ (`--n-traces` is a per-shard count; the plan's `G` is $N^{\rm bank}_{\rm tr}$). The checker is unchanged; smoke test T4.10 adds P7 to the suite. |
@@ -115,9 +116,13 @@ bold are headings, not symbols.
 | $n_{\rm hid}$ | hidden features of each transform's conditioner (`hidden_features`) | $\mathbb{N}$ | -- | E2 |
 | $\bar z_c$ | mean embedding of class $c$ (the deck's `\mu_c`); at the collapse point one point per class on a simplex ETF | $\bar z_c \in \mathbb{R}^{E}$ | dimensionless | E3 |
 | $\xi$ | within-class residual of an embedding, $\xi = z - \bar z_c$ (the deck's `\eta`) | $\mathbb{R}^{E}$ | dimensionless | E3 |
-| $r_{\rm eff}$ | participation-ratio effective rank of an embedding cloud | $[1, E]$ | -- | E1 (named); E3 |
+| $r_{\rm eff}$ | participation-ratio effective rank of an embedding cloud [2026-10-05, E3: $(\mathrm{tr}\,\hat\Sigma_z)^2 / \mathrm{tr}(\hat\Sigma_z^2)$, E3 eq. (E3.10); scale-free, it counts directions, not points; on the unit sphere an exactly rank-one cloud has at most two points (E3 S3.7); for an exactly zero covariance the joint stack's implementations return 1.0 and the DSN's 0.0 (F-bb)] | $[1, E]$ for a non-zero covariance | -- | E1 (named); E3 |
+| $\hat c$ | the class read off an embedding: $\hat c(z)$ is the label of the class region $z$ falls in (at an exact collapse, of the class point it equals); an estimate of $c$, not $c$ (E3 eq. (E3.7)) | map $S^{E-1} \to \{0, \dots, C-1\}$ | -- | E3 |
+| $\Sigma_z$, $\hat\Sigma_z$ | the covariance of $z$ under the law a cloud is drawn from (analytic level), and the sample covariance (`ddof=1`) of the cloud's rows (computed level); not $\Sigma_0$, not the generic $\Sigma$ of $\mathcal{W}_d$ | positive semi-definite $E \times E$ | dimensionless | E3 |
+| $\rho_{\rm cap}$ | the angle between a point of a spherical cap and the cap's centre: the angular radius of a test cloud (E3 eq. (E3.11)); not $\rho_{\rm ETF}$, $\rho_{\rm grad}$, $\rho_{\rm icc}$ | $[0^\circ, 90^\circ]$ | degrees | E3 |
 | $\rho_{\rm grad}$ | cosine between the NPE and DSN terms' gradients with respect to $\psi$ | $[-1, 1]$ | -- | E4 |
 | $I(\cdot\,;\cdot)$, $H[\cdot]$ | mutual information; entropy, both in nats [corrected 2026-10-04, E2: for a continuous argument $H$ is a differential entropy, which can be negative and is at most 0 on the unit cube, so only $I$ is non-negative; the law is named in the subscript, as in $H_{p_{\rm sim}}[\theta \mid z]$ and $I_{p_{\rm sim}}(\theta; z)$ (E2 S1.1)] | $I \in \mathbb{R}_{\ge 0}$; $H \in \mathbb{R}$ [corrected 2026-10-04: was $\mathbb{R}_{\ge 0}$ for both] | nats | E2 |
+| $h_{\rm b}$ | the binary entropy function in nats: for a probability, minus the probability times its logarithm, minus its complement times the logarithm of the complement; the bound of Fano's inequality in E3 eq. (E3.8) | map $[0, 1] \to [0, \ln 2]$ | nats | E3 |
 | **Objective, losses, training** | | | | |
 | $\mathcal{L}$ | the joint objective of plan eq. (1), $\mathcal{L}(\psi, \omega)$ | $\mathbb{R}$ | nats/row plus dimensionless terms | E1 (named); E4 |
 | $\mathcal{L}^{\rm sim}_{\rm NPE}$ | expected NLL of $\theta$ given $h_\psi(x)$ under $p_{\rm sim}$, plan eq. (1a); analytic level, estimated by $L$ | $\mathbb{R}$ | nats/row | E1 (named); E2 |
@@ -641,15 +646,32 @@ differs* is flagged where it does.
   $\lambda_{\rm sep}(t)$, pushes toward. E3; P2.
 - **Collapse (neural collapse)** -- the regime where within-class residuals
   $\xi$ vanish and the embedding is a relabelling of $c$. E3.
+  [2026-10-05, E3 S3.4, S3.9: four senses are in play -- *neural collapse*
+  (Papyan et al.'s NC1-NC4, in cross-entropy classifiers past zero training
+  error), *class collapse* (each class at one point; the sense here, imposed
+  by the separation term), *dimensional collapse* (a low-rank cloud; the
+  DSN `metrics.py` sense) and *total collapse* (a constant encoder). The
+  embedding is then a relabelling of $\hat c$, the class read off it, which
+  equals $c$ only where the code makes no error; and the expected loss is
+  zero exactly at class collapse only under `joint_sep`, E3 eq. (E3.3).]
 - **Label ceiling** -- at the DSN's global minimum the information gain
-  about $\theta$ is at most $\log C$ nats. E3.
+  about $\theta$ is at most $\log C$ nats. E3. [2026-10-05, E3 eq. (E3.6):
+  the bound holds for an embedding that takes at most $C$ values under the
+  law the gain is scored on -- the simulated rows -- and bounds $\Delta$ in
+  E2's first case; a collapse of the real windows (arm `A0`) or a
+  near-collapse into tight clusters does not by itself give it (E3
+  S3.6).]
 - **Information argument $c \to \theta \to x \to z$** -- the data-processing
   chain that makes $\theta$-sufficiency imply $c$-sufficiency and not the
   converse. E3.
 - **Sufficiency (for $\theta$ / for $c$)** -- $z$ is sufficient for $\theta$
   if $p_{\rm sim}(\theta \mid x) = p_{\rm sim}(\theta \mid z)$. E3.
 - **Effective rank $r_{\rm eff}$** -- participation-ratio rank of an
-  embedding cloud; 1 means the cloud lies on a line. E3, E7.
+  embedding cloud; 1 means the cloud lies on a line. E3, E7. [2026-10-05,
+  E3 S3.7: it counts directions, not points, and ignores scale; on the unit
+  sphere an exactly rank-one cloud has at most two points, while a printed
+  1.000 also allows a short arc; at an exact ETF collapse it is $C - 1$
+  only for equal class masses (F-bb for its zero-covariance values).]
 - **Joint training** -- back-propagating the NPE loss (and any other term)
   into the encoder, so $\psi$ and $\omega$ are fitted together; the
   BayesFlow construction. E4.
