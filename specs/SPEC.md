@@ -296,7 +296,9 @@ covered scripts introduce none of their own beyond local variables.
 ## 6. Pipeline entry points
 
 All commands from `hpc/joint/docs/tools`, in a clone with full history (the
-scripts run `git show 834eb41:...`; a shallow clone will fail).
+scripts run `git show 834eb41:...`; a shallow clone will fail). In a
+shallow clone, first run `git fetch --depth=1000 origin main` (or
+`git fetch --unshallow`) and confirm `git cat-file -e 834eb41` succeeds.
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
 |---|---|---|---|
