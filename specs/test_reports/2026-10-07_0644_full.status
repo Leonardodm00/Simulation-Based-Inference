@@ -1,8 +1,8 @@
-Run status: running
+Run status: finished
 Repository: leonardodm00/simulation-based-inference
 Commit under test: 2e044e3949f75158a6c5e2d661b8be7f28f53f31
 Mode: full
 Started (UTC): 2026-10-07 06:44
-Last update (UTC): 2026-10-07 07:16
-Phase: step 10: report
-Note: -
+Last update (UTC): 2026-10-07 07:18
+Phase: delivered
+Note: PASS WITH ISSUES (1 MAJOR, 3 MINOR, 3 NOTE)
