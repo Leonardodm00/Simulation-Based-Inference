@@ -124,14 +124,14 @@ def test_known_answer():
     assert cfg.data["best_fit"]["split_seed"] == 1
     assert cfg.data["search"]["space_overrides"]["head_pool_ops"] == [0, 1], "D-086"
     got = [(k, b) for k, b, _ in C.unhonoured_keys(cfg)]
-    want = [("split.fractions", 6), ("search.space_overrides", 7),
-            ("search.space_overrides.head_pool_ops", 6),
-            ("search.flow.conditioner_hidden_layers", 6), ("search.flow.num_bins", 7),
-            ("search.gp_seed", 7), ("search.trial.passes", 6),
-            ("search.trial.max_resubmits", 6), ("search.budget_gate", 7),
-            ("best_fit.split_seed", 6), ("best_fit.member_seeds", 7),
-            ("best_fit.passes", 6), ("best_fit.patience_epochs", 6),
-            ("loader.buffer_shards", 5)]
+    want = [("split.fractions", 7), ("search.space_overrides", 7),
+            ("search.space_overrides.head_pool_ops", 7),
+            ("search.flow.conditioner_hidden_layers", 7), ("search.flow.num_bins", 7),
+            ("search.gp_seed", 7), ("search.trial.passes", 7),
+            ("search.trial.max_resubmits", 7), ("search.budget_gate", 7),
+            ("best_fit.split_seed", 7), ("best_fit.member_seeds", 7),
+            ("best_fit.passes", 7), ("best_fit.patience_epochs", 7),
+            ("loader.buffer_shards", 7)]
     assert got == want, "NEEDS-CODE keys: %r" % (got,)
 
 
@@ -337,12 +337,23 @@ def test_determinism():
                "--poll-seconds", "0.2", "--pre-make", "C"]
         proc = subprocess.Popen(cmd, cwd=root, env=env, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, universal_newlines=True)
-        # wait until A's job is submitted, then kill the sequencer hard
-        for _ in range(100):
-            if _n_submitted(spool) >= 1:
+        # wait until A's job is submitted AND recorded in the state file, then
+        # kill the sequencer hard. (Killing between qsub's return and the
+        # state write is the documented window of SPEC block 1: the job id is
+        # lost and A would be submitted again on resume; the oracle here is
+        # the resume from a recorded job.)
+        recorded = False
+        for _ in range(200):
+            try:
+                st = State.load(cfg["paths"]["work_root"])
+            except (OSError, ValueError):
+                st = None
+            if st is not None and st.data["stages"].get("A", {}).get("jobs"):
+                recorded = True
                 break
             time.sleep(0.1)
-        assert _n_submitted(spool) == 1, "A's job was not submitted in time"
+        assert recorded, "A's job was not submitted and recorded in time"
+        assert _n_submitted(spool) == 1
         os.kill(proc.pid, signal.SIGKILL)
         proc.wait()
         st = State.load(cfg["paths"]["work_root"])

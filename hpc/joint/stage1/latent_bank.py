@@ -204,6 +204,153 @@ def concat_shards(paths):
     return merged, sidecar0
 
 
+SMALL_ARRAYS = tuple(k for k in ROW_ARRAYS if k != "x")
+
+
+def npz_member_shape(z, name):
+    """The shape of member `name` of an open NpzFile from its .npy header,
+    without decompressing the array (the header is the first bytes of the
+    compressed stream, which the zip reader inflates incrementally)."""
+    with z.zip.open(name + ".npy") as fh:
+        version = np.lib.format.read_magic(fh)
+        if version == (1, 0):
+            shape, _fortran, _dtype = np.lib.format.read_array_header_1_0(fh)
+        else:
+            shape, _fortran, _dtype = np.lib.format.read_array_header_2_0(fh)
+    return tuple(int(s) for s in shape)
+
+
+class ShardIndex(object):
+    """The bank without its windows: every shard's small arrays read once,
+    `x` on demand per shard (the streaming loader, D-084; specs/SPEC.md
+    block 5).
+
+    Rows are numbered in the concatenated order of `concat_shards` (the
+    given path order, which callers sort): shard k holds rows
+    offsets[k]:offsets[k+1]. Every shard must carry the first shard's
+    contract digest, as `concat_shards` requires.
+
+    An `.npz` member is decompressed only when it is accessed, so reading
+    the small arrays costs no window.
+    """
+
+    def __init__(self, paths):
+        paths = list(paths)
+        if not paths:
+            raise ContractError("no shards given")
+        self.paths = paths
+        self.sidecar = None
+        self.n_shards = len(paths)
+        per_shard = []
+        n_rows = []
+        for p in paths:
+            side_path = os.path.splitext(p)[0] + ".json"
+            with open(side_path, "r") as fh:
+                sidecar = json.load(fh)
+            if sidecar.get("contract_digest") != contract_digest(sidecar):
+                raise ContractError("sidecar digest mismatch on read: %s" % side_path)
+            if self.sidecar is None:
+                self.sidecar = sidecar
+            elif sidecar["contract_digest"] != self.sidecar["contract_digest"]:
+                raise ContractError("shard %s has a different contract" % p)
+            with np.load(p) as z:
+                missing = [k for k in ROW_ARRAYS if k not in z.files]
+                if missing:
+                    raise ContractError("shard %s missing arrays: %r" % (p, missing))
+                small = dict((k, z[k]) for k in SMALL_ARRAYS)
+                # the windows' row count from the .npy header: x itself is
+                # NOT decompressed here (the whole point of the index)
+                x_shape = npz_member_shape(z, "x")
+                n = int(x_shape[0]) if x_shape else 0
+                if len(x_shape) != 2 or x_shape[1] != int(self.sidecar["W"]):
+                    raise ContractError("shard %s: x has shape %r, expected (n, %d)"
+                                        % (p, x_shape, int(self.sidecar["W"])))
+            for name in SMALL_ARRAYS:
+                ndim, kind = ROW_ARRAYS[name]
+                a = small[name]
+                if a.ndim != ndim or a.dtype.kind != kind:
+                    raise ContractError("%s: %s expected ndim %d kind %r, got ndim %d kind %r"
+                                        % (p, name, ndim, kind, a.ndim, a.dtype.kind))
+                if a.shape[0] != small["theta"].shape[0]:
+                    raise ContractError("%s: %s has %d rows, theta %d"
+                                        % (p, name, a.shape[0], small["theta"].shape[0]))
+            n_small = int(np.asarray(small["theta"]).shape[0])
+            if n != n_small:
+                raise ContractError("shard %s: x has %d rows, theta %d" % (p, n, n_small))
+            if n == 0:
+                raise ContractError("shard %s has zero rows" % p)
+            per_shard.append(small)
+            n_rows.append(n)
+        self.n_rows_per_shard = tuple(n_rows)
+        self.offsets = np.concatenate([[0], np.cumsum(n_rows)]).astype(np.int64)
+        self.n_rows = int(self.offsets[-1])
+        self.W = int(self.sidecar["W"])
+        for k in SMALL_ARRAYS:
+            setattr(self, k, np.concatenate([s[k] for s in per_shard], axis=0))
+        if not np.all(np.isfinite(self.theta)):
+            raise ContractError("theta contains non-finite values")
+
+    def rows_of(self, k):
+        """The global row ids of shard k, in order."""
+        return np.arange(self.offsets[k], self.offsets[k + 1], dtype=np.int64)
+
+    def shard_of_row(self, row):
+        """The shard index holding global row `row`."""
+        k = int(np.searchsorted(self.offsets, row, side="right") - 1)
+        if k < 0 or k >= self.n_shards:
+            raise IndexError(row)
+        return k
+
+    def load_x(self, k):
+        """The windows of shard k, (n_k, W) float32, read now."""
+        with np.load(self.paths[k]) as z:
+            x = np.asarray(z["x"], dtype=np.float32)
+        if x.ndim != 2 or x.shape[1] != self.W or x.shape[0] != self.n_rows_per_shard[k]:
+            raise ContractError("shard %s: x has shape %r, expected (%d, %d)"
+                                % (self.paths[k], x.shape, self.n_rows_per_shard[k], self.W))
+        if not np.all(np.isfinite(x)):
+            raise ContractError("shard %s: x contains non-finite values" % self.paths[k])
+        return x
+
+    def small_arrays(self):
+        """The small arrays as one dict (the shape of `concat_shards`' output
+        without `x`)."""
+        return dict((k, getattr(self, k)) for k in SMALL_ARRAYS)
+
+    def iter_batches(self, row_mask, batch_size):
+        """Yield (rows, x) over the masked rows in global order, in batches
+        of `batch_size` consecutive masked rows that may span shards -- the
+        SAME batches an in-memory caller forms from the concatenated split,
+        so sums over them agree bit for bit. At most two shards' windows
+        are resident at a time."""
+        row_mask = np.asarray(row_mask, dtype=bool).ravel()
+        if row_mask.size != self.n_rows:
+            raise ValueError("row_mask has %d entries, the bank %d rows"
+                             % (row_mask.size, self.n_rows))
+        batch_size = int(batch_size)
+        pending_rows, pending_x = [], []
+        n_pending = 0
+        for k in range(self.n_shards):
+            rows = self.rows_of(k)
+            keep = row_mask[rows]
+            if not keep.any():
+                continue
+            x = self.load_x(k)[keep]
+            rows = rows[keep]
+            start = 0
+            while start < rows.size:
+                take = min(batch_size - n_pending, rows.size - start)
+                pending_rows.append(rows[start:start + take])
+                pending_x.append(x[start:start + take])
+                n_pending += take
+                start += take
+                if n_pending == batch_size:
+                    yield (np.concatenate(pending_rows), np.concatenate(pending_x, axis=0))
+                    pending_rows, pending_x, n_pending = [], [], 0
+        if n_pending:
+            yield (np.concatenate(pending_rows), np.concatenate(pending_x, axis=0))
+
+
 def shape_report(arrays, sidecar):
     """A short human-readable summary, for the probe run's expected output."""
     n = np.asarray(arrays["x"]).shape[0]

@@ -93,7 +93,9 @@ tests/             the smoke test, the fake PBS, the synthetic graph
 python3 hpc/pipeline/tests/test_smoke_pipeline.py
 ```
 
-Block 1's smoke test under the fake PBS (`tests/fake_pbs/`): the schema's
+Block 1's smoke test under the fake PBS; blocks 4-6 (the runner) are tested by
+`hpc/joint/stage3/smoke_test_blocks_4_6.py` (about 3 minutes; needs torch and sbi).
+Block 1's test (`tests/fake_pbs/`): the schema's
 refusals, the state file, the qstat parser against a recorded davinci
 record, and the sequencer on a synthetic three-stage graph -- the dry run,
 a full run, a kill-and-resume with exactly one submission, a refusing
@@ -107,8 +109,8 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4 | built 2026-10-15, smoke-tested |
 | 2 | the bank stages S4-S6 | planned |
 | 3 | the input stages S1-S3 | planned |
-| 4 | the campaign prior in the runner | planned |
-| 5 | the streaming loader (D-084) | planned |
-| 6 | runner flags, checkpoint and resume | planned |
+| 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
+| 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |
+| 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch` | built 2026-10-15, smoke-tested |
 | 7 | the search and the best fit S7-S8 | planned |
 | 8 | end to end on the stand-in; delivery | planned |

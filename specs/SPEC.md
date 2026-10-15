@@ -31,7 +31,12 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   configuration (config v4)
 - the changes the later blocks make under `hpc/joint/` (listed per block in
   sec. 5 as they are written; the rest of `hpc/joint/` is their input, not
-  under test here)
+  under test here): `hpc/joint/stage1/latent_bank.py` (`ShardIndex`,
+  `npz_member_shape`), `stage2/joint_batches.py` (`ShardStream`, the
+  batcher's `sim_stream` and state), `stage2/joint_train.py` (`evaluate_npe_
+  shards`, the checkpoint, `StoppedAfterEpoch`), `stage2/joint_model.py`
+  (`flow_hidden_layers`), `stage3/run_joint_arms.py` (the campaign prior,
+  the streaming path, the flags), `stage3/smoke_test_blocks_4_6.py`
 
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
@@ -409,9 +414,237 @@ part of the pipeline.
 
 ### Block 2: the bank stages S4-S6 -- planned (`stages/bank.py`)
 ### Block 3: the input stages S1-S3 -- planned (`stages/real_extraction.py`, `stages/sim_redetection.py`, `stages/label_freeze.py`)
-### Block 4: the campaign prior in the runner -- planned (`hpc/joint/stage3/run_joint_arms.py`)
-### Block 5: the streaming loader -- planned (`hpc/joint/stage1/latent_bank.py`, `stage2/joint_batches.py`, `stage2/joint_train.py`, `stage3/run_joint_arms.py`)
-### Block 6: runner flags, checkpoint and resume -- planned (`hpc/joint/stage3/run_joint_arms.py`, `stage2/joint_train.py`, `stage2/joint_model.py`, the job scripts)
+### Block 4: the campaign prior in the runner
+
+- Module: `hpc/joint/stage3/run_joint_arms.py` (the prior block of `main`).
+- Public API: `campaign_log_prob(theta) -> (n,) float64` (0 inside the open
+  unit box (0, 1)^p, -inf outside), module-level; the runner's behaviour.
+- Rule: when the simulated sidecar's `latent_spec["kind"]` is `campaign`
+  (the Sbi-extractor bank, D-078: the prior is the declared box, the unit
+  box in the bank's coordinate), the runner builds no `LatentSBISpec` and
+  the prior floor is L_0 = -E[log p(theta)] = 0 nats on the report rows
+  (every row inside the box; a row outside is the existing refusal of
+  `mc_prior_floor`); the information gain is then Delta_hat = -L. Any other
+  kind (the bench banks' mixture prior) takes today's path unchanged. The
+  real bank's `latent_spec["kind"]` `campaign_real` with `theta_withheld`
+  false skips the pseudo-real endpoint as today; `cluster_scores` on a bank
+  whose `cls` is one value returns its "too few rows" note.
+- `--sbi-hpc-dir` defaults to this repository's `hpc/` (the runner lives in
+  it) when that folder holds `npe_diagnostics.py`, so the spectrum's source
+  is `repo:` rather than the local fallback unless the flag names another
+  tree (the usage guide's open point, sec. 10).
+- Test oracles (`hpc/joint/stage3/smoke_test_blocks_4_6.py`, section B4): on the
+  Sbi-extractor fixture's banks (3 shards, 24 rows, W 18000, p 23; 72 real
+  rows) a training element of arm A1 runs to completion and writes its
+  record with `L0` = 0.0 exactly, `delta_hat` = -`L`, `endpoint_primary` =
+  "simulated (arm R absent)" when no real shards are given and the
+  replicate block present when they are; the Stage 3 suite still passes
+  (33 checks: the bench path unchanged).
+- Data flow: consumed by block 7's trials; feeds nothing else.
+- Confirmed: yes 2026-10-15 (D-078; the user's "GO on with 4 5 and 6").
+- Status: smoke-tested 2026-10-15 (`smoke_test_blocks_4_6.py` B4: pass; the Stage 3 suite 33/33 with `L_primary` 1.658521682024002 unchanged from `9fcbc88`)
+
+### Block 5: the streaming loader (D-084)
+
+- Modules: `hpc/joint/stage1/latent_bank.py` (`ShardIndex`),
+  `stage2/joint_batches.py` (`ShardStream`; `ThreeStreamBatcher(sim_stream=)`),
+  `stage2/joint_train.py` (`train_joint(val_eval=)`, `evaluate_npe_shards`),
+  `stage3/run_joint_arms.py` (`--buffer-shards`).
+- Public API: `ShardIndex(paths)`: `n_rows` (total), `n_shards`, `offsets`
+  (shard k holds rows `offsets[k]:offsets[k+1]` of the concatenated order,
+  which is the sorted path order, the same as `concat_shards`), the small
+  per-row arrays concatenated (`theta` (n, p) float32, `cls`, `donor`,
+  `well`, `batch`, `subregion`, `window_idx`, `realisation_id`,
+  `contaminated`, `nu`), `sidecar` (the first shard's; every shard's
+  `contract_digest` must equal it, else `ContractError`), `load_x(k) ->
+  (n_k, W) float32` (the shard's windows, read on demand; `x` is never held
+  for more than the shards a caller keeps), `rows_of(k)`.
+  `ShardStream(index, row_mask, batch_size, buffer_shards, seed)`: `next()
+  -> (theta (B, p), x (B, W), rows (B,) int64 global row ids)`;
+  `state_dict()` / `load_state_dict()`; `n_rows` (the masked rows);
+  `resident_shards` (the shards whose `x` is in memory now).
+- The sampling scheme (D-084's rolling buffer, the quota rule): the stream
+  walks the shards in passes. In each pass the shard order is a permutation
+  drawn from the stream's own generator (seed + 1, the simulated stream's
+  generator as today; a shard still resident from the previous pass is
+  moved behind the first later non-resident one so it is not loaded twice);
+  the buffer holds the masked rows of at most K = `buffer_shards` shards;
+  every resident shard k carries a quota q_k, set to its number of masked
+  rows n_k when it is loaded (plus the overshoot carried from its previous
+  pass, below). Each of the B rows of a batch picks a resident shard with
+  probability q_k / sum_j q_j over the resident shards, then one of that
+  shard's masked rows uniformly, and q_k decreases by one per pick (the
+  picks of one batch are drawn from the quotas as they stand at the start
+  of the batch, so a quota can end a batch below zero: that overshoot is
+  carried into the shard's quota at its next load, which keeps the draws
+  per pass exact over many passes). A shard whose quota is spent is evicted
+  and the next shard of the pass loaded. Consequences: every row's expected
+  number of draws per pass is exactly 1 whatever the shards' sizes (shard
+  k receives n_k picks per pass, spread uniformly over its n_k rows); a pass
+  is n_rows / B steps; at most K shards' windows are ever resident. Shards
+  with no masked row are skipped. When K >= n_shards the buffer holds every
+  shard in the natural order, never evicts and never permutes: the row
+  order is the concatenated order of the masked rows and `next()` draws
+  `torch.randint(0, n_rows, (B,), generator)` exactly as `ThreeStreamBatcher.
+  sim_batch` draws from the in-memory tensors, so the two paths produce
+  identical batches at the same seed (the equivalence oracle below). With K
+  < n_shards consecutive batches come from the same few shards (one task's
+  simulations each); D-084 leaves the size of that effect on training to be
+  measured on the bench (the measurement oracle below), not decided here.
+  A first design (advance every n_oldest / B steps) was replaced before it
+  was tested because its expected draws per row depend on the neighbouring
+  shards' sizes (4/13 + 9/25 for sizes 4, 9, 16 at K = 2), and Giulia's
+  shards range from a task's full 10,000-row chunk to its remainder.
+- `train_joint(..., val_eval=None)`: when given, `val_eval()` (a callable
+  returning the selection-split NLL in nats per row) replaces the
+  in-memory `evaluate_npe(model, val_theta, val_x)`; `evaluate_npe_shards
+  (model, index, row_mask, batch_size)` computes it shard by shard: the
+  mean over the masked rows of -log q_omega(theta_i | h_psi(x_i)), the same
+  sum and count as `evaluate_npe` on the concatenated tensors (float64
+  accumulation of per-row float32 losses in both).
+- `run_joint_arms.py --buffer-shards K` (int, default 0 = today's in-memory
+  path): with K >= 1 the runner builds a `ShardIndex`, the grouped split
+  from `index.donor` (the same `grouped_split`, the same hash), the stream
+  over the training rows, the selection NLL by `evaluate_npe_shards`, the
+  report-split per-row NLL and the embedding `z` shard by shard in row
+  order, and the diagnostics' posterior samples on the first 256 report rows
+  in row order (today's cap, `:561`), loading only the shards those rows
+  lie in. The record gains `loader: {"buffer_shards": K, "n_shards": ...}`.
+  Memory: at most K shards' `x` plus one shard being evaluated, plus the
+  small arrays; never the bank.
+- Library calls relied on: `numpy.load` (an `.npz` member is decompressed
+  only when accessed, so the small arrays are read without `x`),
+  `torch.randint`, `torch.randperm` with a `torch.Generator`.
+- Custom code: the rolling-buffer schedule (checked: `torch.utils.data`'s
+  `DataLoader` with a `Sampler` cannot bound memory to K shards while
+  sampling with replacement across them without a custom dataset of the
+  same size as this code, and it would add worker processes the PBS job
+  does not want).
+- Test oracles (`hpc/joint/stage3/smoke_test_blocks_4_6.py`, section B5), on the
+  fixture banks and on a synthetic 6-shard bank of unequal sizes:
+  - index: `ShardIndex` reproduces `concat_shards`' small arrays exactly
+    (`assert_array_equal`) and its `offsets`; `load_x(k)` equals the k-th
+    slice of the concatenated `x`; a shard of another contract is refused.
+  - equivalence (K >= n_shards): the stream's first 50 batches equal the
+    in-memory batcher's at the same seed (row ids and tensors, bit for bit);
+    `run_joint_arms.py --buffer-shards 99` on the fixture gives the same
+    `split_hash`, the same `history` and the same `L` as `--buffer-shards 0`
+    at one thread (bit for bit: `torch.set_num_threads(1)`).
+  - coverage and uniformity (K = 2 on 8 shards of unequal sizes): over 400
+    passes every masked row is drawn, no unmasked row is ever drawn, the
+    draws per row have mean 400 within 2 % and a coefficient of variation
+    below 0.10 (the Poisson spread at 400 expected draws is 0.05; the
+    tolerance is twice that), the draws per shard equal 400 n_k within 2 %
+    (the quota rule's exactness), and the steps taken equal 400 n_rows / B
+    to within one batch; `resident_shards` never exceeds K.
+  - `evaluate_npe_shards` equals `evaluate_npe` on the concatenated tensors
+    to 1e-6 nats (float64 sums of float32 terms in another order; 1e-6 is
+    far above the roundoff of 24 rows and far below any real difference).
+  - the measurement D-084 asks for: on the fixture, `L` at K = 1 against K
+    = 99 after 4 epochs at one seed, reported (a number, not a pass/fail:
+    the fixture is too small to decide it; the bench banks on davinci are
+    the place, block 8's rehearsal log).
+  - state: a stream saved after 37 batches and reloaded into a fresh
+    stream yields the same next 20 batches as the uninterrupted one.
+- Data flow: consumed by block 6 (the checkpoint carries the stream's
+  state) and by block 7's trials (`--buffer-shards` from `loader.buffer_
+  shards`).
+- Cost of the streaming path, measured here on one 10,000 x 18,000 float32
+  shard of random data (667 MB compressed): 2 ms to read the row count from
+  the `.npy` header against 4.7 s to decompress the windows `[SANDBOX
+  2026-10-15]`. So the index starts in seconds on 155 shards; each pass of
+  the stream, each selection-split evaluation (every epoch) and each of the
+  report-split passes decompresses every shard once more, a few minutes
+  per epoch against the hours an epoch of the costliest configuration
+  trains [estimate: the plan's sec. 4b].
+- Confirmed: yes 2026-10-15 (D-084 as decided; the memory-mapped
+  alternative Claude proposed on 2026-10-15 was not taken up and is not
+  built; it stays a proposal in sec. 8).
+- Status: smoke-tested 2026-10-15 (`smoke_test_blocks_4_6.py` B5: 5 checks
+  pass; the D-084 measurement on the 8-shard fixture after 3 epochs: L at
+  K = 99 2.9094, at K = 1 3.1878 -- a number, not a verdict; the bench
+  banks on davinci decide, block 8)
+
+### Block 6: runner flags, the per-epoch checkpoint and `--resume`
+
+- Modules: `hpc/joint/stage3/run_joint_arms.py`, `stage2/joint_train.py`,
+  `stage2/joint_model.py`.
+- New runner flags, every default today's behaviour: `--passes P` (float;
+  with it the steps per epoch are S = ceil(P / N_ep * n_train / B_sim),
+  sec. 2.3, computed after the split and written to the record as
+  `steps_per_epoch_effective` with `passes`; without it `--steps-per-epoch`
+  as today); `--patience` (int, default 99: today's `TrainConfig(patience=
+  99)`); `--split-fracs TR SEL REP` (default 0.7 0.15 0.15; refused unless
+  they sum to 1 within 1e-9); `--split-seed` (default: `--seed`; drives
+  `grouped_split`'s permutation alone, `--seed` keeps torch, the stream
+  generators and the shuffle); `--head-pool-ops CODE` (0 or 1, default 0 =
+  `BackboneConfig`'s default `("mean",)`; decoded by `condition_space.
+  decode_head_pool_ops` and passed into `BackboneConfig(head_pool_ops=)`:
+  D-086); `--flow-hidden-layers K` (default None = sbi's int behaviour, F-ac;
+  with K the flow is built with `hidden_features=[h] * K`); `--threads N`
+  (default: the `NCPUS` environment variable when set, else torch's own;
+  applied by `torch.set_num_threads` and printed); `--resume`; `--buffer-
+  shards` (block 5). The output stem is `<arm>_seed<k>` when the split seed
+  equals the seed (unchanged) and `<arm>_split<s>_seed<k>` otherwise (it
+  still ends in `_seed<k>`, which the tuner's glob `*_seed%d.json` reads).
+- The checkpoint: `train_joint(..., ckpt_path=None, resume=False)` writes,
+  at the end of every epoch, `<ckpt_path>` (atomic: `.tmp` then `os.
+  replace`) holding `format` "joint_train_ckpt/1", `epoch` (the last
+  completed), `step`, `model_state`, `optimizer_state`, `history`, `best`,
+  `best_epoch`, `best_state`, `torch_rng` (`torch.get_rng_state()`),
+  `batcher_state` (every stream generator's state and, under streaming, the
+  `ShardStream` state), and `config` (`TrainConfig.to_dict()`). With
+  `resume=True` and the file present, the loop restores all of it and
+  continues from `epoch + 1`; absent, it starts fresh (so a job may always
+  pass `--resume`). The early-stopping counter (best, best_epoch,
+  best_state) is part of the state, so a resumed run stops at the epoch the
+  uninterrupted run stops at (D-087's rule, sec. 2.3). The runner's
+  checkpoint path is `<stem>_train_ckpt.pt`; the final `<stem>_ckpt.pt`
+  (the model alone, today's) is unchanged, and the training checkpoint is
+  removed once the final record is written.
+- Test oracles (`hpc/joint/stage3/smoke_test_blocks_4_6.py`, section B6):
+  - regression: a call without any new flag gives today's stem, split
+    hash, `steps_per_epoch` and (on the fixture, 1 thread) today's `L` bit
+    for bit against the block-4 run.
+  - `--passes`: S equals the formula on the fixture's split (e.g. P 2, N_ep
+    4, n_train 16, B 4: S = 2); the rows drawn over N_ep epochs are N_ep *
+    S * B >= P * n_train and < P * n_train + N_ep * B.
+  - `--split-fracs 0.85 0.10 0.05` on 2,612 synthetic donor ids at seed 0:
+    2,220 / 261 / 131 donors (the check_config_v2 number); fractions
+    summing to 0.95 are refused; a call without the flag gives today's hash.
+  - `--split-seed`: two runs at seeds 1 and 2 with `--split-seed 1` share
+    the `group` array of their per-row files and differ in `model_sha256`;
+    `--split-seed` equal to `--seed` gives today's stem.
+  - `--head-pool-ops 1`: the head's in-features are three times the
+    summed stage widths (the head's Linear `in_features` read from the
+    model); code 0 equals today's model (same parameter count and names).
+  - `--flow-hidden-layers 2` at 12 transforms: every conditioner has 2
+    hidden layers (the zuko MLP's Linear count), against 12 without the
+    flag (F-ac).
+  - `--threads`: the record and the log carry the thread count; with
+    `NCPUS=3` in the environment and no flag, 3.
+  - `--patience 2` on a run whose validation stops improving stops early
+    (the history is shorter than `--epochs`) and restores the best epoch's
+    weights (`val_npe` of the last history entry >= the minimum).
+  - resume: a run with `--epochs 5` killed after epoch 2 (simulated: `--stop-after-epoch 2`, which ends the process after the
+    checkpoint of epoch 2 with exit 0 and a `stopped after epoch 2` line -- a
+    SIGKILL would do the same, the flag makes the test deterministic and
+    lets a long fit be split by hand) and re-run with `--resume --epochs 5` gives the
+    uninterrupted 5-epoch run's `history` (every number) and `model_sha256`
+    bit for bit at one thread, and its stop epoch under `--patience 2`.
+- Not in the checkpoint: the DSN loss adapter's separation-ramp counter
+  (arms with `lambda_dsn > 0`: A2, A2s, A3) and the two-stage arms'
+  pre-training; a resumed run of those arms restarts the ramp. Arm A1 (the
+  Giulia arm, D-039) and A5 carry no such state and resume exactly.
+- Data flow: block 7 passes every flag from the configuration; the
+  pipeline's resubmission adds `--resume`.
+- Confirmed: yes 2026-10-15 (D-086..D-089; the user's "GO on with 4 5 and
+  6").
+- Status: smoke-tested 2026-10-15 (`smoke_test_blocks_4_6.py` B6: the flags
+  and the resume pass bit for bit at one thread, dropout 0.1 included; the
+  Stage 2 suite 40/40 + 1 skip, the Stage 1 suite 46/46 + 1 skip, the
+  Stage 4 suites 9/9 and 8/8 under `SKIP_CONDA=1`, the Sbi-extractor bank
+  suite 15/15 + 1 skip, all unchanged)
 ### Block 7: the search and the best fit S7-S8 -- planned (`stages/search.py`, `stages/best_fit.py`, `hpc/joint/stage4/npe_tune_joint.py`, `stage4/joint_space.py`)
 ### Block 8: end to end on the stand-in and the delivery -- planned
 
@@ -439,6 +672,13 @@ run on davinci is `--dry-run`, then the plain command; the pass lines are
 stated in the README.
 
 ## 8. Open questions
+
+- Block 5's alternative, proposed 2026-10-15 and not taken up: decompress
+  the windows once into a plain float32 file (about 45 GB on disk for
+  Giulia) and read it through a memory map, which gives exactly i.i.d.
+  batches with bounded memory; D-084's rolling buffer stands until the bench
+  measurement (block 8) says the within-buffer correlation matters (raised
+  2026-10-15).
 
 - Whether PBS Pro on davinci honours an array throttle (`-J 0-49%25`) for
   the search's `max_concurrent_trials` (the bank's array used `%20`, so it

@@ -24,6 +24,7 @@ Pure ASCII, LF only.
 
 import contextlib
 import math
+import os
 
 import torch
 
@@ -34,7 +35,10 @@ def _nullcontext():
 
 from joint_losses import stop_grad_params
 
-__all__ = ["TrainConfig", "gradient_cosine", "train_joint", "evaluate_npe"]
+__all__ = ["TrainConfig", "gradient_cosine", "train_joint", "evaluate_npe",
+           "evaluate_npe_shards", "CKPT_FORMAT", "load_train_checkpoint"]
+
+CKPT_FORMAT = "joint_train_ckpt/1"
 
 
 class TrainConfig(object):
@@ -121,15 +125,65 @@ def evaluate_npe(model, theta, x, batch_size=512):
     return total / max(n, 1)
 
 
+def evaluate_npe_shards(model, index, row_mask, batch_size=512):
+    """`evaluate_npe` over the masked rows of a ShardIndex with at most two
+    shards' windows in memory (block 5, D-084). The batches are the SAME
+    `batch_size` runs of consecutive masked rows that `evaluate_npe` forms
+    on the concatenated split (`ShardIndex.iter_batches`), so the float32
+    batch sums and the float64 total agree with it bit for bit."""
+    import numpy as np
+    row_mask = np.asarray(row_mask, dtype=bool).ravel()
+    if not row_mask.any():
+        raise ValueError("evaluate_npe_shards called on an empty split")
+    model.eval()
+    total, n = 0.0, 0
+    theta_all = np.asarray(index.theta)
+    with torch.no_grad():
+        for rows, x in index.iter_batches(row_mask, batch_size):
+            t = torch.as_tensor(theta_all[rows], dtype=torch.float32)
+            xx = torch.as_tensor(x, dtype=torch.float32)
+            l = model.npe_loss(t, xx)
+            total += float(l.sum())
+            n += int(t.shape[0])
+    model.train()
+    return total / max(n, 1)
+
+
+def _save_checkpoint(path, payload):
+    tmp = path + ".tmp"
+    torch.save(payload, tmp)
+    os.replace(tmp, path)
+
+
+def load_train_checkpoint(path):
+    ck = torch.load(path, map_location="cpu", weights_only=False)
+    if ck.get("format") != CKPT_FORMAT:
+        raise ValueError("%s: unknown training checkpoint format %r"
+                         % (path, ck.get("format")))
+    return ck
+
+
 def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
                 dsn_loss_fn=None, rep_criterion=None, n_posterior_draws=256,
-                log_fn=print, seed=0):
+                log_fn=print, seed=0, val_eval=None, ckpt_path=None,
+                resume=False, stop_after_epoch=None):
     """Run the loop. Returns a history list, one dict per epoch.
 
     dsn_loss_fn : callable(z, c) -> scalar, or None. Injected rather than
         imported, so this module does not depend on the DSN's loss internals
         and can be tested without the DSN repo present.
     rep_criterion : ReplicateConsistencyLoss or None.
+    val_eval : callable() -> float, or None [block 5]. When given it replaces
+        evaluate_npe(model, val_theta, val_x) as the selection-split NLL
+        (the streaming runner evaluates shard by shard).
+    ckpt_path : str or None [block 6]. When given, a checkpoint is written
+        at the end of every epoch (model, optimizer, epoch, history, the
+        early-stopping state, the torch RNG state, the batcher's generators
+        and stream), atomically. With `resume` and the file present, the
+        loop restores all of it and continues from the next epoch; absent,
+        it starts fresh. `stop_after_epoch` ends the loop after that epoch's
+        checkpoint by raising StoppedAfterEpoch (carrying the partial
+        history), so a caller cannot mistake a partial history for a result.
     """
     torch.manual_seed(int(seed))
     # Only parameters that can move. A frozen encoder (arms A0, A0s, A_ref)
@@ -149,8 +203,39 @@ def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
     step = 0
     best, best_epoch, best_state = math.inf, -1, None
     history = []
+    first_epoch = 0
 
-    for epoch in range(cfg.epochs):
+    # [block 6] resume from the per-epoch checkpoint when asked and present.
+    if ckpt_path and resume and os.path.isfile(ckpt_path):
+        ck = load_train_checkpoint(ckpt_path)
+        if ck["config"] != cfg.to_dict():
+            raise ValueError("%s was written under another TrainConfig: %r vs %r"
+                             % (ckpt_path, ck["config"], cfg.to_dict()))
+        model.load_state_dict(ck["model_state"])
+        opt.load_state_dict(ck["optimizer_state"])
+        history = list(ck["history"])
+        step = int(ck["step"])
+        best, best_epoch = float(ck["best"]), int(ck["best_epoch"])
+        best_state = ck["best_state"]
+        torch.set_rng_state(ck["torch_rng"])
+        if ck.get("batcher_state") is not None and hasattr(batcher, "load_state_dict"):
+            batcher.load_state_dict(ck["batcher_state"])
+        first_epoch = int(ck["epoch"]) + 1
+        if log_fn is not None:
+            log_fn("resumed from %s: %d epoch(s) done, best val %s at epoch %d"
+                   % (ckpt_path, first_epoch, ("%.4f" % best) if best < math.inf else "-",
+                      best_epoch))
+        # The stop test of the checkpointed epoch, re-applied: a run killed
+        # between that epoch's checkpoint and its early stop must not train
+        # one epoch more than the uninterrupted run.
+        has_val0 = val_eval is not None or val_theta is not None
+        if has_val0 and cfg.patience > 0 and (first_epoch - 1) - best_epoch >= cfg.patience:
+            if log_fn is not None:
+                log_fn("early stop: no NPE validation improvement for %d epochs"
+                       % cfg.patience)
+            first_epoch = cfg.epochs
+
+    for epoch in range(first_epoch, cfg.epochs):
         acc = {"npe": 0.0, "dsn": 0.0, "rep": 0.0, "n": 0,
                "T": [], "p_eff": [], "n_p_eff_invalid": 0}
 
@@ -224,8 +309,9 @@ def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
             "ramp": rep_criterion.ramp if rep_criterion is not None else None,
         }
 
-        if val_theta is not None and val_x is not None:
-            rec["val_npe"] = evaluate_npe(model, val_theta, val_x)
+        if val_eval is not None or (val_theta is not None and val_x is not None):
+            rec["val_npe"] = (val_eval() if val_eval is not None
+                              else evaluate_npe(model, val_theta, val_x))
             if rec["val_npe"] < best - 1e-6:
                 best, best_epoch = rec["val_npe"], epoch
                 best_state = {k: v.detach().clone()
@@ -259,13 +345,42 @@ def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
                       rec["T"], rec["p_eff"], rec["ramp"],
                       ("%.4f" % rec["val_npe"]) if "val_npe" in rec else "-"))
 
-        if val_theta is not None and cfg.patience > 0 \
-                and epoch - best_epoch >= cfg.patience:
+        # [block 6] the per-epoch checkpoint, before the stop test, so a run
+        # that stops here resumes to the same decision.
+        if ckpt_path:
+            _save_checkpoint(ckpt_path, {
+                "format": CKPT_FORMAT, "epoch": epoch, "step": step,
+                "model_state": model.state_dict(),
+                "optimizer_state": opt.state_dict(),
+                "history": list(history), "best": float(best),
+                "best_epoch": int(best_epoch), "best_state": best_state,
+                "torch_rng": torch.get_rng_state(),
+                "batcher_state": (batcher.state_dict()
+                                  if hasattr(batcher, "state_dict") else None),
+                "config": cfg.to_dict()})
+
+        has_val = val_eval is not None or val_theta is not None
+        if has_val and cfg.patience > 0 and epoch - best_epoch >= cfg.patience:
             if log_fn is not None:
                 log_fn("early stop: no NPE validation improvement for %d epochs"
                        % cfg.patience)
             break
 
+        if stop_after_epoch is not None and epoch >= int(stop_after_epoch):
+            if log_fn is not None:
+                log_fn("stopped after epoch %d (checkpoint %s); resume to continue"
+                       % (epoch, ckpt_path))
+            raise StoppedAfterEpoch(epoch, history)
+
     if best_state is not None:
         model.load_state_dict(best_state)
     return history
+
+
+class StoppedAfterEpoch(Exception):
+    """train_joint ended at `stop_after_epoch`; `history` is partial."""
+
+    def __init__(self, epoch, history):
+        Exception.__init__(self, "stopped after epoch %d" % epoch)
+        self.epoch = int(epoch)
+        self.history = list(history)

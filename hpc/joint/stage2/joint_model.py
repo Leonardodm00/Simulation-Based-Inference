@@ -195,7 +195,7 @@ class JointDSNNPE(nn.Module):
 def build_joint_model(backbone, prior, theta_example, x_example,
                       hidden_features=64, num_transforms=5, num_bins=10,
                       z_score_theta="transform_to_unconstrained",
-                      z_score_x="none", meta=None):
+                      z_score_x="none", meta=None, flow_hidden_layers=None):
     """Build the estimator around an already-constructed backbone.
 
     `backbone` is passed in rather than built here so that the DSN's
@@ -204,11 +204,22 @@ def build_joint_model(backbone, prior, theta_example, x_example,
 
     `prior` is REQUIRED whenever z_score_theta transforms to the unconstrained
     space -- see the module docstring.
+
+    `flow_hidden_layers` [block 6, F-ac]: None keeps sbi 0.27.0's reading of
+    an int `hidden_features` (each spline conditioner gets `num_transforms`
+    hidden layers of that width); an int K hands sbi the list
+    `[hidden_features] * K`, so every conditioner has K hidden layers
+    whatever `num_transforms` is.
     """
     assert_no_batchnorm(backbone)
+    hf = hidden_features
+    if flow_hidden_layers is not None:
+        if int(flow_hidden_layers) < 1:
+            raise ValueError("flow_hidden_layers must be >= 1")
+        hf = [int(hidden_features)] * int(flow_hidden_layers)
     kwargs = dict(model="zuko_nsf", embedding_net=backbone,
                   z_score_theta=z_score_theta, z_score_x=z_score_x,
-                  hidden_features=hidden_features,
+                  hidden_features=hf,
                   num_transforms=num_transforms, num_bins=num_bins)
     if z_score_theta == "transform_to_unconstrained":
         if prior is None:
@@ -223,7 +234,9 @@ def build_joint_model(backbone, prior, theta_example, x_example,
     meta.setdefault("z_score_x", z_score_x)
     meta.setdefault("flow", {"hidden_features": hidden_features,
                              "num_transforms": num_transforms,
-                             "num_bins": num_bins})
+                             "num_bins": num_bins,
+                             "hidden_layers": (None if flow_hidden_layers is None
+                                               else int(flow_hidden_layers))})
     meta.setdefault("backbone_repr", repr(getattr(backbone, "cfg", None)))
     return JointDSNNPE(estimator, meta=meta)
 

@@ -52,13 +52,16 @@ for _p in (os.path.join(_HERE, "..", "stage1"), os.path.join(_HERE, "..", "stage
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import math                                                # noqa: E402
+
 import dsn_locate                                          # noqa: E402
-from latent_bank import concat_shards                      # noqa: E402
+from latent_bank import ShardIndex, concat_shards          # noqa: E402
 from latent_sbi_simulator import LatentSBISpec, prior_log_prob  # noqa: E402
-from joint_batches import BatchSpec, ThreeStreamBatcher    # noqa: E402
+from joint_batches import BatchSpec, ShardStream, ThreeStreamBatcher  # noqa: E402
 from joint_losses import ReplicateConsistencyLoss, box_prior_covariance  # noqa: E402
 from joint_model import build_joint_model                  # noqa: E402
-from joint_train import TrainConfig, evaluate_npe, train_joint  # noqa: E402
+from joint_train import (StoppedAfterEpoch, TrainConfig, evaluate_npe,  # noqa: E402
+                         evaluate_npe_shards, train_joint)
 from joint_diagnostics import (cluster_scores, effective_rank,  # noqa: E402
                                information_gain, local_information_spectrum,
                                load_repo_diagnostics, mc_prior_floor,
@@ -266,8 +269,40 @@ def build_parser():
     p.add_argument("--dsn-main-dir", default=None,
                    help="explicit DSN tree; default is this repo's hpc/dsn. "
                         "DSN_MAIN_DIR is ignored (migration step 2)")
-    p.add_argument("--sbi-hpc-dir", default=None)
+    p.add_argument("--sbi-hpc-dir", default=None,
+                   help="the hpc/ tree whose npe_diagnostics gives the spectrum; "
+                        "default: this repository's (block 4)")
     p.add_argument("--dry-run", action="store_true")
+    # [blocks 5-6, the pipeline] Every flag below defaults to the behaviour
+    # at 9fcbc88, so a call without it is unchanged (specs/SPEC.md sec. 4).
+    p.add_argument("--buffer-shards", type=int, default=0,
+                   help="[block 5, D-084] >= 1: stream the simulated bank "
+                        "through a rolling buffer of this many shards; 0 "
+                        "(default): the whole bank in memory, as before")
+    p.add_argument("--passes", type=float, default=None,
+                   help="[block 6] training budget in passes over the training "
+                        "split: steps per epoch = ceil(passes / epochs * "
+                        "n_train / b_sim); overrides --steps-per-epoch")
+    p.add_argument("--patience", type=int, default=99,
+                   help="[block 6] early-stopping patience in epochs (99 = as before)")
+    p.add_argument("--split-fracs", type=float, nargs=3, default=(0.7, 0.15, 0.15),
+                   metavar=("TRAIN", "SEL", "REPORT"),
+                   help="[block 6, D-088] the grouped split's fractions")
+    p.add_argument("--split-seed", type=int, default=None,
+                   help="[block 6, D-089] the donor split's seed; default --seed")
+    p.add_argument("--head-pool-ops", type=int, default=0, choices=(0, 1),
+                   help="[block 6, D-086] 0 = mean over time per stage (as "
+                        "before), 1 = mean, max and std")
+    p.add_argument("--flow-hidden-layers", type=int, default=None,
+                   help="[block 6, F-ac] hidden layers per spline conditioner; "
+                        "default: sbi's own (num_transforms layers)")
+    p.add_argument("--threads", type=int, default=None,
+                   help="[block 6] torch threads; default: $NCPUS when set")
+    p.add_argument("--resume", action="store_true",
+                   help="[block 6] continue from <stem>_train_ckpt.pt if present")
+    p.add_argument("--stop-after-epoch", type=int, default=None,
+                   help="[block 6] end after this epoch's checkpoint, exit 0, "
+                        "no record (resume to continue)")
     return p
 
 
@@ -279,7 +314,38 @@ def load_arm(pattern):
     return arrays, sidecar, paths
 
 
-def make_backbone(W, E, dsn_main_dir, seed, encoder=None):
+def load_arm_index(pattern):
+    """[block 5] The simulated bank as a ShardIndex: the small arrays of
+    every shard once, the windows on demand (D-084)."""
+    paths = sorted(glob.glob(pattern))
+    if not paths:
+        raise SystemExit("no shards matched %r" % pattern)
+    return ShardIndex(paths), paths
+
+
+def campaign_log_prob(theta):
+    """[block 4, D-078] log p(theta) of the campaign prior: uniform on the
+    open unit box (0, 1)^p -- 0 inside, -inf outside. Vectorised over rows."""
+    t = np.atleast_2d(np.asarray(theta, dtype=np.float64))
+    inside = np.all((t > 0.0) & (t < 1.0), axis=1)
+    return np.where(inside, 0.0, -np.inf)
+
+
+def is_campaign_bank(sidecar):
+    """[block 4] True for a bank the Sbi-extractor exporter wrote from a
+    simulation campaign (latent_spec.kind == 'campaign'); False for the
+    bench banks (the mixture prior of eq. 7)."""
+    spec = sidecar.get("latent_spec") or {}
+    return isinstance(spec, dict) and spec.get("kind") == "campaign"
+
+
+def default_sbi_hpc_dir():
+    """[block 4] This repository's hpc/ tree, when it holds npe_diagnostics."""
+    d = os.path.abspath(os.path.join(_HERE, "..", ".."))
+    return d if os.path.isfile(os.path.join(d, "npe_diagnostics.py")) else None
+
+
+def make_backbone(W, E, dsn_main_dir, seed, encoder=None, head_pool_ops=0):
     """The real DSN backbone if available, else a small GroupNorm CNN.
 
     `encoder` is an optional dict of the searched encoder axes
@@ -289,6 +355,10 @@ def make_backbone(W, E, dsn_main_dir, seed, encoder=None):
     ignores them: it exists so the bench runs without the DSN repo at all,
     and a fallback that pretended to honour an architecture axis would make
     a search over that axis look meaningful when it was not.
+
+    `head_pool_ops` [block 6, D-086]: the search coordinate 0 or 1, decoded
+    by the DSN's condition_space (0 = ("mean",), BackboneConfig's default
+    and what every call built before; 1 = ("mean", "max", "std")).
     """
     torch.manual_seed(int(seed))
     enc = dict(encoder or {})
@@ -298,6 +368,8 @@ def make_backbone(W, E, dsn_main_dir, seed, encoder=None):
         if d not in sys.path:
             sys.path.insert(0, d)
         from backbone import BackboneConfig, build_backbone
+        import condition_space as _CS
+        ops = _CS.decode_head_pool_ops(int(head_pool_ops))
         return build_backbone(BackboneConfig(
             depth_exponent=int(enc.get("depth_exponent", 3)),
             width_multiplier=float(enc.get("width_multiplier", 2.0)),
@@ -305,7 +377,11 @@ def make_backbone(W, E, dsn_main_dir, seed, encoder=None):
             head_fusion=bool(int(enc.get("head_fusion", 0))),
             dropout=float(enc.get("dropout", 0.0)),
             stem_width=16,
+            head_pool_ops=tuple(ops),
             embedding_size=E)), "dsn"
+    if int(head_pool_ops) != 0:
+        print("[warn] the fallback backbone ignores head_pool_ops=%d: it has "
+              "no DSN head." % int(head_pool_ops), flush=True)
     if enc:
         print("[warn] the fallback backbone ignores the encoder axes %s: a "
               "search over them means nothing without the DSN tree, and "
@@ -331,11 +407,84 @@ def make_backbone(W, E, dsn_main_dir, seed, encoder=None):
     return SmallBackbone(E), "fallback"
 
 
+def _rows_x(index, rows):
+    """[block 5] The windows of the given global rows, loaded shard by shard
+    in row order (rows must be sorted)."""
+    rows = np.asarray(rows, dtype=np.int64)
+    if rows.size == 0:
+        return torch.zeros((0, index.W), dtype=torch.float32)
+    parts = []
+    shards = np.unique([index.shard_of_row(int(r)) for r in rows])
+    for k in shards:
+        lo, hi = index.offsets[k], index.offsets[k + 1]
+        sel = rows[(rows >= lo) & (rows < hi)] - lo
+        parts.append(torch.as_tensor(index.load_x(k)[sel], dtype=torch.float32))
+    return torch.cat(parts, dim=0)
+
+
+def _per_row_nll_shards(model, index, rows, batch_size=256):
+    """[block 5] per_row_nll over sorted global rows with at most two shards
+    resident; the batches are per_row_nll's own (256 consecutive rows of
+    the split), so the values agree with the in-memory path bit for bit."""
+    mask = np.zeros(index.n_rows, dtype=bool)
+    mask[np.asarray(rows, dtype=np.int64)] = True
+    theta_all = np.asarray(index.theta)
+    out = []
+    model.eval()
+    with torch.no_grad():
+        for r, x in index.iter_batches(mask, batch_size):
+            th = torch.as_tensor(theta_all[r], dtype=torch.float32)
+            xx = torch.as_tensor(x, dtype=torch.float32)
+            out.append(model.npe_loss(th, xx).cpu().numpy())
+    model.train()
+    # float64, as per_row_nll returns (its mean is the record's L)
+    return (np.concatenate(out) if out else np.zeros(0)).astype(np.float64)
+
+
+def _encode_shards(model, index, rows, batch_size=256):
+    """[block 5] z = h_psi(x) over sorted global rows, at most two shards
+    resident, in 256-row batches."""
+    mask = np.zeros(index.n_rows, dtype=bool)
+    mask[np.asarray(rows, dtype=np.int64)] = True
+    out = []
+    model.eval()
+    with torch.no_grad():
+        for _r, x in index.iter_batches(mask, batch_size):
+            out.append(model.encode(torch.as_tensor(x, dtype=torch.float32)).cpu().numpy())
+    model.train()
+    return np.concatenate(out) if out else np.zeros((0, 0))
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     cfg_arm = arm_config(args.arm, args)
 
-    sim, sim_side, sim_paths = load_arm(args.sim_shards)
+    # ---- [block 6] threads ---------------------------------------------------
+    n_threads = args.threads
+    if n_threads is None and os.environ.get("NCPUS", "").strip().isdigit():
+        n_threads = int(os.environ["NCPUS"])
+    if n_threads is not None and n_threads >= 1:
+        torch.set_num_threads(int(n_threads))
+    n_threads = torch.get_num_threads()
+    print("torch threads    : %d" % n_threads, flush=True)
+
+    # ---- [block 6] the split's fractions and seed ----------------------------
+    fracs = tuple(float(f) for f in args.split_fracs)
+    if abs(sum(fracs) - 1.0) > 1e-9 or any(f <= 0.0 for f in fracs):
+        raise SystemExit("--split-fracs must be three positive fractions summing "
+                         "to 1, got %r" % (fracs,))
+    split_seed = args.seed if args.split_seed is None else int(args.split_seed)
+
+    # ---- the banks -------------------------------------------------------------
+    streaming = int(args.buffer_shards) >= 1
+    index = None
+    if streaming:
+        index, sim_paths = load_arm_index(args.sim_shards)
+        sim, sim_side = index.small_arrays(), index.sidecar
+        n_sim_rows = index.n_rows
+    else:
+        sim, sim_side, sim_paths = load_arm(args.sim_shards)
+        n_sim_rows = sim["x"].shape[0]
     real = real_side = None
     if args.real_shards:
         real, real_side, _ = load_arm(args.real_shards)
@@ -347,26 +496,34 @@ def main(argv=None):
     d_theta = int(np.asarray(sim["theta"]).shape[1])
     E = FixedStatsSummary.N_STATS if cfg_arm["fixed_summary"] \
         else args.embedding_size
+    campaign = is_campaign_bank(sim_side)
+
+    stem_name = ("%s_seed%d" % (args.arm, args.seed) if split_seed == args.seed
+                 else "%s_split%d_seed%d" % (args.arm, split_seed, args.seed))
 
     if args.dry_run:
         print("DRY RUN -- nothing trained")
-        print("  arm              : %s (seed %d)" % (args.arm, args.seed))
+        print("  arm              : %s (seed %d, split seed %d)"
+              % (args.arm, args.seed, split_seed))
         print("  config           : %s" % cfg_arm)
         print("  sim shards       : %d, rows %d, W %d, d_theta %d"
-              % (len(sim_paths), sim["x"].shape[0], W, d_theta))
+              % (len(sim_paths), n_sim_rows, W, d_theta))
         print("  real rows        : %s"
               % (real["x"].shape[0] if real is not None else "-"))
         print("  embedding size   : %d%s"
               % (E, " (fixed summary)" if cfg_arm["fixed_summary"] else ""))
-        print("  out              : %s"
-              % os.path.join(args.out_dir, "%s_seed%d.json"
-                             % (args.arm, args.seed)))
+        print("  prior            : %s" % ("campaign (unit box, D-078)" if campaign
+                                            else "bench mixture"))
+        print("  loader           : %s" % ("streamed, buffer %d shard(s)"
+                                            % args.buffer_shards if streaming
+                                            else "in memory"))
+        print("  out              : %s" % os.path.join(args.out_dir, stem_name + ".json"))
         return 0
 
     # ---- tensors and split -------------------------------------------------
     theta = torch.as_tensor(np.asarray(sim["theta"]), dtype=torch.float32)
-    x = torch.as_tensor(np.asarray(sim["x"]), dtype=torch.float32)
-    split, split_hash = grouped_split(sim["donor"], seed=args.seed)
+    x = None if streaming else torch.as_tensor(np.asarray(sim["x"]), dtype=torch.float32)
+    split, split_hash = grouped_split(sim["donor"], fracs=fracs, seed=split_seed)
     tr, se, rp = (split == 0), (split == 1), (split == 2)
     if rp.sum() == 0 or tr.sum() == 0:
         raise SystemExit("split has an empty train or report part (%d/%d/%d "
@@ -375,25 +532,65 @@ def main(argv=None):
     if se.sum() == 0:
         print("WARNING: empty selection split -- early stopping disabled; "
               "the LAST epoch's weights will be scored, not the best.")
+    n_train = int(tr.sum())
 
-    theta_tr, x_tr = theta[tr], x[tr]
+    # [block 6] the budget in passes, if given
+    steps_per_epoch = int(args.steps_per_epoch)
+    if args.passes is not None:
+        if args.passes <= 0 or args.epochs < 1:
+            raise SystemExit("--passes must be > 0 with --epochs >= 1")
+        steps_per_epoch = int(math.ceil(float(args.passes) / args.epochs
+                                        * n_train / float(args.b_sim)))
+        print("steps per epoch  : %d  (passes %g in %d epochs over %d training "
+              "rows at b_sim %d)" % (steps_per_epoch, args.passes, args.epochs,
+                                      n_train, args.b_sim), flush=True)
+
+    tr_rows = np.flatnonzero(tr)
+    if streaming:
+        theta_tr = theta[tr_rows]
+        x_tr = None
+    else:
+        theta_tr, x_tr = theta[tr], x[tr]
+    theta_stream = None
     if cfg_arm["shuffle_theta"]:
         g = torch.Generator().manual_seed(args.seed + 777)
-        theta_tr = theta_tr[torch.randperm(theta_tr.shape[0], generator=g)]
+        perm = torch.randperm(theta_tr.shape[0], generator=g)
+        theta_tr = theta_tr[perm]
+        if streaming:
+            # the stream reads theta by global row: permute the training
+            # rows' labels in a copy it draws from
+            theta_stream = theta.clone()
+            theta_stream[torch.as_tensor(tr_rows)] = theta_tr
+
+    # the first 64 training rows, for sbi's shape inference
+    if streaming:
+        ex_rows = tr_rows[:64]
+        theta_ex = (theta_stream if theta_stream is not None else theta)[torch.as_tensor(ex_rows)]
+        x_ex = _rows_x(index, ex_rows)
+    else:
+        theta_ex, x_ex = theta_tr[:64], x_tr[:64]
 
     # ---- prior -------------------------------------------------------------
     from sbi.utils import BoxUniform
     lo = torch.zeros(d_theta)
     hi = torch.ones(d_theta)
     prior = BoxUniform(low=lo, high=hi)
-    latent = sim_side["latent_spec"]
-    spec = LatentSBISpec(n_latent=latent["n_latent"],
-                         label_idx=tuple(latent["label_idx"]),
-                         class_centres=np.asarray(latent["class_centres"]),
-                         tau_ov=latent["tau_ov"],
-                         n_windows_per_trace=latent["n_windows_per_trace"],
-                         T_win=latent["T_win"], fs=latent["fs"],
-                         n_neurons=latent["n_neurons"])
+    if campaign:
+        # [block 4, D-078] the campaign prior is the unit box: the floor is
+        # that of a uniform density, 0 nats, and no LatentSBISpec is built.
+        prior_fn = campaign_log_prob
+        print("prior            : campaign bank -- uniform on the unit box (D-078)",
+              flush=True)
+    else:
+        latent = sim_side["latent_spec"]
+        spec = LatentSBISpec(n_latent=latent["n_latent"],
+                             label_idx=tuple(latent["label_idx"]),
+                             class_centres=np.asarray(latent["class_centres"]),
+                             tau_ov=latent["tau_ov"],
+                             n_windows_per_trace=latent["n_windows_per_trace"],
+                             T_win=latent["T_win"], fs=latent["fs"],
+                             n_neurons=latent["n_neurons"])
+        prior_fn = lambda t: prior_log_prob(spec, t)   # noqa: E731
 
     # ---- encoder -----------------------------------------------------------
     dsn_loss_fn = None
@@ -406,7 +603,7 @@ def main(argv=None):
         # [CORRECTION] Both used epochs * steps_per_epoch, so A0's ramp had
         # barely started when its encoder was frozen.
         total = (args.encoder_steps if cfg_arm["freeze_encoder"]
-                 else args.epochs * args.steps_per_epoch)
+                 else args.epochs * steps_per_epoch)
         # The legality projection is applied HERE rather than trusted from
         # the caller: (mining, loss, strict) has illegal combinations, and an
         # unprojected triple would silently train a different cell than the
@@ -447,9 +644,14 @@ def main(argv=None):
                      "width_multiplier": args.width_multiplier,
                      "block_family": args.block_family,
                      "head_fusion": args.head_fusion,
-                     "dropout": args.dropout})
+                     "dropout": args.dropout},
+            head_pool_ops=args.head_pool_ops)
 
     if cfg_arm["freeze_encoder"] and cfg_arm["dsn_domain"] is not None:
+        if streaming and cfg_arm["dsn_domain"] == "sim":
+            raise SystemExit("arm %s pre-trains the encoder on the whole simulated "
+                             "bank in memory; it is not available with "
+                             "--buffer-shards" % args.arm)
         src = real if cfg_arm["dsn_domain"] == "real" else sim
         xs = torch.as_tensor(np.asarray(src["x"]), dtype=torch.float32)
         cs = torch.as_tensor(np.asarray(src["cls"]), dtype=torch.long)
@@ -460,17 +662,20 @@ def main(argv=None):
     elif cfg_arm["fixed_summary"]:
         pass
 
-    model = build_joint_model(backbone, prior, theta_tr[:64], x_tr[:64],
+    model = build_joint_model(backbone, prior, theta_ex, x_ex,
                               hidden_features=args.hidden_features,
                               num_transforms=args.num_transforms,
                               num_bins=args.num_bins,
+                              flow_hidden_layers=args.flow_hidden_layers,
                               meta={"arm": args.arm, "seed": args.seed,
+                                    "split_seed": split_seed,
                                     "backbone": bb_kind,
                                     "split_hash": split_hash,
                                     # Needed to rebuild the encoder from a
                                     # checkpoint alone (Stage 3b probes).
                                     "W": int(W), "embedding_size": int(E),
                                     "d_theta": int(d_theta),
+                                    "head_pool_ops": int(args.head_pool_ops),
                                     "fixed_summary": bool(cfg_arm["fixed_summary"])})
 
     if cfg_arm["warm_start"] == "A0":
@@ -497,15 +702,25 @@ def main(argv=None):
     # with the generator's labels, and the real arm otherwise.
     met_kw = {}
     if cfg_arm["dsn_domain"] == "sim":
+        if streaming:
+            raise SystemExit("arm %s puts the metric term on the simulated bank "
+                             "in memory; it is not available with --buffer-shards"
+                             % args.arm)
         met_kw = {"met_x": x_tr,
                   "met_cls": torch.as_tensor(np.asarray(sim["cls"])[tr],
                                              dtype=torch.long)}
-    batcher = ThreeStreamBatcher(
-        theta_tr, x_tr, real_x, real_cls, real_donor, None,
-        BatchSpec(args.b_sim,
-                  args.b_met if cfg_arm["dsn_domain"] is not None else 0,
-                  args.b_rep if cfg_arm["lambda_rep"] > 0 else 0),
-        seed=args.seed, **met_kw)
+    spec_b = BatchSpec(args.b_sim,
+                       args.b_met if cfg_arm["dsn_domain"] is not None else 0,
+                       args.b_rep if cfg_arm["lambda_rep"] > 0 else 0)
+    if streaming:
+        stream = ShardStream(index, tr, args.b_sim, args.buffer_shards, seed=args.seed)
+        if theta_stream is not None:
+            stream.theta = theta_stream
+        batcher = ThreeStreamBatcher(None, None, real_x, real_cls, real_donor, None,
+                                     spec_b, seed=args.seed, sim_stream=stream)
+    else:
+        batcher = ThreeStreamBatcher(theta_tr, x_tr, real_x, real_cls, real_donor,
+                                     None, spec_b, seed=args.seed, **met_kw)
     print(batcher.report())
 
     # Sigma0 spans all d_theta = 26 axes, kernel axes included. Decision, not
@@ -516,27 +731,52 @@ def main(argv=None):
     rep_crit = ReplicateConsistencyLoss(Sigma0, n_draws=args.n_posterior_draws,
                                         warmup=args.warmup_frac_rep)
 
-    tcfg = TrainConfig(epochs=args.epochs, steps_per_epoch=args.steps_per_epoch,
+    tcfg = TrainConfig(epochs=args.epochs, steps_per_epoch=steps_per_epoch,
                        lr=args.lr, weight_decay=args.weight_decay,
                        lambda_dsn=cfg_arm["lambda_dsn"],
-                       lambda_rep=cfg_arm["lambda_rep"], patience=99,
+                       lambda_rep=cfg_arm["lambda_rep"], patience=int(args.patience),
                        rho_grad_probe=cfg_arm["lambda_dsn"] > 0,
                        beta1=1.0 - float(args.one_minus_beta1))
 
-    history = train_joint(model, batcher, tcfg,
-                          val_theta=theta[se] if se.sum() else None,
-                          val_x=x[se] if se.sum() else None,
-                          dsn_loss_fn=dsn_loss_fn if cfg_arm["lambda_dsn"] > 0
-                          else None,
-                          rep_criterion=rep_crit if cfg_arm["lambda_rep"] > 0
-                          else None,
-                          n_posterior_draws=args.n_posterior_draws,
-                          seed=args.seed)
+    os.makedirs(args.out_dir, exist_ok=True)
+    stem = os.path.join(args.out_dir, stem_name)
+    train_ckpt = stem + "_train_ckpt.pt"
+
+    if streaming:
+        val_eval = ((lambda: evaluate_npe_shards(model, index, se)) if se.sum()
+                    else None)
+        val_theta = val_x = None
+    else:
+        val_eval = None
+        val_theta = theta[se] if se.sum() else None
+        val_x = x[se] if se.sum() else None
+
+    try:
+        history = train_joint(model, batcher, tcfg,
+                              val_theta=val_theta, val_x=val_x,
+                              dsn_loss_fn=dsn_loss_fn if cfg_arm["lambda_dsn"] > 0
+                              else None,
+                              rep_criterion=rep_crit if cfg_arm["lambda_rep"] > 0
+                              else None,
+                              n_posterior_draws=args.n_posterior_draws,
+                              seed=args.seed, val_eval=val_eval,
+                              ckpt_path=train_ckpt, resume=bool(args.resume),
+                              stop_after_epoch=args.stop_after_epoch)
+    except StoppedAfterEpoch as stop:
+        print("STOPPED after epoch %d: %d epoch(s) in the checkpoint %s; "
+              "no record written (re-run with --resume)"
+              % (stop.epoch, len(stop.history), train_ckpt), flush=True)
+        return 0
 
     # ---- diagnostics on the REPORT split ----------------------------------
-    theta_rp, x_rp = theta[rp], x[rp]
-    nll = per_row_nll(model, theta_rp, x_rp)
-    floor = mc_prior_floor(lambda t: prior_log_prob(spec, t.numpy()), theta_rp)
+    rp_rows = np.flatnonzero(rp)
+    theta_rp = theta[rp]
+    if streaming:
+        nll = _per_row_nll_shards(model, index, rp_rows)
+    else:
+        x_rp = x[rp]
+        nll = per_row_nll(model, theta_rp, x_rp)
+    floor = mc_prior_floor(lambda t: prior_fn(t.numpy()), theta_rp)
 
     # PRIMARY ENDPOINT (decision D10): the PSEUDO-REAL held-out NLL. theta is
     # recorded on arm R and withheld from every training loss, so scoring
@@ -554,15 +794,18 @@ def main(argv=None):
                                    dtype=torch.float32)
         x_pr = torch.as_tensor(np.asarray(real["x"]), dtype=torch.float32)
         nll_pr = per_row_nll(model, theta_pr, x_pr)
-        floor_pr = mc_prior_floor(lambda t: prior_log_prob(spec, t.numpy()),
-                                  theta_pr)
+        floor_pr = mc_prior_floor(lambda t: prior_fn(t.numpy()), theta_pr)
     with torch.no_grad():
-        z_rp = model.encode(x_rp).cpu().numpy()
-        samples = model.sample_posterior(args.n_posterior_draws,
-                                          x_rp[:256]).cpu().numpy()
+        if streaming:
+            z_rp = _encode_shards(model, index, rp_rows)
+            x_samp = _rows_x(index, rp_rows[:256])
+        else:
+            z_rp = model.encode(x_rp).cpu().numpy()
+            x_samp = x_rp[:256]
+        samples = model.sample_posterior(args.n_posterior_draws, x_samp).cpu().numpy()
 
     n_spec = samples.shape[0]
-    repo = load_repo_diagnostics(args.sbi_hpc_dir)
+    repo = load_repo_diagnostics(args.sbi_hpc_dir or default_sbi_hpc_dir())
     if repo is not None and hasattr(repo, "information_spectrum"):
         spec_res = repo.information_spectrum(theta_rp[:n_spec].numpy(), samples)
         spectrum_source = "repo:npe_diagnostics.information_spectrum"
@@ -578,10 +821,18 @@ def main(argv=None):
     rec = {
         "arm": args.arm,
         "seed": args.seed,
+        "split_seed": split_seed,
+        "split_fracs": list(fracs),
         "endpoint_primary": ("pseudo_real" if nll_pr is not None
                              else "simulated (arm R absent)"),
         "split_hash": split_hash,
         "backbone": bb_kind,
+        "prior": "campaign_unit_box" if campaign else "bench_mixture",
+        "loader": {"buffer_shards": int(args.buffer_shards),
+                   "n_shards": len(sim_paths), "streamed": bool(streaming)},
+        "threads": int(n_threads),
+        "steps_per_epoch_effective": int(steps_per_epoch),
+        "passes": args.passes,
         "n_train": int(tr.sum()), "n_sel": int(se.sum()),
         "n_report": int(rp.sum()),
         "L": float(np.mean(nll)),
@@ -621,8 +872,6 @@ def main(argv=None):
                                else float(rr["p_eff_mean"] - p_eff_spec))
             rec["replicate"] = rr
 
-    os.makedirs(args.out_dir, exist_ok=True)
-    stem = os.path.join(args.out_dir, "%s_seed%d" % (args.arm, args.seed))
     with open(stem + ".json", "w") as fh:
         json.dump(rec, fh, indent=1, sort_keys=True, default=str)
     per_row = {"nll": nll, "group": np.asarray(sim["donor"])[rp],
@@ -632,6 +881,9 @@ def main(argv=None):
         per_row["group_pseudo_real"] = np.asarray(real["donor"])
     np.savez_compressed(stem + "_perrow.npz", **per_row)
     torch.save(model.checkpoint(), stem + "_ckpt.pt")
+    # [block 6] the training checkpoint has served; the record is the result.
+    if os.path.isfile(train_ckpt):
+        os.remove(train_ckpt)
 
     print("arm              : %s (seed %d)" % (args.arm, args.seed))
     if nll_pr is not None:

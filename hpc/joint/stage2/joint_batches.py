@@ -31,7 +31,209 @@ Pure ASCII, LF only. torch + numpy.
 import numpy as np
 import torch
 
-__all__ = ["enumerate_donor_pairs", "ThreeStreamBatcher", "BatchSpec"]
+__all__ = ["enumerate_donor_pairs", "ThreeStreamBatcher", "BatchSpec", "ShardStream"]
+
+
+class ShardStream(object):
+    """The simulated stream from a rolling buffer of shards (D-084;
+    specs/SPEC.md block 5).
+
+    The stream walks the bank in passes. In each pass the shard order is a
+    permutation drawn from this stream's generator; the buffer holds the
+    masked rows of at most K = `buffer_shards` shards; every resident shard
+    carries a QUOTA, initialised to its number of masked rows when it is
+    loaded (plus any overshoot carried from its previous pass). Each row of a
+    batch picks a resident shard with probability proportional to its
+    remaining quota, then a row uniformly within that shard, and the shard's
+    quota goes down by one. A shard whose quota is spent is evicted and the
+    next shard of the pass loaded. So every row's expected number of draws
+    per pass is exactly 1 whatever the shards' sizes, a pass is n_rows / B
+    steps (the overshoot of a batch is carried into the shard's next quota),
+    and no more than K shards' windows are ever resident.
+
+    When K >= n_shards the buffer holds every shard in the natural order,
+    never evicts and never permutes, and a batch is `torch.randint(0,
+    n_rows, (B,), generator)` over the masked rows in the concatenated
+    order: the in-memory batcher's draws at the same seed, bit for bit (the
+    equivalence oracle of the bench test).
+
+    Parameters
+    ----------
+    index : latent_bank.ShardIndex
+    row_mask : (n_rows,) bool  -- the rows this stream may draw (the split)
+    batch_size : int
+    buffer_shards : int >= 1
+    seed : int  -- the generator is seeded with seed + 1, as the in-memory
+        simulated stream's is (J9: one generator per stream)
+    """
+
+    def __init__(self, index, row_mask, batch_size, buffer_shards, seed=0):
+        self.index = index
+        self.row_mask = np.asarray(row_mask, dtype=bool).ravel()
+        if self.row_mask.size != index.n_rows:
+            raise ValueError("row_mask has %d entries, the bank %d rows"
+                             % (self.row_mask.size, index.n_rows))
+        self.batch_size = int(batch_size)
+        self.K = int(buffer_shards)
+        if self.K < 1 or self.batch_size < 1:
+            raise ValueError("buffer_shards and batch_size must be >= 1")
+        self.seed = int(seed)
+        self.g = torch.Generator().manual_seed(self.seed + 1)
+        # shards that hold at least one masked row, in natural order
+        self.shards = [k for k in range(index.n_shards)
+                       if self.row_mask[index.offsets[k]:index.offsets[k + 1]].any()]
+        if not self.shards:
+            raise ValueError("no shard holds a masked row")
+        self.n_rows = int(self.row_mask.sum())
+        self.whole = self.K >= len(self.shards)
+        self.theta = torch.as_tensor(np.asarray(index.theta), dtype=torch.float32)
+        # schedule state
+        self.pass_no = 0
+        self.order = []          # the shard order of the current pass
+        self.pos = 0             # the next shard of `order` to load
+        self.buffer = []         # [(shard, rows (global ids), x tensor, quota)]
+        self.carry = {}          # shard -> overshoot owed to its next quota
+        self.steps = 0
+        self._loads = 0
+        if self.whole:
+            for k in self.shards:
+                self._load(k)
+            self._rows = torch.as_tensor(np.concatenate([b[1] for b in self.buffer]),
+                                         dtype=torch.long)
+            self._x = torch.cat([b[2] for b in self.buffer], dim=0)
+        else:
+            self._fill()
+
+    # -- the schedule --------------------------------------------------------
+
+    def _new_pass(self):
+        """A fresh permutation of the shards; a shard still resident is
+        moved behind the first later non-resident one, so it is not loaded
+        twice (its rows would then be drawn twice as often); with nearly
+        every shard resident no partner exists and the duplicate is
+        accepted."""
+        self.pass_no += 1
+        perm = torch.randperm(len(self.shards), generator=self.g).tolist()
+        order = [self.shards[i] for i in perm]
+        resident = set(b[0] for b in self.buffer)
+        for i in range(min(self.K - 1, len(order))):
+            if order[i] in resident:
+                for j in range(i + 1, len(order)):
+                    if order[j] not in resident:
+                        order[i], order[j] = order[j], order[i]
+                        break
+        self.order = order
+        self.pos = 0
+
+    def _load(self, k):
+        rows = self.index.rows_of(k)
+        keep = self.row_mask[rows]
+        rows = rows[keep]
+        x = torch.as_tensor(self.index.load_x(k)[keep], dtype=torch.float32)
+        quota = float(rows.size) + float(self.carry.pop(k, 0.0))
+        self.buffer.append([k, rows, x, quota])
+        self._loads += 1
+
+    def _evict_spent(self):
+        kept = []
+        for b in self.buffer:
+            if b[3] > 0.0:
+                kept.append(b)
+            elif b[3] < 0.0:
+                # the overshoot (a negative quota) is owed to the next pass
+                self.carry[b[0]] = self.carry.get(b[0], 0.0) + b[3]
+        self.buffer = kept
+
+    def _fill(self):
+        """Evict the spent shards and load until K are resident. A shard
+        loaded with a carried overshoot larger than its row count (a small
+        shard after a batch of B > n_k picks) starts spent: it is evicted
+        at once and skips this pass, which is how its overshoot is repaid."""
+        self._evict_spent()
+        guard = 0
+        while len(self.buffer) < self.K:
+            if self.pos >= len(self.order):
+                self._new_pass()
+            k = self.order[self.pos]
+            self.pos += 1
+            if any(b[0] == k for b in self.buffer):
+                continue          # the duplicate case of _new_pass
+            self._load(k)
+            self._evict_spent()
+            guard += 1
+            if guard > 4 * len(self.shards) + 4 * self.K:
+                raise RuntimeError("ShardStream cannot fill its buffer: every "
+                                   "shard's quota is spent (carry %r)" % self.carry)
+
+    @property
+    def resident_shards(self):
+        return [b[0] for b in self.buffer]
+
+    @property
+    def loads(self):
+        """How many shard loads so far (a memory-boundedness witness)."""
+        return self._loads
+
+    # -- drawing -------------------------------------------------------------
+
+    def next(self):
+        """(theta (B, p), x (B, W), rows (B,) global row ids)."""
+        B = self.batch_size
+        if self.whole:
+            idx = torch.randint(0, self.n_rows, (B,), generator=self.g)
+            rows = self._rows[idx]
+            self.steps += 1
+            return self.theta[rows], self._x[idx], rows
+        self._fill()
+        # after _fill every resident quota is positive; clamp anyway, so a
+        # rounding residue can never reach multinomial as a negative weight
+        w = torch.tensor([max(b[3], 0.0) for b in self.buffer], dtype=torch.float64)
+        pick = torch.multinomial(w, B, replacement=True, generator=self.g)
+        xs, rows = [], []
+        for j, b in enumerate(self.buffer):
+            m = pick == j
+            n_j = int(m.sum())
+            if n_j == 0:
+                continue
+            local = torch.randint(0, int(b[1].size), (n_j,), generator=self.g)
+            xs.append(b[2][local])
+            rows.append(torch.as_tensor(b[1], dtype=torch.long)[local])
+            b[3] -= float(n_j)
+        # the picks are grouped by shard above; restore the drawn order so a
+        # batch is not sorted by shard (an unsorted batch is what the
+        # in-memory batcher gives too)
+        x = torch.cat(xs, dim=0)
+        r = torch.cat(rows, dim=0)
+        order = torch.argsort(torch.argsort(pick, stable=True), stable=True)
+        x, r = x[order], r[order]
+        self.steps += 1
+        return self.theta[r], x, r
+
+    # -- state (block 6's checkpoint) ------------------------------------------
+
+    def state_dict(self):
+        return {"seed": self.seed, "batch_size": self.batch_size, "K": self.K,
+                "pass_no": self.pass_no, "order": list(self.order), "pos": self.pos,
+                "buffer": [[int(b[0]), float(b[3])] for b in self.buffer],
+                "carry": dict((int(k), float(v)) for k, v in self.carry.items()),
+                "steps": self.steps, "generator": self.g.get_state()}
+
+    def load_state_dict(self, st):
+        if (int(st["batch_size"]) != self.batch_size or int(st["K"]) != self.K
+                or int(st["seed"]) != self.seed):
+            raise ValueError("ShardStream state is for another (seed, batch, K)")
+        self.pass_no = int(st["pass_no"])
+        self.order = list(st["order"])
+        self.pos = int(st["pos"])
+        self.steps = int(st["steps"])
+        self.g.set_state(st["generator"])
+        if not self.whole:
+            self.buffer, self.carry = [], {}
+            for k, quota in st["buffer"]:
+                self._load(int(k))
+                self.buffer[-1][3] = float(quota)
+        self.carry = dict((int(k), float(v)) for k, v in st["carry"].items())
+        return self
 
 
 def enumerate_donor_pairs(donor_ids):
@@ -105,12 +307,23 @@ class ThreeStreamBatcher(object):
 
     def __init__(self, sim_theta, sim_x, real_x=None, real_cls=None,
                  real_donor=None, surrogate=None, spec=None, seed=0,
-                 met_x=None, met_cls=None):
+                 met_x=None, met_cls=None, sim_stream=None):
+        # [block 5, D-084] `sim_stream` (a ShardStream) replaces the in-memory
+        # simulated tensors: the simulated batches then come from the rolling
+        # buffer of shards and sim_theta / sim_x are None. Everything else is
+        # unchanged, and a caller that passes tensors gets exactly the old
+        # batcher.
+        self.sim_stream = sim_stream
         self.sim_theta = sim_theta
         self.sim_x = sim_x
-        if sim_theta.shape[0] != sim_x.shape[0]:
-            raise ValueError("sim_theta and sim_x disagree in length")
-        self.n_sim = int(sim_theta.shape[0])
+        if sim_stream is not None:
+            if sim_theta is not None or sim_x is not None:
+                raise ValueError("give either sim_stream or the simulated tensors")
+            self.n_sim = int(sim_stream.n_rows)
+        else:
+            if sim_theta.shape[0] != sim_x.shape[0]:
+                raise ValueError("sim_theta and sim_x disagree in length")
+            self.n_sim = int(sim_theta.shape[0])
 
         self.real_x = real_x
         self.real_cls = real_cls
@@ -169,9 +382,31 @@ class ThreeStreamBatcher(object):
         """i.i.d. rows of the SIMULATED bank. Never touches the real arm."""
         if self.spec.b_sim == 0:
             return None
+        if self.sim_stream is not None:
+            if self.sim_stream.batch_size != self.spec.b_sim:
+                raise ValueError("the stream's batch size %d is not b_sim %d"
+                                 % (self.sim_stream.batch_size, self.spec.b_sim))
+            return self.sim_stream.next()
         idx = torch.randint(0, self.n_sim, (self.spec.b_sim,),
                             generator=self.g_sim)
         return self.sim_theta[idx], self.sim_x[idx], idx
+
+    # -- state (block 6's checkpoint) ------------------------------------------
+
+    def state_dict(self):
+        st = {"g_sim": self.g_sim.get_state(), "g_met": self.g_met.get_state(),
+              "g_rep": self.g_rep.get_state()}
+        if self.sim_stream is not None:
+            st["sim_stream"] = self.sim_stream.state_dict()
+        return st
+
+    def load_state_dict(self, st):
+        self.g_sim.set_state(st["g_sim"])
+        self.g_met.set_state(st["g_met"])
+        self.g_rep.set_state(st["g_rep"])
+        if self.sim_stream is not None:
+            self.sim_stream.load_state_dict(st["sim_stream"])
+        return self
 
     def met_batch(self):
         """Class-balanced real rows, surrogates excluded from the index."""
@@ -204,7 +439,10 @@ class ThreeStreamBatcher(object):
 
     def report(self):
         return "\n".join([
-            "simulated rows   : %d" % self.n_sim,
+            "simulated rows   : %d%s" % (self.n_sim, (
+                "   (streamed: buffer %d shard(s) of %d)"
+                % (self.sim_stream.K, len(self.sim_stream.shards))
+                if self.sim_stream is not None else "")),
             "real rows        : %d" % (0 if self.real_x is None
                                        else self.real_x.shape[0]),
             "surrogate rows   : %d" % int(self.surrogate.sum()),

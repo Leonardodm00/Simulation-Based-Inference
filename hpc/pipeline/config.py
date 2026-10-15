@@ -137,20 +137,22 @@ SCHEMA = (
 # test asserts the exact list, so the two cannot drift.
 _SB = ("search", "best_fit")
 NEEDS_CODE = (
-    ("split.fractions", 6, "run_joint_arms.py --split-fracs; the tuner passes it (block 7)", _SB),
+    # the runner's side of these (blocks 4-6, 2026-10-15) exists; what is
+    # missing is the stage that passes them: block 7's search and best fit
+    ("split.fractions", 7, "the search and best-fit stages pass --split-fracs (the runner flag exists)", _SB),
     ("search.space_overrides", 7, "npe_tune_joint.py reads the ranges to override from the config", ("search",)),
-    ("search.space_overrides.head_pool_ops", 6, "run_joint_arms.py --head-pool-ops; the axis in joint_space (block 7)", _SB),
-    ("search.flow.conditioner_hidden_layers", 6, "run_joint_arms.py --flow-hidden-layers", _SB),
+    ("search.space_overrides.head_pool_ops", 7, "the axis in joint_space; the stages pass --head-pool-ops (the runner flag exists)", _SB),
+    ("search.flow.conditioner_hidden_layers", 7, "the stages pass --flow-hidden-layers (the runner flag exists)", _SB),
     ("search.flow.num_bins", 7, "build_argv passes --num-bins", _SB),
     ("search.gp_seed", 7, "propose --gp-seed, apart from the training seed", ("search",)),
-    ("search.trial.passes", 6, "run_joint_arms.py --passes (steps per epoch from the split)", ("search",)),
-    ("search.trial.max_resubmits", 6, "run_joint_arms.py --resume from the per-epoch checkpoint", ("search",)),
+    ("search.trial.passes", 7, "the search stage passes --passes (the runner flag exists)", ("search",)),
+    ("search.trial.max_resubmits", 7, "the search stage resubmits with --resume (the runner's checkpoint exists)", ("search",)),
     ("search.budget_gate", 7, "the probe jobs before round 0", ("search",)),
-    ("best_fit.split_seed", 6, "run_joint_arms.py --split-seed apart from --seed", ("best_fit",)),
+    ("best_fit.split_seed", 7, "the best-fit stage passes --split-seed (the runner flag exists)", ("best_fit",)),
     ("best_fit.member_seeds", 7, "the member jobs and the ensemble NLL", ("best_fit",)),
-    ("best_fit.passes", 6, "run_joint_arms.py --passes", ("best_fit",)),
-    ("best_fit.patience_epochs", 6, "run_joint_arms.py --patience", ("best_fit",)),
-    ("loader.buffer_shards", 5, "the streaming shard loader", _SB),
+    ("best_fit.passes", 7, "the best-fit stage passes --passes (the runner flag exists)", ("best_fit",)),
+    ("best_fit.patience_epochs", 7, "the best-fit stage passes --patience (the runner flag exists)", ("best_fit",)),
+    ("loader.buffer_shards", 7, "the stages pass --buffer-shards (the streaming loader exists, block 5)", _SB),
 )
 
 
