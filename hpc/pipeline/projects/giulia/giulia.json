@@ -1,0 +1,142 @@
+{
+  "_comment": "The Giulia data set's pipeline configuration, v4 (2026-10-15; v4: the search's wall budget 400 h, D-090; the file lives in the project folder hpc/pipeline/projects/giulia/, D-091; v3: the finalist fitted as an ensemble of 10, D-089). One file per data set; every key is required; a key starting with '_' documents the key after it and is ignored. v1 (2026-10-14, log D-085): the direction set by the user -- an expressive NPE network, a large GP search (initial design and guided search) and a large training budget -- with Claude's values; amended 2026-10-15 by D-086 (head_pool_ops searched). v2: the values the user set on 2026-10-15 (D-088) -- the split 85/10/5, 48 cores per trial, one best-fit seed for now, 50 initial points, 20 GP rounds of 10, 20 epochs per trial; every other value is still Claude's, for the user to inspect before any submission. Keys marked NEEDS-CODE are honoured only once the named block of claude/PLAN_2026-10-13_giulia_pipeline.md is built; the driver refuses a config it cannot honour.",
+  "config_version": 4,
+  "dataset": "giulia",
+
+  "_paths": "Where everything lives on davinci (absolute; no '~').",
+  "paths": {
+    "sbix_dir": "/davinci-1/home/ldellamea/repos/Sbi-extractor",
+    "sbi_dir": "/davinci-1/home/ldellamea/SBI",
+    "work_root": "/davinci-1/home/ldellamea/pipeline/giulia",
+    "banks_root": "/davinci-1/home/ldellamea/banks",
+    "runs_root": "/davinci-1/home/ldellamea/runs/giulia",
+    "tune_root": "/davinci-1/home/ldellamea/tune_joint_giulia"
+  },
+
+  "_envs": "Conda environments: extraction and banks in sbi_export, training and search in sbi_env.",
+  "envs": {"extract": "sbi_export", "train": "sbi_env"},
+
+  "_real": "S1, the real-arm extraction (G1). Done for Giulia (cohort manifest 21b7ef03bb7f776b): the driver skips it.",
+  "real": {
+    "cohort_config": "/davinci-1/home/ldellamea/SBI/hpc/dsn/hpc/Config/config_giulia_cohort.davinci.json",
+    "cohort_tag": "giulia",
+    "extract_root": "/davinci-1/home/ldellamea/ANN/Phenomenological/Main/Giulia_Astro/extracted_giulia"
+  },
+
+  "_sim": "S2, the simulated-arm re-detection (G2). Done for Giulia (record 7af3759a0f3c1350): skipped.",
+  "sim": {
+    "sim_main": "/davinci-1/home/ldellamea/ANN/Phenomenological/Main/Giulia_Astro",
+    "campaign_glob": "campaign_cadex_hhgap_v*",
+    "out_root": "/davinci-1/home/ldellamea/ANN/MEA_analysis/mea_out_giulia_v2",
+    "tools": "/davinci-1/home/ldellamea/ANN/MEA_analysis",
+    "plan_args": "--allow-mixed-contract",
+    "test_walltime": "06:00:00",
+    "walltime": "02:00:00",
+    "ncpus": 48,
+    "queue": "cpu",
+    "concurrency": 20
+  },
+
+  "_freeze": "S3, the label freeze (G3). Done for Giulia (29e38c89b08a2dd8): skipped.",
+  "freeze": {
+    "out": "artifacts/label_axes_giulia_hhgap.json",
+    "campaigns": "campaign_cadex_hhgap_v[125]",
+    "require_conn_rule": "flat",
+    "exclude": {
+      "p0_conn": "Weibull kernel axis; never drawn under conn_rule=flat, recorded as NaN",
+      "d0_conn": "Weibull kernel axis; never drawn under conn_rule=flat, recorded as NaN",
+      "beta_conn": "Weibull kernel axis; never drawn under conn_rule=flat, recorded as NaN"
+    }
+  },
+
+  "_bank": "S4-S6, the bank plan and the two banks (B5): the values of export_windows/profiles/giulia.json. Plan of record c8303506131a4632; the banks are being built by the chain line BC: done stages are skipped.",
+  "bank": {
+    "on_axis": "O_N",
+    "on_declared_box": [0.01, 3.0],
+    "topology_axes": ["conn_prob"],
+    "expected_p": 23,
+    "t_win_s": 180.0,
+    "n_e": 1,
+    "floor_hz": 0.1,
+    "floor_rtol": 1e-06,
+    "sample_seed": 20261009,
+    "bootstrap_resamples": 2000,
+    "bootstrap_seed": 20261009,
+    "bytes_sample_rows": 500,
+    "rows_per_shard": 10000,
+    "queue": "cpu",
+    "concurrency": 20,
+    "walltime": "auto"
+  },
+
+  "_split": "The grouped split by donor (D-076: a donor is one network), train / selection / report = 85 / 10 / 5 % of the donors (the user, D-088): 2,220 / 261 / 131 of the 2,612 donors, about 536,000 / 63,000 / 32,000 rows if donors were equal in size (v1 used the code's fixed 70 / 15 / 15: 1,828 / 392 / 392). The training split is what the network fits, the selection split picks the best epoch (and drives the patience), the report split gives the NLL the GP minimises. NEEDS-CODE (blocks 6-7): the runner's grouped_split fractions are fixed today (run_joint_arms.py:118, no flag, F-i); the runner takes them from a flag and the tuner passes them to every trial, so the split hash and the trial ids change. The same fractions serve the best fit.",
+  "split": {"fractions": [0.85, 0.10, 0.05]},
+
+  "_search": "S7, the GP search over the joint stack's hyper-parameters. Total trials N = n_initial_points + gp_rounds * trials_per_round = 50 + 20 * 10 = 250.",
+  "search": {
+    "_campaign": "S-A1: NPE term only, arm A1 (D-039: encoder and flow fitted on simulated windows only). S-A2/S-A5 would put the recordings into the loss; S-A25 cannot run.",
+    "campaign": "S-A1",
+    "arm": "A1",
+
+    "_shape_anchors": "Not tuning knobs: p and d_theta are the bank's theta width (23). embedding_dim anchors the flow-width rule, hidden_features in [min(max(32, 2s), 64), max(8s, 256)] for s = max(p, embedding_dim) >= 16: 64 gives [64, 512] (the code's own rule, no change). Passed to EVERY tuner call (F-ar).",
+    "shape_anchors": {"p": 23, "d_theta": 23, "embedding_dim": 64},
+
+    "_space_overrides": "NEEDS-CODE (block 7: the tuner reads ranges from the config). depth_exponent [3, 6] -> [3, 5]: F-s, the DSN's own configured range; a depth-6 encoder (64 blocks) has 49-215 M parameters against 7-20 M at depth 5 (widths 1.5-3.0, both block families, E 64), and the depth-6 ResNeXt corner costs about 5x the depth-5 ResNeXt corner's time per training row and 3.5x its step memory. embedding_size [8, 16] -> [16, 64]: a summary of at most 16 numbers for 23 parameters can bottleneck the posterior (reasoning; a learned summary tends to a sufficient one only if its dimension is not too small -- Chen et al. 2021 for InfoMax embeddings, as cited by the KB's misspecification-robust SBI paper); the GP chooses within [16, 64]. head_pool_ops [0, 1] (D-086, the user's call of 2026-10-15): a 13th searched axis, NEEDS-CODE in blocks 6-7 (a runner flag --head-pool-ops; the axis in the joint space, today a fixed value no flag carries, F-b): code 0 pools the mean over time of each stage, code 1 the mean, max and std (the DSN's HEAD_POOL_OPS_LEVELS); at the costliest configuration code 1 triples the head's input (640 -> 1920 features) for +0.4 % parameters and +0.6 % time per training row. Every other axis keeps the code's range.",
+    "space_overrides": {"depth_exponent": [3, 5], "embedding_size": [16, 64], "head_pool_ops": [0, 1]},
+
+    "_flow": "NEEDS-CODE (blocks 6-7). conditioner_hidden_layers 2: each spline transform's conditioner is a 2-hidden-layer network whatever num_transforms is (F-ac: from an int, sbi 0.27 gives each conditioner num_transforms hidden layers, 12 at 12 transforms). num_bins 10: the space's declared value, which today never reaches the runner (it builds 8; F-a).",
+    "flow": {"conditioner_hidden_layers": 2, "num_bins": 10},
+
+    "_n_initial_points": "Random configurations before the GP is used, run together as round 0 (they do not depend on each other). 50 (the user, D-088): a fifth of N, about 3.8 per free axis (13 axes with head_pool_ops, D-086).",
+    "n_initial_points": 50,
+    "_gp_rounds": "GP-guided rounds after round 0; each proposes trials_per_round configurations by expected improvement, made distinct by the constant liar. 20 rounds of 10 (the user, D-088): the GP is refitted on every finished trial before each round, 20 times.",
+    "gp_rounds": 20,
+    "trials_per_round": 10,
+    "_max_concurrent_trials": "At most this many trial jobs at once. 25 (Claude's, following D-088): round 0's 50 run in two waves of 25 (24 would need a third wave for two trials); a GP round runs its 10 at once. 25 x 48 cores = 1,200 cores in round 0, 480 in a GP round.",
+    "max_concurrent_trials": 25,
+
+    "_seeds": "NEEDS-CODE (block 7: a separate proposal seed). gp_seed drives the proposals (round r uses gp_seed + r); train_seed is every trial's training seed, hence one donor split for the whole search, so trials differ by their configuration alone.",
+    "gp_seed": 0,
+    "train_seed": 0,
+    "_gp_noise_sigma": "The GP's assumed noise sd in nats; null = estimated from the data (the code's default).",
+    "gp_noise_sigma": null,
+
+    "_trial": "One trial = one configuration trained once. NEEDS-CODE (block 6): the budget is in passes over the training split, so every configuration sees the same data whatever its batch size; steps per epoch = ceil(passes / epochs * n_train / batch_size). 6 passes in 20 epochs (epochs: the user, D-088; passes: v1's): each epoch is 0.3 of a pass and ends with the NPE loss over the whole selection split; the best epoch is kept; no early stop (the runner's patience, 99, cannot fire in 20 epochs). resources: a whole 48-core node (ncpus: the user, D-088; dvnode031 has 754 GiB; the costliest configuration needs about 120 GB of step memory at batch 1024). walltime: about 20-49 h projected for the costliest configuration (ResNet blocks, depth 5, width 3, fusion; 22-53 h with 12-layer conditioners), 5-13 h at depth 4, 0.6-1.5 h for the smallest measured [estimate: per-row costs measured on one sandbox core; an assumed 10-24x speed-up on 48 cores; the budget gate measures it on davinci].",
+    "trial": {
+      "passes": 6.0,
+      "epochs": 20,
+      "ncpus": 48,
+      "mem": "160gb",
+      "walltime": "120:00:00",
+      "max_resubmits": 2
+    },
+
+    "_budget_gate": "NEEDS-CODE (block 7). Before round 0: the space's costliest configuration (ResNet blocks, depth 5, width 3.0, fusion, head_pool_ops 1, embedding 64, hidden 512, 12 transforms) trained for probe_steps steps at each searched batch size, plus probe_val_rows validation rows, on the trial resources; the driver STOPs unless the projected trial time x safety_factor fits the trial walltime and the measured memory fits mem. The numbers are written to the state file.",
+    "budget_gate": {"probe_steps": 20, "probe_val_rows": 5000, "safety_factor": 1.5},
+
+    "_max_total_walltime_h": "400 h (the user, D-090: 'put it at 400h and see afterwards if resume'; v3 had 600). Elapsed time since the search started, queue waits included. At the limit no new round starts and running trials finish; the search can be extended later from the ledger under a raised cap. Expected without queue waits: 22 waves (round 0's 50 trials in two, then one per GP round), each as long as its slowest trial -- at most about 18-44 days if every wave held a trial of the costliest size, less when the trials are smaller; the 400 h cap ends the search before round 20 if the mean wave, queue waits included, exceeds about 18 h [estimate, as for the trial walltime].",
+    "max_total_walltime_h": 400,
+    "walltime_reading": "elapsed",
+    "_resubmit_killed": "A trial killed at its walltime is resubmitted with --resume (block 6), at most max_resubmits times; then it is recorded as killed.",
+    "resubmit_killed": true
+  },
+
+  "_best_fit": "S8, the finalist (the search's lowest report-split NLL) fitted as an ensemble of M_ens = 10 members (the user, D-089), combined as the uniform mixture q_bar(theta | x) = (1/10) sum_m q_omega_m(theta | h_psi_m(x)). Members are independent (encoder, flow) pairs trained with the long budget, one job each. split_seed: the one donor split all members share (D-088 'one seed', read by Claude as one split; to confirm) -- seed 1, a fresh split, since seed 0 is the search's, on which the winner was chosen, so its report NLL there is biased low; member_seeds: the members' training seeds (initialisation, batch order). With one shared split the ensemble's report NLL follows from the members' per-row NLL files (run_joint_arms.py:628-633) by a log-sum-exp, with no rerun. About 5-13 days per member for a costliest-size winner without an early stop, ten nodes at once, 61-145 k core-hours in all [estimate, as for the trial walltime]; past the 300 h walltime a member resumes (block 6). NEEDS-CODE: block 6 (passes, patience_epochs, a split seed apart from the training seed), block 7 (the members, the ensemble NLL).",
+  "best_fit": {
+    "split_seed": 1,
+    "member_seeds": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "passes": 40.0,
+    "epochs": 40,
+    "_patience_epochs": "Stop when the selection-split NLL has not improved for this many epochs (the runner's patience is fixed at 99 today, F-d). An epoch improves only if it beats the best by more than 1e-6 nats per row, the code's margin, kept as it is (D-087).",
+    "patience_epochs": 10,
+    "_n_posterior_draws": "Posterior draws per report row for the final models' diagnostics; not used by the fit in arm A1.",
+    "n_posterior_draws": 512,
+    "ncpus": 48,
+    "mem": "200gb",
+    "walltime": "300:00:00",
+    "max_resubmits": 2
+  },
+
+  "_loader": "D-084: the runner streams the bank through a buffer of this many shards (10,000 rows each, about 0.7 GB of windows per shard).",
+  "loader": {"buffer_shards": 4}
+}

@@ -1,0 +1,7 @@
+# Force LF on every text file regardless of the checkout platform (the
+# rule of hpc/.gitattributes, for specs/ at the root).
+* text=auto eol=lf
+*.md     text eol=lf
+*.py     text eol=lf
+*.sh     text eol=lf
+*.json   text eol=lf

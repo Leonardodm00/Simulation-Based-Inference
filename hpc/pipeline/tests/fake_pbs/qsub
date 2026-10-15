@@ -1,0 +1,3 @@
+#!/bin/bash
+# fake qsub for the pipeline tests: see fake_pbs.py
+exec python3 "$(dirname "${BASH_SOURCE[0]}")/fake_pbs.py" qsub "$@"
