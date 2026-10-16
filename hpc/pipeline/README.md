@@ -167,13 +167,17 @@ cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && git 
 # 2. the block-1 test under the fake PBS (stdlib; about 25 s); pass line: 6 pass, 0 fail
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_pipeline.py 2>&1 | tail -3
 
-# 3. the dry run (submits nothing); pass: no REFUSE line, exit 0, S1-S6 "would be skipped", the gate's and the trials' qsub lines
-cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|would|qsub -N|identity|clock|exit" ; echo "exit ${PIPESTATUS[0]}"
+# 3. the dry run (submits nothing); pass: no REFUSE or STOP line, exit 0, S1-S4 "would be skipped", S5-S6 "would run"
+#    (or "would be skipped" once the banks exist), the gate's and the trials' qsub lines. A stage the state file
+#    records as failed prints "<stage>: FAILED in the state file ... add --retry <stage>" and exit 3: add that
+#    --retry to this line and to step 4.
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|would|qsub -N|identity|clock|exit" ; echo "exit ${PIPESTATUS[0]}"
 
 # 4. the run (nohup; returns at once); pass line: started : pid <n>
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia
 
-# 5. any time: the status; the log's lines to watch, in order: `search: budget gate passed: ...`,
+# 5. any time: the status; the log's lines to watch, in order: `real_bank: REAL BANK OK`,
+#    `sim_bank: test task passed: TASK 0 OK ...`, `sim_bank: wrote .../BANK_RECORD.json ...`, `search: budget gate passed: ...`,
 #    `search: round 0 proposed` / `submitted trial ...`, `search: round r complete (...)`,
 #    `search: SEARCH COMPLETE (...)`, `best_fit: BEST FIT COMPLETE: ...`, `PIPELINE DONE: every stage done or skipped`
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --status; tail -n 5 /davinci-1/home/ldellamea/pipeline/giulia/pipeline.log
