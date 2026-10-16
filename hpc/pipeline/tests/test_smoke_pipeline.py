@@ -383,6 +383,12 @@ def test_edge_cases():
         n = _n_submitted(spool)
         rc, out = _run_driver(root, path, ["--refuse", "B"], env)
         assert rc == 3 and _n_submitted(spool) == n, out
+        # the dry run says so (exit 3); with --retry B it shows the way on (exit 0)
+        rc, out = _run_driver(root, path, ["--dry-run"], env)
+        assert rc == 3 and "B: FAILED in the state file" in out and "add --retry B" in out, out
+        rc, out = _run_driver(root, path, ["--dry-run", "--retry", "B"], env)
+        assert rc == 0 and "B: would run" in out and "FAILED" not in out, out
+        assert _n_submitted(spool) == n and State.load(cfg["paths"]["work_root"]).statuses()["B"] == "failed"
         # --retry B, now without the refusal: the run completes
         rc, out = _run_driver(root, path, ["--retry", "B"], env, timeout=90)
         assert rc == 0, out

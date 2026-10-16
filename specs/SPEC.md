@@ -415,6 +415,12 @@ part of the pipeline.
   runners' refusal to overwrite their artefacts turns the duplicate into a
   stop, not a corruption. Accepted for block 1; a submission journal written
   before `qsub` would close it (block 8 if it ever bites).
+- Amended 2026-10-16 (the first davinci run): the dry run reports a stage
+  the state file records as failed (`<stage>: FAILED in the state file
+  (<note>); the run would stop here -- add --retry <stage>`), ends with a
+  `STOP:` line and exits 3; with `--retry <stage>` it shows the run that
+  would follow and exits 0 (the reset is not saved by a dry run). Test:
+  `test_edge_cases` (a).
 - Confirmed: yes 2026-10-15 (the user's answers to the build handoff's Q1-Q7
   and the follow-up; D-090..D-093)
 - Status: smoke-tested 2026-10-15 (6 pass, 1 skip: convergence, not a

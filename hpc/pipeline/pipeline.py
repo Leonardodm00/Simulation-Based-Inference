@@ -239,9 +239,16 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
     if dry_run:
         log("DRY RUN -- nothing is submitted (%s)" % cfg.path)
         print_table(stage_table(cfg, graph, state), log)
+        failed = []
         for stage in graph:
             st = state.stage(stage.name)
             if st["status"] in ("done", "skipped"):
+                continue
+            if st["status"] == "failed":
+                # the run would stop here: say so, with the way on
+                failed.append(stage.name)
+                log("%s: FAILED in the state file (%s); the run would stop here -- add "
+                    "--retry %s" % (stage.name, st.get("note", ""), stage.name))
                 continue
             done, _ = stage.is_done(cfg)
             if done:
@@ -267,7 +274,13 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                      and not s.is_done(cfg)[0]]
         for s in not_built:
             log("REFUSE: stage %s is not built yet (block %d)" % (s.name, s.block))
-        return EXIT_CONFIG if (refusals or not_built) else EXIT_OK
+        if refusals or not_built:
+            return EXIT_CONFIG
+        if failed:
+            log("STOP: the run would stop at the failed stage(s) %s; add %s"
+                % (", ".join(failed), " ".join("--retry %s" % n for n in failed)))
+            return EXIT_FAILED
+        return EXIT_OK
 
     # ---- the real run --------------------------------------------------------
     if not os.path.isdir(work_root):
