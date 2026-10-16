@@ -36,21 +36,40 @@ the same command with `--retry <name>`.
 
 | stage | artefact of record (done when it exists; `+sha256` = with a matching `.sha256` sidecar) | built in |
 |---|---|---|
-| `real_extraction` (S1) | `<real.extract_root>/cohort_manifest.json` +sha256 | block 3 |
-| `sim_redetection` (S2, after S1) | `<sim.out_root>/REEXTRACTION_RECORD.json` +sha256 | block 3 |
-| `label_freeze` (S3) | `<paths.sbix_dir>/<freeze.out>` +sha256 | block 3 |
-| `bank_plan` (S4, after S1-S3) | `<paths.sbix_dir>/export_windows/<tag>/bank_plan.json` +sha256 | block 2 |
-| `sim_bank` (S5, after S4) | `<paths.banks_root>/<tag>_sim/BANK_RECORD.json` +sha256 | block 2 |
-| `real_bank` (S6, after S4) | `<paths.banks_root>/<tag>_real/shard_0000.npz` + `.json` | block 2 |
+| `real_extraction` (S1) | `<real.extract_root>/cohort_manifest.json` +sha256 | block 3, built |
+| `sim_redetection` (S2, after S1) | `<sim.out_root>/REEXTRACTION_RECORD.json` +sha256 | block 3, built |
+| `label_freeze` (S3) | `<paths.sbix_dir>/<freeze.out>` +sha256 | block 3, built |
+| `bank_plan` (S4, after S1-S3) | `<paths.sbix_dir>/export_windows/<tag>/bank_plan.json` +sha256 | block 2, built |
+| `sim_bank` (S5, after S4) | `<paths.banks_root>/<tag>_sim/BANK_RECORD.json` +sha256 | block 2, built |
+| `real_bank` (S6, after S4) | `<paths.banks_root>/<tag>_real/shard_0000.npz` + `.json` | block 2, built |
 | `search` (S7, after S5, S6) | `<paths.tune_root>/<search.campaign>/SEARCH_COMPLETE.json` | block 7, built |
 | `best_fit` (S8, after S7) | `<paths.runs_root>/<tag>_best/BEST_FIT_COMPLETE.json` | block 7, built |
 
 A stage whose artefact exists when the run starts is skipped, so the command
-starts wherever the data set stands. A stage whose runner is not built yet
-is reported as `REFUSE: stage <name> is not built yet (block N)`, and a
-configuration key that no built block honours as `REFUSE: this code cannot
-honour <key> (needs block N: ...)`; both stop the run before anything is
-submitted (exit 2).
+starts wherever the data set stands (for Giulia, S1-S6 are done: the command
+starts at the search). Every stage is built (blocks 1-8, 2026-10-16); the
+sequencer still refuses, before anything is submitted (exit 2), a stage
+registered as not built or a configuration key no block honours, should a
+future block add one.
+
+## The input and bank stages (blocks 3 and 2)
+
+S1-S3 drive Sbi-extractor's committed launchers as their headers say (D-062:
+the pipeline changes none of them): `extractor/launch_stage_d.sh` (the
+extraction array and the aggregation job; its own refusals -- a NEW cohort
+whose flags file must be committed first, a root already holding a manifest
+-- stop the run with their text), `sim_reextract/launch_sim_reextract.sh`
+`plan` / `test` / `array` with RESUME=1 (the cohort's `profiles/<tag>.sh`
+must exist in Sbi-extractor: the device geometry lives there), and
+`preflight_label_axes.py` on the login node. S4-S6 drive `export_windows/
+launch_bank.sh`: the pipeline writes the bank profile `<work_root>/bank_
+profile_<tag>.json` from the configuration's `bank` block and the digests of
+S1-S3's artefacts, then `plan` (pass line `BANK PLAN OK`), the test task
+(`TASK 0 OK`), the array and its gate (`wrote <bank_root>/BANK_RECORD.json`),
+and `real` (`REAL BANK OK`) -- the chain line BC of the Giulia build. The
+launchers' variables (queues, cores, walltimes, concurrency) come from the
+configuration's `sim` and `bank` blocks; `SBI_HPC_DIR` is passed as
+`<paths.sbi_dir>/hpc`.
 
 ## The run's state
 
@@ -125,20 +144,56 @@ pbs.py             qsub / qstat -x -f, the only scheduler calls
 envs.py            a command in a conda environment on the login node
 stages/__init__.py the Stage interface, the graph, the registry
 stages/common.py   what the stages share: the tuner's arguments, the qsub line, the clock
+stages/inputs.py   S1-S3 (block 3)
+stages/bank.py     S4-S6 (block 2)
 stages/search.py   S7 (block 7)
 stages/best_fit.py S8 (block 7)
 jobs/run_argv.pbs  one job = one command line from an argv file
 tools/             bank_split_hash.py, ensemble_nll.py (run in envs.train by the stages)
 run_pipeline.sh    the one command (nohup, conda, --dry-run, --status)
 projects/<tag>/    the project's configuration
-tests/             the smoke tests, the fake PBS, the synthetic graph
+tests/             the smoke tests, the fake PBS, the synthetic graph, the stand-in davinci (standin.py)
 ```
+
+## On davinci (the first run)
+
+Each line is one line; run them in this order and read each result before
+the next. The pass condition of each is a line that must APPEAR.
+
+```
+# 1. the code and the cluster-side check (LF, ASCII, syntax, the imports); pass line: PIPELINE CODE OK
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && git fetch origin && git checkout sci/pipeline && git pull --ff-only origin sci/pipeline && git log --oneline -1 && bash -c 'set -e; cd hpc/pipeline; for f in $(find . -name "*.py" -o -name "*.sh" -o -name "*.pbs" -o -name "*.json" | grep -v __pycache__); do if LC_ALL=C grep -q $'"'"'\r'"'"' "$f"; then echo "CR in $f"; exit 1; fi; if LC_ALL=C grep -qP "[^\x00-\x7F]" "$f"; then echo "non-ASCII in $f"; exit 1; fi; done; python3 -m py_compile pipeline.py config.py state.py pbs.py envs.py stages/*.py tools/*.py tests/*.py; python3 -c "import sys; sys.path.insert(0, \".\"); import pipeline, stages; print(sorted(stages.BUILT))"; echo PIPELINE CODE OK'
+
+# 2. the block-1 test under the fake PBS (stdlib; about 25 s); pass line: 6 pass, 0 fail
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_pipeline.py 2>&1 | tail -3
+
+# 3. the dry run (submits nothing); pass: no REFUSE line, exit 0, S1-S6 "would be skipped", the gate's and the trials' qsub lines
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|would|qsub -N|identity|clock|exit" ; echo "exit ${PIPESTATUS[0]}"
+
+# 4. the run (nohup; returns at once); pass line: started : pid <n>
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia
+
+# 5. any time: the status; the log's lines to watch, in order: `search: budget gate passed: ...`,
+#    `search: round 0 proposed` / `submitted trial ...`, `search: round r complete (...)`,
+#    `search: SEARCH COMPLETE (...)`, `best_fit: BEST FIT COMPLETE: ...`, `PIPELINE DONE: every stage done or skipped`
+bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --status; tail -n 5 /davinci-1/home/ldellamea/pipeline/giulia/pipeline.log
+```
+
+A `STOP: stage search failed: budget gate: ...` line names the projected
+trial time and memory against `search.trial.walltime` and `mem`: raise them
+(or narrow the space) in `projects/giulia/giulia.json`, then re-run step 4
+with `--retry search --accept-config-change` appended. A sequencer that
+died (the login node rebooted) is resumed by step 4 again; it re-attaches
+to the recorded jobs.
 
 ## Tests
 
 ```
 python3 hpc/pipeline/tests/test_smoke_pipeline.py      # block 1, about 25 s, stdlib
+python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 20 s, needs the Sbi-extractor checkout (SBIX_CLONE)
+python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 7 s, the same
 python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
+python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 ```
 
 Block 1's smoke test under the fake PBS; blocks 4-6 (the runner) are tested by
@@ -159,10 +214,10 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | block | what | status |
 |---|---|---|
 | 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4 | built 2026-10-15, smoke-tested |
-| 2 | the bank stages S4-S6 | planned |
-| 3 | the input stages S1-S3 | planned |
+| 2 | the bank stages S4-S6 through `launch_bank.sh` (the profile from the configuration; the chain line BC as phases) | built 2026-10-16, smoke-tested on the stand-in |
+| 3 | the input stages S1-S3 through `launch_stage_d.sh`, `launch_sim_reextract.sh`, `preflight_label_axes.py` | built 2026-10-16, smoke-tested (S3 on the real tool; S1-S2 on stubs of the launchers) |
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
 | 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |
 | 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch` | built 2026-10-15, smoke-tested |
 | 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5 | built 2026-10-16, smoke-tested |
-| 8 | end to end on the stand-in; delivery | planned |
+| 8 | end to end on the stand-in (the real bank tools, tuner and runner; 11 jobs; the sequencer stopped and re-run); the davinci lines above | rehearsed 2026-10-16 |

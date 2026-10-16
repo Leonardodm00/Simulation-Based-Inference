@@ -254,12 +254,20 @@ def topological_order(graph):
 
 
 # ---------------------------------------------------------------------------
-# The built stages register here (block 7: S7, S8). The import sits at the
+# The built stages register here (block 7: S7, S8; block 2: S4-S6; block 3: S1-S3). The import sits at the
 # end so the stage modules can import the interface above.
 # ---------------------------------------------------------------------------
 
 from .search import SearchStage        # noqa: E402
 from .best_fit import BestFitStage     # noqa: E402
+from .bank import BankPlanStage, SimBankStage, RealBankStage   # noqa: E402
+from .inputs import RealExtractionStage, SimRedetectionStage, LabelFreezeStage   # noqa: E402
 
 BUILT["search"] = SearchStage
 BUILT["best_fit"] = BestFitStage
+BUILT["bank_plan"] = BankPlanStage
+BUILT["sim_bank"] = SimBankStage
+BUILT["real_bank"] = RealBankStage
+BUILT["real_extraction"] = RealExtractionStage
+BUILT["sim_redetection"] = SimRedetectionStage
+BUILT["label_freeze"] = LabelFreezeStage

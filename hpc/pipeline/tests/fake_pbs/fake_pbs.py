@@ -8,7 +8,10 @@ environment, PBS_ARRAY_INDEX per element of a -J array (elements run in
 parallel), stdout+stderr to the -o path (^array_index^ substituted) or to
 <spool>/<id>.o. `-W depend=afterok:<id>` waits for that job and refuses to
 run when it failed (the job then finishes with Exit_status -1 and a comment),
-which is what the sequencer must see as a failure.
+which is what the sequencer must see as a failure -- for a PLAIN job. For
+an ARRAY (`<n>[]`) the dependency is ordering only, as measured on
+davinci's PBS Pro (D-006, 2026-09-21): the dependent job runs whatever the
+elements' exit codes, and the gate tools are what refuse a partial result.
 
 `qstat -x -f <id>` prints a PBS-like record: job_state (Q, R, B, F),
 Exit_status when finished, resources_used.walltime, array_state_count for
@@ -150,15 +153,17 @@ def cmd_qsub(argv):
 # ---------------------------------------------------------------------------
 
 def _wait_dependency(dep):
-    """Block until the dependency finished; True iff it exited 0."""
+    """Block until the dependency finished; True iff it exited 0 -- or, for
+    an array dependency, True once it finished (ordering only, D-006)."""
     num = int(dep.split("[")[0].split(".")[0])
+    is_array = "[" in dep
     while True:
         try:
             d = _load(num)
         except (OSError, ValueError):
             return False
         if d["state"] == "F":
-            return d["exit_status"] == 0
+            return True if is_array else d["exit_status"] == 0
         time.sleep(0.1)
 
 

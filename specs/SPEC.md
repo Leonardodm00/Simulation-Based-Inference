@@ -95,7 +95,7 @@ verifier refuses.
 | S4 | `bank_plan` | S1, S2, S3 | `<paths.sbix_dir>/export_windows/<dataset>/bank_plan.json` with a matching `.sha256` | Sbi-extractor `export_windows/launch_bank.sh plan` with the profile the pipeline writes (`envs.extract`, login node) -- block 2 |
 | S5 | `sim_bank` | S4 | `<paths.banks_root>/<dataset>_sim/BANK_RECORD.json` with a matching `.sha256` | `launch_bank.sh test`, then `array` (the array and its gate job) -- block 2 |
 | S6 | `real_bank` | S4 | `<paths.banks_root>/<dataset>_real/shard_0000.npz` and `shard_0000.json` | `launch_bank.sh real` (login node) -- block 2 |
-| S7 | `search` | S5, S6 | `<paths.tune_root>/<search.campaign>/SEARCH_COMPLETE.json` | SBI `hpc/joint/stage4/npe_tune_joint.py` propose / evaluate through `jobs/launch_joint_tune.sh` (`envs.train`) -- block 7 |
+| S7 | `search` | S5, S6 | `<paths.tune_root>/<search.campaign>/SEARCH_COMPLETE.json` | SBI `hpc/joint/stage4/npe_tune_joint.py` propose / evaluate, one job per trial through `hpc/pipeline/jobs/run_argv.pbs` (`envs.train`) -- block 7 [corrected 2026-10-16: not the tuner's array job] |
 | S8 | `best_fit` | S7 | `<paths.runs_root>/<dataset>_best/BEST_FIT_COMPLETE.json` | SBI `hpc/joint/stage3/run_joint_arms.py`, one job per ensemble member (`envs.train`) -- block 7 |
 
 "A matching `.sha256`" means: the sidecar `<file>.sha256` exists, its first
@@ -421,8 +421,99 @@ part of the pipeline.
   discretisation; nothing skipped for want of davinci -- the scheduler is
   the fake PBS, which is what the sandbox can test)
 
-### Block 2: the bank stages S4-S6 -- planned (`stages/bank.py`)
-### Block 3: the input stages S1-S3 -- planned (`stages/real_extraction.py`, `stages/sim_redetection.py`, `stages/label_freeze.py`)
+### Block 2: the bank stages S4-S6 (`stages/bank.py`)
+
+- Module: `hpc/pipeline/stages/bank.py` (`BankPlanStage`, `SimBankStage`,
+  `RealBankStage`), through Sbi-extractor's committed `export_windows/
+  launch_bank.sh` (D-062: driven, not changed; D-092: its rules stand);
+  `pipeline.Submitter.record` (a job a launcher submitted, recorded like
+  one of ours); `envs.run_in_env(..., env=)`; `tests/standin.py` (the
+  stand-in davinci: a copy of the Sbi-extractor tools, a fake conda, the
+  bank fixture's synthetic data set).
+- Public API: `BankPlanStage.write_profile(cfg) -> dict` (the bank profile,
+  `bank_plan_config.BankPlanConfig`'s keys, written to `<work_root>/bank_
+  profile_<tag>.json`: the configuration's `bank` block, the paths from
+  `paths` and `sim`, the record / freeze / frozen-manifest paths with the
+  16-hex prefixes of their sha256 -- the frozen copy `<sbix_dir>/artifacts/
+  cohort_manifest_<cohort_tag>/cohort_manifest.json` when it exists, else
+  S1's artefact); the launcher's variables PROFILE, ENV_NAME = `envs.
+  extract`, QUEUE = `bank.queue`, CONCURRENCY = `bank.concurrency`,
+  WALLTIME = `bank.walltime` (the array), TEST_INDEX 0, SBI_HPC_DIR =
+  `<sbi_dir>/hpc`.
+- Rules: S4 runs `plan` on the login node and needs the pass line `BANK
+  PLAN OK` (the tool writes the plan and its .sha256); S5 is the chain line
+  BC as phases -- `test` (skipped when `<bank_root>/tasks/task_0000.json`
+  carries this plan's sha256 and a `finished` time) whose log must hold
+  `TASK <i> OK` among its last lines (the job script's own `[job] bank_task_
+  exit=` line follows it), then `array` (the array and its gate, recorded
+  from the launcher's `  job   :` and `  gate  :` lines) whose gate log must
+  hold `wrote <bank_root>/BANK_RECORD.json`, else the `[gate] FAIL` lines
+  stop the run; S6 runs `real` on the login node and needs `REAL BANK OK`.
+  A launcher's `ABORT:` / `REFUSED:` lines are the refusal text. The
+  committed Giulia configuration reproduces the committed profile's
+  decided values (the test checks every key).
+- Test oracles (`tests/test_smoke_block2.py`, the stand-in, the fake PBS):
+  - known answer: the profile loads through `bank_plan_config` with the
+    fixture's digests and the configuration's values; the Giulia
+    configuration against `profiles/giulia.json` key by key.
+  - reference: the Giulia dry run prints the three stages' lines.
+  - invariants: the `job` / `gate` lines are parsed; a refusal is read
+    from ABORT / REFUSED lines.
+  - contract: S4 -> S5 (the test task, the array of 3 and its gate) -> S6
+    on the fixture: `BANK PLAN OK`, `TASK 0 OK`, the gate's `wrote`, `REAL
+    BANK OK`, the artefacts with their sidecars, 3 jobs; a re-run on the
+    state does nothing, on a fresh state skips all eight stages.
+  - determinism: the sequencer stopped while the test task is queued (the
+    fake PBS's 4 s start delay) and re-run re-attaches: 3 jobs in all.
+  - edge: a task's detections removed before the array -> the gate
+    (ordering only after an array in the fake PBS too, D-006) refuses, the
+    run stops with the `[gate] FAIL` line and no record; a wrong
+    `expected_p` -> the plan's REFUSED stops the run before any job.
+- Status: smoke-tested 2026-10-16 (6 pass, 1 skip, about 20 s; the Sbi-
+  extractor bank suite untouched).
+
+### Block 3: the input stages S1-S3 (`stages/inputs.py`)
+
+- Module: `hpc/pipeline/stages/inputs.py` (`RealExtractionStage`,
+  `SimRedetectionStage`, `LabelFreezeStage`) through Sbi-extractor's
+  `extractor/launch_stage_d.sh`, `sim_reextract/launch_sim_reextract.sh`
+  and `preflight_label_axes.py` (read at `e9aeb55`, driven as their
+  headers say). For Giulia all three artefacts exist and the stages skip.
+- Rules: S1 runs the launcher with CONFIG = `real.cohort_config`,
+  COHORT_TAG = `real.cohort_tag` and the root `real.extract_root`, records
+  its `  array :` and `  agg   :` jobs, and needs `wrote <root>/cohort_
+  manifest.json` in `extractor/out/cohort_manifest_<tag>.log`; the
+  launcher's own refusals (a NEW cohort whose flags file must be
+  COMMITTED; a root already holding a manifest; flags differing from the
+  tracked file) stop the run with their text. S2 needs `sim_reextract/
+  profiles/<tag>.sh` (refused before anything runs when absent), runs
+  `plan`, then `test` (WALLTIME = `sim.test_walltime`, TEST_INDEX 0; the
+  job's exit 0 is its pass), then `array` with RESUME=1 and WALLTIME =
+  `sim.walltime` (or `gate` alone when the launcher says `tasks.tsv is
+  empty`), with COHORT_MANIFEST = S1's artefact, SIM_MAIN, OUT_ROOT, TOOLS,
+  CAMPAIGN_GLOB, PLAN_ARGS, QUEUE, NCPUS, CONCURRENCY from `sim`, and
+  needs `wrote <out_root>/REEXTRACTION_RECORD.json` in `sim_reextract/out/
+  sim_reextract_gate_<tag>.log`. S3 runs the freeze tool on the login node
+  with `--sim_main sim.sim_main --campaigns freeze.campaigns --require-
+  conn-rule freeze.require_conn_rule --exclude NAME=REASON ... --out
+  <sbix_dir>/<freeze.out>` and needs its `wrote` line (the tool writes the
+  sidecar). Every launcher's environment is rebuilt from the configuration
+  (a stray RESUME or WALLTIME in the caller's shell is dropped).
+- Test oracles (`tests/test_smoke_block3.py`): S3 against the REAL tool
+  on the fixture's simulation tree (topology block `['conn_prob']`, the
+  sidecar matches; the Giulia argv carries the three `--exclude`); S1 and
+  S2 against STUBS of the launchers (tests/standin.py) that print the real
+  launchers' lines, submit the same jobs through qsub and write the
+  artefacts from the jobs -- the real launchers need the recordings and
+  the ANN tools (davinci) and have their own suites: the full chain (5
+  jobs, S1 and S3 at once, S2 after S1), a one-task data set (the gate
+  alone after the test task), the missing-profile refusal, the flags
+  refusal, a refused aggregation and a refused gate (each with its REFUSED
+  text in the STOP line); the Giulia dry run with every stage built and no
+  REFUSE line.
+- Not rehearsed: the real S1 and S2 tools end to end (davinci).
+- Status: smoke-tested 2026-10-16 (6 pass, 1 skip, about 7 s).
+
 ### Block 4: the campaign prior in the runner
 
 - Module: `hpc/joint/stage3/run_joint_arms.py` (the prior block of `main`).
@@ -801,10 +892,27 @@ part of the pipeline.
   about 2 minutes; `test_smoke_pipeline.py` 6 pass, 1 skip; the Stage 4
   suites 8/8 under `SKIP_CONDA=1` and 9/9; the Stage 3 suite and
   `smoke_test_blocks_4_6.py` unchanged)
-### Block 8: end to end on the stand-in and the delivery -- planned
+### Block 8: end to end on the stand-in and the delivery
 
-Each planned block gets its entry in the format of block 1 when it is
-written; its constraints are those of secs. 2-4 above.
+- Test (`tests/test_smoke_block8.py`): the one command from an empty work
+  root on the stand-in in the Giulia situation (S1-S3's artefacts exist;
+  the bank fixture with 12 more topologies per task, 104 simulations, W
+  18,000, p 23): S4-S6 with the REAL Sbi-extractor bank tools (the plan,
+  the test task, the array of 3 and its gate, the real bank), S7-S8 with
+  the REAL tuner and runner (2 probes, 2 + 2 trials, the finalists, 2
+  members on split seed 1, the ensemble NLL), the sequencer stopped after
+  3, 8 and 15 polls and re-run each time; 11 jobs, none twice; `--status`
+  shows 3 skipped and 5 done; a last run on the state does nothing. About
+  50 s.
+- Delivery: `sci/pipeline` pushed by D-062 (a dry run, then the push);
+  the davinci lines in the README (the cluster-side check block, the dry
+  run, the run, the status), each with the lines that must appear.
+- Not rehearsed: davinci's queues and conda, the 48-core probes on the
+  real space, the real S1 and S2 tools.
+- Status: smoke-tested 2026-10-16 (1 pass, 1 skip).
+
+Every block is written (2026-10-16); the constraints are those of secs. 2-4
+above.
 
 ## 6. Pipeline entry points
 
@@ -815,6 +923,8 @@ written; its constraints are those of secs. 2-4 above.
 | `bash hpc/pipeline/run_pipeline.sh --project giulia --status` | the stage table from the state file and the live scheduler | -- | seconds |
 | `python3 hpc/pipeline/tests/test_smoke_pipeline.py` | block 1's smoke test under the fake PBS | none (synthetic project in a temporary directory) | about 30 s |
 | `python3 hpc/pipeline/tests/test_smoke_block7.py` | block 7's smoke test: the search and the best fit under the fake PBS on the fixture banks | the training environment (torch, sbi, skopt) | about 2 min |
+| `python3 hpc/pipeline/tests/test_smoke_block2.py`, `test_smoke_block3.py` | blocks 2 and 3: the bank stages and the input stages on the stand-in davinci | the Sbi-extractor checkout (`SBIX_CLONE`), numpy | about 20 s, 7 s |
+| `python3 hpc/pipeline/tests/test_smoke_block8.py` | block 8: the one command end to end on the stand-in with the real tools | both of the above | about 1 min |
 
 ## 7. Not executable in the sandbox
 

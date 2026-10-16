@@ -35,17 +35,18 @@ def python_in_env():
         else os.environ.get("PIPELINE_PYTHON", "python3")
 
 
-def run_in_env(env_name, argv, cwd=None, log_path=None, timeout=None):
+def run_in_env(env_name, argv, cwd=None, log_path=None, timeout=None, env=None):
     """Run `argv` inside `env_name`; return (returncode, output text).
     stdout and stderr are merged, appended to `log_path` when given, and
-    returned. Exit 97 / 98 (the hook / the activation failed) raise
+    returned. `env` replaces the process environment (a launcher's
+    variables). Exit 97 / 98 (the hook / the activation failed) raise
     EnvError."""
     argv = [str(a) for a in argv]
     if skip_conda():
         cmd = argv
     else:
         cmd = ["bash", "-c", _HOOK, "_", str(env_name)] + argv
-    proc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    proc = subprocess.run(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           universal_newlines=True, timeout=timeout)
     out = proc.stdout or ""
     if log_path:

@@ -123,6 +123,14 @@ class Submitter(object):
         self._log("%s: submitted %s -> %s" % (self._name, role, job_id))
         return job_id
 
+    def record(self, job_id, role, cmd, log_path=None):
+        """A job another tool submitted (a launcher's `job : <id>` line):
+        recorded like one of ours, so it is polled and resumed alike."""
+        self._state.add_job(self._name, job_id, role, cmd, log=log_path)
+        self._state.save()
+        self._log("%s: recorded %s -> %s" % (self._name, role, job_id))
+        return job_id
+
     def status(self, job_id):
         return self._pbs.status(job_id)
 
