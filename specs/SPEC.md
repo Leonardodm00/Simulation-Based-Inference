@@ -443,12 +443,20 @@ part of the pipeline.
 - Rules: S4 runs `plan` on the login node and needs the pass line `BANK
   PLAN OK` (the tool writes the plan and its .sha256); S5 is the chain line
   BC as phases -- `test` (skipped when `<bank_root>/tasks/task_0000.json`
-  carries this plan's sha256 and a `finished` time) whose log must hold
-  `TASK <i> OK` among its last lines (the job script's own `[job] bank_task_
-  exit=` line follows it), then `array` (the array and its gate, recorded
-  from the launcher's `  job   :` and `  gate  :` lines) whose gate log must
-  hold `wrote <bank_root>/BANK_RECORD.json`, else the `[gate] FAIL` lines
-  stop the run; S6 runs `real` on the login node and needs `REAL BANK OK`.
+  carries this plan's sha256 and a `finished` time), passed when that
+  marker appears after the job (its log line `TASK <i> OK` is reported
+  with it), then `array` (the array and its gate, recorded from the
+  launcher's `  job   :` and `  gate  :` lines), passed when `BANK_RECORD.
+  json` + a matching .sha256 exist, else the gate log's `[gate] FAIL` /
+  `REFUSED` lines stop the run; S6 runs `real` on the login node and needs
+  `REAL BANK OK`. [amended 2026-10-16, before the first bank run on
+  davinci: success is read from the files the jobs write, not from their
+  PBS logs (delivered at the job's end, possibly with site epilogue lines
+  after the pass line); the whole log is searched for the failure text;
+  when a job has finished with neither its file nor its script's own end
+  line `[job] <name>_exit=<rc>` in the log, the stage waits up to
+  `PIPELINE_LOG_GRACE_S` seconds (default 300, kept in the stage's state)
+  before deciding. The same rule holds for S1's aggregation and S2's gate.]
   A launcher's `ABORT:` / `REFUSED:` lines are the refusal text. The
   committed Giulia configuration reproduces the committed profile's
   decided values (the test checks every key).
@@ -469,6 +477,12 @@ part of the pipeline.
     (ordering only after an array in the fake PBS too, D-006) refuses, the
     run stops with the `[gate] FAIL` line and no record; a wrong
     `expected_p` -> the plan's REFUSED stops the run before any job.
+  - log timing (in process, a fake scheduler): a test log saying `TASK 0
+    OK` without the marker waits; the marker with 15 epilogue lines after
+    the pass line passes; a finished gate with neither record nor log
+    waits, then fails at once when the log arrives with `[gate] FAIL` and
+    its end line; a record with no log passes; the grace run out with
+    nothing fails with "no log".
 - Defect found on davinci (2026-10-16 10:35, the first run): with the plan
   of record (S4 skipped) and a fresh work root, no stage had written the
   profile and `launch_bank.sh test` aborted on the missing file. Fixed the
@@ -478,8 +492,12 @@ part of the pipeline.
   dry run reads a dependency as satisfied when its artefact exists. The
   contract test now repeats the run with the work root and the banks
   removed and the plan kept (S4 skipped, S5 and S6 run).
-- Status: smoke-tested 2026-10-16 (6 pass, 1 skip, about 30 s; the Sbi-
-  extractor bank suite untouched).
+- Status: smoke-tested 2026-10-16 (7 pass, 1 skip, about 30 s; the Sbi-
+  extractor bank suite untouched). The first davinci run (10:35) passed
+  the cluster check, the block-1 test and the dry run; it found the
+  profile defect above and that the Giulia banks had never been built
+  (`~/banks/giulia_sim`, `giulia_real` absent, no `chain.log`), which the
+  stage now builds.
 
 ### Block 3: the input stages S1-S3 (`stages/inputs.py`)
 

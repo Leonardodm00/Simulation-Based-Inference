@@ -197,14 +197,14 @@ mkdir -p "$ROOT"
 if [ "${STUB_REFUSE:-}" = "agg" ]; then
     echo "REFUSED: 1 well(s) could not be used:"
     echo "  well 1 (array index 1): no archive"
-    echo "cohort_manifest_exit=1"
+    echo "[job] cohort_manifest_exit=1 finished=now"
     exit 1
 fi
 printf '{"manifest_version": 3, "n_wells": 2, "stub": true}\n' > "$ROOT/cohort_manifest.json"
 h=\$(sha256sum "$ROOT/cohort_manifest.json" | cut -c1-64)
 echo "\$h  cohort_manifest.json" > "$ROOT/cohort_manifest.json.sha256"
 echo "wrote $ROOT/cohort_manifest.json  sha256 \${h:0:16}"
-echo "cohort_manifest_exit=0"
+echo "[job] cohort_manifest_exit=0 finished=now"
 EOS
 echo "  qsub -J 0-1 -N chsub_mea_array_${COHORT_TAG} -o out/chsub_mea_array_${COHORT_TAG}_^array_index^.log -v ENV_NAME=${ENV_NAME:-sbi_export} run_extractor_array_mea.pbs"
 arr=$(qsub -J 0-1 -N "chsub_mea_array_${COHORT_TAG}" -o "out/chsub_mea_array_${COHORT_TAG}_^array_index^.log" -v "ENV_NAME=${ENV_NAME:-sbi_export}" "out/stub_array_${COHORT_TAG}.sh") || { echo "ABORT: array qsub failed"; exit 2; }
@@ -257,14 +257,14 @@ mkdir -p "$OUT_ROOT"
 if [ "${STUB_REFUSE:-}" = "gate" ]; then
     echo "[gate] FAIL campaign_x/sweep_task0001: 2 file(s) missing"
     echo "REFUSED: 1 task(s) incomplete (each named above)"
-    echo "sim_reextract_gate_exit=1"
+    echo "[job] sim_reextract_gate_exit=1 finished=now"
     exit 1
 fi
 printf '{"record": "sim_reextraction", "stub": true, "tasks": []}\n' > "$OUT_ROOT/REEXTRACTION_RECORD.json"
 h=\$(sha256sum "$OUT_ROOT/REEXTRACTION_RECORD.json" | cut -c1-64)
 echo "\$h  REEXTRACTION_RECORD.json" > "$OUT_ROOT/REEXTRACTION_RECORD.json.sha256"
 echo "wrote $OUT_ROOT/REEXTRACTION_RECORD.json  sha256 \${h:0:16}"
-echo "sim_reextract_gate_exit=0"
+echo "[job] sim_reextract_gate_exit=0 finished=now"
 EOS
 gate=$(qsub ${DEP[@]+"${DEP[@]}"} -N "g2_gate" -o "out/sim_reextract_gate_${COHORT_TAG}.log" "out/stub_gate_${COHORT_TAG}.sh") || { echo "ABORT: the gate's qsub failed"; exit 2; }
 echo "  gate  : $gate"

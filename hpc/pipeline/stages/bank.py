@@ -10,11 +10,13 @@ stand).
                      <tag>/bank_plan.json` + .sha256 (the tool writes both)
     sim_bank (S5)    the chain line BC of the first data set, as phases:
                      `test` (one task as a job; skipped when its marker
-                     belongs to this plan), its log's last line `TASK <i>
-                     OK`; `array` with WALLTIME from `bank.walltime`
-                     (`auto` = the launcher's rule from the test task's
-                     pace) -- the array and its gate job; the gate's log
-                     must hold `wrote <bank_root>/BANK_RECORD.json`;
+                     belongs to this plan), passed when its completion
+                     marker `tasks/task_0000.json` is this plan's (its log
+                     line `TASK <i> OK` is reported with it); `array` with
+                     WALLTIME from `bank.walltime` (`auto` = the launcher's
+                     rule from the test task's pace) -- the array and its
+                     gate job, passed when `BANK_RECORD.json` + .sha256
+                     exist (the gate's `wrote ...` line reported with it);
                      artefact `BANK_RECORD.json` + .sha256
     real_bank (S6)   `launch_bank.sh real` on the login node; pass line
                      `REAL BANK OK`; artefact `shard_0000.npz` + .json
@@ -25,12 +27,22 @@ Submitter so they are polled and resumed like any other job. The
 launcher's refusals are its `ABORT:` / `REFUSED:` lines, read back from
 its output.
 
+A job's success is read from the files the job itself writes (the task's
+marker, the gate's record), never from its PBS log alone: the scheduler
+delivers the `-o` file when the job ends, a site epilogue may append lines
+after the pass line, and a file written on a compute node may reach the
+login node's view a little later. The log gives the failure's text. When a
+job has finished with neither its file nor its script's own end line
+(`[job] <name>_exit=<rc>`) in the log, the stage waits up to
+`PIPELINE_LOG_GRACE_S` seconds (default 300) before deciding (2026-10-16).
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
 import hashlib
 import os
 import re
+import time
 
 from . import DEPS, Stage, artefact_of, artefact_done
 from . import common as CM
@@ -56,6 +68,35 @@ def _last_lines(path, n=5):
 
 def _last_line(path):
     return _last_lines(path, 1)
+
+
+def read_log(path, limit=400000):
+    """The last `limit` bytes of a job log ('' when absent)."""
+    if not path or not os.path.isfile(path):
+        return ""
+    with open(path, "rb") as fh:
+        fh.seek(0, 2)
+        size = fh.tell()
+        fh.seek(max(0, size - int(limit)))
+        return fh.read().decode("ascii", "replace")
+
+
+def job_exit_line(text, name):
+    """The rc of the job script's own end line `[job] <name>_exit=<rc>`
+    (the Sbi-extractor job scripts print it last), or None when absent."""
+    found = re.findall(r"(?:^|\n)(?:\[job\] )?%s_exit=(-?\d+)" % re.escape(name), text)
+    return int(found[-1]) if found else None
+
+
+def grace_over(sub, job_id):
+    """True once PIPELINE_LOG_GRACE_S seconds have passed since the stage
+    first saw `job_id` finished (the time is kept in the stage's state, so
+    a restarted sequencer does not wait again from zero)."""
+    grace = float(os.environ.get("PIPELINE_LOG_GRACE_S", "300"))
+    seen = sub.setdefault("seen_finished", {})
+    now = time.time()
+    t0 = float(seen.setdefault(job_id, now))
+    return (now - t0) >= grace
 
 
 class _BankBase(Stage):
@@ -296,38 +337,56 @@ class SimBankStage(_BankBase):
                     job["walltime_s"] = js.walltime_s
                     job["state"] = js.state
             finished[job["id"]] = bool(job.get("finished"))
+        by_id = dict((j["id"], j) for j in st["jobs"])
         phase = sub.get("phase")
         if phase == "test":
-            if not finished.get(sub["test_job"]):
+            job_id = sub["test_job"]
+            if not finished.get(job_id):
                 return "running"
-            # the pass line `TASK <i> OK`, followed by the job script's own
-            # `[job] bank_task_exit=0 ...` line (the chain line BC's wait)
-            tail = _last_lines(sub["test_log"], 5).split("\n")
-            passed = [l for l in tail if re.match(r"^TASK \d+ OK", l)]
-            if not passed:
-                sub["fail"] = ("the test task did not pass (job %s; log %s ends: %s)"
-                               % (sub["test_job"], sub["test_log"], _last_lines(sub["test_log"], 3)))
-                sub["phase"] = "failed"
-                return "finished"
-            pbs.log("sim_bank: test task passed: %s" % passed[-1])
-            self._start_array(cfg, st, pbs)
-            return "running" if sub.get("phase") == "gate" else "finished"
+            text = read_log(sub["test_log"])
+            ok_lines = re.findall(r"(?m)^TASK \d+ OK.*$", text)
+            if self._test_marker_ok(cfg):
+                pbs.log("sim_bank: test task passed: %s (its marker is this plan's)"
+                        % (ok_lines[-1].strip() if ok_lines else "no log line yet"))
+                self._start_array(cfg, st, pbs)
+                return "running" if sub.get("phase") == "gate" else "finished"
+            # no marker of this plan: the task failed -- unless the marker or
+            # the log is still on its way (the log says OK, or it lacks the
+            # job script's end line): wait, at most the grace period
+            ended = job_exit_line(text, "bank_task")
+            if (ok_lines or ended is None) and not grace_over(sub, job_id):
+                return "running"
+            refused = [l for l in text.split("\n") if l.startswith(("REFUSED", "ABORT", "Traceback"))]
+            sub["fail"] = ("the test task did not pass (job %s, exit %s, no marker of this plan in %s; "
+                           "log %s: %s)"
+                           % (job_id, by_id[job_id].get("exit_status"),
+                              os.path.join(self._bank_root(cfg), "tasks"), sub["test_log"],
+                              "; ".join(refused[:5]) if refused
+                              else (_last_lines(sub["test_log"], 3) or "absent")))
+            sub["phase"] = "failed"
+            return "finished"
         if phase == "gate":
-            if not finished.get(sub["gate_job"]):
+            job_id = sub["gate_job"]
+            if not finished.get(job_id):
                 return "running"
-            text = _last_lines(sub["gate_log"], 40)
+            text = read_log(sub["gate_log"])
             wrote = [l for l in text.split("\n")
                      if l.startswith("wrote ") and "BANK_RECORD.json" in l]
-            if not wrote:
-                fails = [l for l in text.split("\n") if l.startswith("[gate] FAIL") or
-                         l.startswith("REFUSED")]
-                sub["fail"] = ("the gate refused (job %s; %s): %s"
-                               % (sub["gate_job"], sub["gate_log"],
-                                  "; ".join(fails) if fails else _last_lines(sub["gate_log"], 3)))
-                sub["phase"] = "failed"
+            done, why = self.is_done(cfg)
+            if done:
+                pbs.log("sim_bank: " + (wrote[-1].strip() if wrote else why))
+                sub["phase"] = "complete"
                 return "finished"
-            pbs.log("sim_bank: " + wrote[-1].strip())
-            sub["phase"] = "complete"
+            ended = job_exit_line(text, "bank_gate")
+            if (wrote or ended is None) and not grace_over(sub, job_id):
+                return "running"
+            fails = [l for l in text.split("\n") if l.startswith("[gate] FAIL") or
+                     l.startswith("REFUSED")]
+            sub["fail"] = ("the gate refused (job %s, exit %s; %s): %s"
+                           % (job_id, by_id[job_id].get("exit_status"), sub["gate_log"],
+                              "; ".join(fails[:20]) if fails
+                              else (_last_lines(sub["gate_log"], 3) or "no log")))
+            sub["phase"] = "failed"
             return "finished"
         return "finished"
 
@@ -335,8 +394,8 @@ class SimBankStage(_BankBase):
         d = cfg.data
         ld = self._launcher_dir(cfg)
         return ["test (skipped when %s/tasks/task_0000.json belongs to the plan): PROFILE=<profile> "
-                "QUEUE=%s TEST_INDEX=0 bash %s/launch_bank.sh test -> one job; its log's last line "
-                "TASK 0 OK" % (self._bank_root(cfg), d["bank"]["queue"], ld),
+                "QUEUE=%s TEST_INDEX=0 bash %s/launch_bank.sh test -> one job; passed by its marker "
+                "(log line TASK 0 OK)" % (self._bank_root(cfg), d["bank"]["queue"], ld),
                 "array: WALLTIME=%s CONCURRENCY=%d QUEUE=%s bash %s/launch_bank.sh array -> the array "
                 "(-J 0-<n-1>%%%d) and its gate job (depend=afterok)"
                 % (d["bank"]["walltime"], int(d["bank"]["concurrency"]), d["bank"]["queue"], ld,

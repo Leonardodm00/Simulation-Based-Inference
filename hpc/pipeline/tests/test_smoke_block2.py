@@ -23,6 +23,12 @@ Checks (specs/SPEC.md block 2, "Test oracles")
     test_edge_cases     a refused gate (a shard removed after the test task)
                         stops the run with the [gate] FAIL line; a missing
                         input stops S4 before anything runs
+    test_log_timing     the pass is read from the job's own files: a test
+                        log with lines after TASK 0 OK passes by its marker;
+                        a finished gate with neither record nor log waits,
+                        then fails at once when the log arrives with its end
+                        line; a record with no log passes; the grace run out
+                        with nothing fails
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block2.py
@@ -310,12 +316,103 @@ def test_edge_cases():
         s.close()
 
 
+def test_log_timing():
+    import hashlib
+    import pbs as PBS
+    import stages.bank as B
+    s = Standin()
+    saved = os.environ.get("PIPELINE_LOG_GRACE_S")
+    try:
+        cfg = C.load_config(s.path)
+        logdir = os.path.join(s.sbix, "export_windows", "synth", "logs")
+        os.makedirs(logdir, exist_ok=True)
+        plan = os.path.join(s.sbix, "export_windows", "synth", "bank_plan.json")
+        with open(plan, "w") as fh:
+            fh.write('{"plan": "stand-in"}\n')
+        plan_sha = hashlib.sha256(open(plan, "rb").read()).hexdigest()
+        bank = os.path.join(s.cfg["paths"]["banks_root"], "synth_sim")
+
+        class FakeSub(object):
+            def __init__(self):
+                self.lines = []
+
+            def status(self, job_id):
+                return PBS.JobStatus(job_id, "F", exit_status=0, walltime_s=1.0)
+
+            def log(self, text):
+                self.lines.append(text)
+
+            def record(self, *a, **k):
+                pass
+
+        def state(phase, job):
+            st = {"jobs": [{"id": job, "role": "x", "finished": False}], "sub": {"phase": phase}}
+            if phase == "test":
+                st["sub"].update(test_job=job, test_log=os.path.join(logdir, "bank_test_0.log"))
+            else:
+                st["sub"].update(gate_job=job, gate_log=os.path.join(logdir, "bank_gate.log"))
+            return st
+
+        stage = B.SimBankStage()
+        started = []
+        stage._start_array = lambda c, st, p: (started.append(1), st["sub"].update(phase="gate"))
+        os.environ["PIPELINE_LOG_GRACE_S"] = "3600"
+        # (e) no marker yet but the log says OK: wait for the marker
+        with open(os.path.join(logdir, "bank_test_0.log"), "w") as fh:
+            fh.write("TASK 0 OK\n[job] bank_task_exit=0 finished=x\n")
+        sub = FakeSub()
+        st = state("test", "1.fake")
+        assert stage.poll(cfg, st, sub) == "running" and not started
+        # (a) the marker arrives; the log carries epilogue lines after the pass line
+        os.makedirs(os.path.join(bank, "tasks"))
+        with open(os.path.join(bank, "tasks", "task_0000.json"), "w") as fh:
+            json.dump({"plan_sha256": plan_sha, "finished": "2026-10-16T11:00:00+02:00"}, fh)
+        with open(os.path.join(logdir, "bank_test_0.log"), "a") as fh:
+            fh.write("".join("epilogue line %d: resources used\n" % i for i in range(15)))
+        assert stage.poll(cfg, st, sub) == "running" and started == [1], sub.lines
+        assert any("test task passed: TASK 0 OK (its marker is this plan's)" in l for l in sub.lines), sub.lines
+        # (b) the gate finished, no record, no log: wait; the log arrives with its end line: fail now
+        st = state("gate", "2.fake")
+        assert stage.poll(cfg, st, sub) == "running"
+        assert stage.poll(cfg, st, sub) == "running"
+        with open(os.path.join(logdir, "bank_gate.log"), "w") as fh:
+            fh.write("[gate] FAIL campaign_x/sweep_task0001: shard_0003.npz missing\n"
+                     "REFUSED: 1 task(s)\n[job] bank_gate_exit=1 finished=x\n")
+        assert stage.poll(cfg, st, sub) == "finished"
+        assert "[gate] FAIL campaign_x/sweep_task0001" in st["sub"]["fail"], st["sub"]
+        # (c) the record with its sidecar, no log at all: complete
+        os.remove(os.path.join(logdir, "bank_gate.log"))
+        rec = os.path.join(bank, "BANK_RECORD.json")
+        with open(rec, "w") as fh:
+            fh.write('{"stand-in": true}\n')
+        with open(rec + ".sha256", "w") as fh:
+            fh.write(hashlib.sha256(open(rec, "rb").read()).hexdigest() + "  BANK_RECORD.json\n")
+        st = state("gate", "3.fake")
+        assert stage.poll(cfg, st, sub) == "finished" and st["sub"]["phase"] == "complete", st["sub"]
+        assert "fail" not in st["sub"]
+        # (d) the grace run out with neither record nor log: fail, saying so
+        os.remove(rec)
+        os.environ["PIPELINE_LOG_GRACE_S"] = "0"
+        st = state("gate", "4.fake")
+        assert stage.poll(cfg, st, sub) == "finished" and "no log" in st["sub"]["fail"], st["sub"]
+        # the end-line reader
+        assert B.job_exit_line("x\n[job] bank_gate_exit=3 finished=y\n", "bank_gate") == 3
+        assert B.job_exit_line("cohort_manifest_exit=0\n", "cohort_manifest") == 0
+        assert B.job_exit_line("[job] bank_task_exit=0\n", "bank_gate") is None
+    finally:
+        if saved is None:
+            os.environ.pop("PIPELINE_LOG_GRACE_S", None)
+        else:
+            os.environ["PIPELINE_LOG_GRACE_S"] = saved
+        s.close()
+
+
 # ------------------------------------------------------------------ main ---
 
 CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_reference),
           ("test_convergence", test_convergence), ("test_invariants", test_invariants),
           ("test_contract", test_contract), ("test_determinism", test_determinism),
-          ("test_edge_cases", test_edge_cases)]
+          ("test_edge_cases", test_edge_cases), ("test_log_timing", test_log_timing)]
 
 
 def main():

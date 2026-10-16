@@ -43,7 +43,7 @@ import re
 
 from . import DEPS, Stage, artefact_of
 from . import common as CM
-from .bank import _last_lines, _JOB_LINE
+from .bank import _last_lines, _JOB_LINE, read_log, job_exit_line, grace_over
 
 
 class _InputBase(Stage):
@@ -151,19 +151,26 @@ class RealExtractionStage(_InputBase):
         finished = self._poll_jobs(st, pbs)
         if sub.get("phase") != "jobs":
             return "finished"
-        if not finished.get(sub["agg_job"]):
+        job_id = sub["agg_job"]
+        if not finished.get(job_id):
             return "running"
-        tail = _last_lines(self._agg_log(cfg), 60)
-        wrote = [l for l in tail.split("\n") if l.startswith("wrote ") and "cohort_manifest.json" in l]
-        if not wrote:
-            refused = [l for l in tail.split("\n") if "REFUSED" in l or l.startswith("  well")]
-            sub["fail"] = ("the cohort manifest was refused (job %s; %s): %s"
-                           % (sub["agg_job"], self._agg_log(cfg),
-                              "; ".join(refused[:12]) if refused else _last_lines(self._agg_log(cfg), 3)))
-            sub["phase"] = "failed"
+        # success from the file the job writes; the log for the text (bank.py's rule)
+        text = read_log(self._agg_log(cfg))
+        wrote = [l for l in text.split("\n") if l.startswith("wrote ") and "cohort_manifest.json" in l]
+        done, why = self.is_done(cfg)
+        if done:
+            pbs.log("real_extraction: " + (wrote[-1].strip() if wrote else why))
+            sub["phase"] = "complete"
             return "finished"
-        pbs.log("real_extraction: " + wrote[-1].strip())
-        sub["phase"] = "complete"
+        ended = job_exit_line(text, "cohort_manifest")
+        if (wrote or ended is None) and not grace_over(sub, job_id):
+            return "running"
+        refused = [l for l in text.split("\n") if "REFUSED" in l or l.startswith("  well")]
+        sub["fail"] = ("the cohort manifest was refused (job %s; %s): %s"
+                       % (job_id, self._agg_log(cfg),
+                          "; ".join(refused[:12]) if refused
+                          else (_last_lines(self._agg_log(cfg), 3) or "no log")))
+        sub["phase"] = "failed"
         return "finished"
 
     def dry_run(self, cfg, st):
@@ -273,20 +280,26 @@ class SimRedetectionStage(_InputBase):
             self._start_array(cfg, st, pbs)
             return "running" if sub.get("phase") == "gate" else "finished"
         if phase == "gate":
-            if not finished.get(sub["gate_job"]):
+            job_id = sub["gate_job"]
+            if not finished.get(job_id):
                 return "running"
-            tail = _last_lines(self._gate_log(cfg), 60)
-            wrote = [l for l in tail.split("\n")
+            text = read_log(self._gate_log(cfg))
+            wrote = [l for l in text.split("\n")
                      if l.startswith("wrote ") and "REEXTRACTION_RECORD.json" in l]
-            if not wrote:
-                refused = [l for l in tail.split("\n") if "REFUSED" in l or "[gate] FAIL" in l]
-                sub["fail"] = ("the re-detection gate refused (job %s; %s): %s"
-                               % (sub["gate_job"], self._gate_log(cfg),
-                                  "; ".join(refused[:12]) if refused else _last_lines(self._gate_log(cfg), 3)))
-                sub["phase"] = "failed"
+            done, why = self.is_done(cfg)
+            if done:
+                pbs.log("sim_redetection: " + (wrote[-1].strip() if wrote else why))
+                sub["phase"] = "complete"
                 return "finished"
-            pbs.log("sim_redetection: " + wrote[-1].strip())
-            sub["phase"] = "complete"
+            ended = job_exit_line(text, "sim_reextract_gate")
+            if (wrote or ended is None) and not grace_over(sub, job_id):
+                return "running"
+            refused = [l for l in text.split("\n") if "REFUSED" in l or "[gate] FAIL" in l]
+            sub["fail"] = ("the re-detection gate refused (job %s; %s): %s"
+                           % (job_id, self._gate_log(cfg),
+                              "; ".join(refused[:12]) if refused
+                              else (_last_lines(self._gate_log(cfg), 3) or "no log")))
+            sub["phase"] = "failed"
             return "finished"
         return "finished"
 
