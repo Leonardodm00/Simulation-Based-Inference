@@ -240,11 +240,15 @@ def test_contract():
         assert "sim_redetection: [plan] tasks complete  : 1 kept as done (--resume)" in out, out
         assert "sim_redetection: wrote %s" % s.arts["sim_redetection"] in out, out
         assert "label_freeze: wrote" in out, out
-        # S1 and S3 start on the first tick, S2 after S1's manifest
+        # S2 starts after S1's manifest; S3 waits for neither. (Until 2026-10-16
+        # this also asserted S3 done before S2 started -- true only while S1's
+        # fake jobs outlast the first tick; under load they finish inside it,
+        # S1 is done and S2 starts before the tick reaches S3. Not a rule.)
         i1 = out.index("real_extraction: running")
-        i3 = out.index("label_freeze: done")
+        d1 = out.index("real_extraction: done")
         i2 = out.index("sim_redetection: running")
-        assert i1 < i2 and i3 < i2, (i1, i3, i2)
+        assert i1 < d1 < i2, (i1, d1, i2)
+        assert "label_freeze: done" in out, out
         # 5 jobs: the extraction array and aggregation; the test task, the array, the gate
         assert s.n_submitted() == 5, s.n_submitted()
         names = sorted(json.load(open(p))["name"] for p in glob.glob(os.path.join(s.spool, "*.json")))

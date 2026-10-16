@@ -483,12 +483,25 @@ part of the pipeline.
     (ordering only after an array in the fake PBS too, D-006) refuses, the
     run stops with the `[gate] FAIL` line and no record; a wrong
     `expected_p` -> the plan's REFUSED stops the run before any job.
+  - dropped gate (the fake PBS's `FAKE_PBS_ARRAY_DEPEND=gating`: the
+    afterok dependent of an array with a failed element ends unrun, with
+    no Exit_status and no log; `FAKE_PBS_DROP_DEPENDENTS=1` ends it unrun
+    whatever the elements did): (i) a task's detections removed after the
+    plan -> its element fails, the gate never runs, the stage logs "never
+    ran" and runs the gate alone, which refuses with `[gate] FAIL` -> the
+    run stops with those lines, 4 jobs, no record; (ii) every element fine,
+    the gate dropped, a stale `bank_gate.log` holding `REFUSED` from an
+    earlier run -> the stale log is not read, the gate alone writes the
+    record, the run ends `PIPELINE DONE`, 4 jobs.
   - log timing (in process, a fake scheduler): a test log saying `TASK 0
     OK` without the marker waits; the marker with 15 epilogue lines after
     the pass line passes; a finished gate with neither record nor log
     waits, then fails at once when the log arrives with `[gate] FAIL` and
     its end line; a record with no log passes; the grace run out with
-    nothing fails with "no log".
+    neither record nor fresh log runs the gate alone [amended 2026-10-16;
+    was: fails with "no log"], and that gate also without a log fails with
+    "the gate did not run"; a stale log (its stat unchanged since the
+    submission) counts as no log; a gate alone waits for the array's end.
 - Defect found on davinci (2026-10-16 10:35, the first run): with the plan
   of record (S4 skipped) and a fresh work root, no stage had written the
   profile and `launch_bank.sh test` aborted on the missing file. Fixed the
@@ -498,12 +511,41 @@ part of the pipeline.
   dry run reads a dependency as satisfied when its artefact exists. The
   contract test now repeats the run with the work root and the banks
   removed and the plan kept (S4 skipped, S5 and S6 run).
+- Defect found on davinci (2026-10-16 12:29, the second run): the array
+  `1845588[]` (69 elements) ended and its gate `1845589` (afterok on the
+  array) never ran -- no log, no record, no exit status in the stage's
+  `qstat -x -f` -- and the stage stopped with "the gate refused (...): no
+  log". D-006's probe (an element exiting 1; the dependent ran) does not
+  cover whatever ended this gate unrun (the diagnosis on davinci is
+  pending). Rule since [amended 2026-10-16]: (a) the gate's log is THIS
+  gate's only when it is fresh: absent at the gate's submission and
+  present now, or present then with a (size, mtime) that has changed since
+  (the stat is taken before the launcher call and kept in the stage's
+  state; a state without it counts any log as fresh); a stale log is read
+  neither for the pass nor for the failure text. (b) A finished gate with
+  no record and no fresh log, once its grace period has run out, NEVER
+  RAN: the stage logs "the gate <id> never ran", waits until the array
+  has finished, and runs `launch_bank.sh gate` (the gate alone, no
+  dependency) once, recorded from its `  gate  :` line, with its own grace
+  period. (c) If the gate alone does not run either, the stage fails with
+  "the gate did not run" (both job ids, the log path). (d) A gate that ran
+  is judged as before: the record -> done; else its `[gate] FAIL` /
+  `REFUSED` lines stop the run. The stage does not resubmit failed tasks:
+  the gate names them, and `--retry sim_bank` reruns the array, whose
+  finished elements skip on their markers (the launcher's rule).
 - Status: smoke-tested 2026-10-16 (7 pass, 1 skip, about 30 s; the Sbi-
   extractor bank suite untouched). The first davinci run (10:35) passed
   the cluster check, the block-1 test and the dry run; it found the
   profile defect above and that the Giulia banks had never been built
   (`~/banks/giulia_sim`, `giulia_real` absent, no `chain.log`), which the
   stage now builds.
+  [2026-10-16 13:15, the dropped gate: smoke-tested, 8 pass, 1 skip,
+  about 45 s (70 s under a 6-process CPU load); with the never-ran branch
+  removed, `test_dropped_gate` and `test_log_timing` fail (the new checks
+  bite). Regression: block 1 6 pass 1 skip; block 3 6 pass 1 skip (its
+  contract test's ordering assertion corrected: it assumed S1's fake jobs
+  outlast the first tick, which fails under load -- now S2 after S1's
+  `done`); block 7 6 pass 1 skip; block 8 1 pass 1 skip.]
 
 ### Block 3: the input stages S1-S3 (`stages/inputs.py`)
 
@@ -997,3 +1039,13 @@ stated in the README.
 - Config v5 added `search.trial.queue` and `best_fit.queue` (both `cpu`,
   the queue whose per-job cap is 300:00:00 [KB, the C8 handoff]); the
   user to confirm the queue (raised 2026-10-16).
+- The dropped gate (block 2, 2026-10-16): what ended `1845589` unrun --
+  the davinci diagnosis decides whether D-006's Statement needs a
+  qualifier (for instance: ordering only when the elements exit with a
+  code of their own; an element the scheduler kills ends the dependent
+  unrun). Two options for the user, neither taken: (1) the launcher's
+  gate dependency `afterok` -> `afterany` (Sbi-extractor, a laptop push
+  by D-062; `afterany:<array>[]` was accepted by davinci in the D-006
+  sweep, and is ordering by definition); (2) the stage resubmits failed
+  tasks itself, bounded by a new `bank.max_resubmits`, instead of
+  stopping with the gate's names (raised 2026-10-16).

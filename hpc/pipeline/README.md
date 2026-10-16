@@ -66,7 +66,10 @@ launch_bank.sh`: the pipeline writes the bank profile `<work_root>/bank_
 profile_<tag>.json` from the configuration's `bank` block and the digests of
 S1-S3's artefacts, then `plan` (pass line `BANK PLAN OK`), the test task
 (`TASK 0 OK`), the array and its gate (`wrote <bank_root>/BANK_RECORD.json`),
-and `real` (`REAL BANK OK`) -- the chain line BC of the Giulia build. The
+and `real` (`REAL BANK OK`) -- the chain line BC of the Giulia build. A
+gate the scheduler ends without running it (no record, no log of its own:
+davinci, 2026-10-16) is run again alone, `launch_bank.sh gate`, once the
+array has ended; a gate log left by an earlier run is not read. The
 launchers' variables (queues, cores, walltimes, concurrency) come from the
 configuration's `sim` and `bank` blocks; `SBI_HPC_DIR` is passed as
 `<paths.sbi_dir>/hpc`.
@@ -178,6 +181,8 @@ cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia
 
 # 5. any time: the status; the log's lines to watch, in order: `real_bank: REAL BANK OK`,
 #    `sim_bank: test task passed: TASK 0 OK ...`, `sim_bank: wrote .../BANK_RECORD.json ...`, `search: budget gate passed: ...`,
+#    (if the bank's gate is dropped: `sim_bank: the gate <id> never ran (...): the gate alone`, then
+#    `sim_bank: recorded bank gate alone -> <id>`, then the `wrote` line or a STOP with the gate's `[gate] FAIL` lines),
 #    `search: round 0 proposed` / `submitted trial ...`, `search: round r complete (...)`,
 #    `search: SEARCH COMPLETE (...)`, `best_fit: BEST FIT COMPLETE: ...`, `PIPELINE DONE: every stage done or skipped`
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --status; tail -n 5 /davinci-1/home/ldellamea/pipeline/giulia/pipeline.log
@@ -194,7 +199,7 @@ to the recorded jobs.
 
 ```
 python3 hpc/pipeline/tests/test_smoke_pipeline.py      # block 1, about 25 s, stdlib
-python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 20 s, needs the Sbi-extractor checkout (SBIX_CLONE)
+python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 45 s, needs the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 7 s, the same
 python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
@@ -218,7 +223,7 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | block | what | status |
 |---|---|---|
 | 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4 | built 2026-10-15, smoke-tested |
-| 2 | the bank stages S4-S6 through `launch_bank.sh` (the profile from the configuration; the chain line BC as phases) | built 2026-10-16, smoke-tested on the stand-in |
+| 2 | the bank stages S4-S6 through `launch_bank.sh` (the profile from the configuration; the chain line BC as phases; a gate that never ran is run alone) | built 2026-10-16, smoke-tested on the stand-in; the dropped gate amended 2026-10-16 |
 | 3 | the input stages S1-S3 through `launch_stage_d.sh`, `launch_sim_reextract.sh`, `preflight_label_axes.py` | built 2026-10-16, smoke-tested (S3 on the real tool; S1-S2 on stubs of the launchers) |
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
 | 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |

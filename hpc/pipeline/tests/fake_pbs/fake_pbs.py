@@ -12,6 +12,11 @@ which is what the sequencer must see as a failure -- for a PLAIN job. For
 an ARRAY (`<n>[]`) the dependency is ordering only, as measured on
 davinci's PBS Pro (D-006, 2026-09-21): the dependent job runs whatever the
 elements' exit codes, and the gate tools are what refuse a partial result.
+Two switches model a scheduler that ends the dependent of an array unrun,
+as davinci did on 2026-10-16 (the bank's gate: no log, no exit status):
+FAKE_PBS_ARRAY_DEPEND=gating ends it unrun when an element exited non-zero;
+FAKE_PBS_DROP_DEPENDENTS=1 ends it unrun whatever the elements did. Such a
+job finishes with state F, no Exit_status, a comment, and no output file.
 
 `qstat -x -f <id>` prints a PBS-like record: job_state (Q, R, B, F),
 Exit_status when finished, resources_used.walltime, array_state_count for
@@ -34,6 +39,8 @@ import time
 SPOOL = os.environ.get("FAKE_PBS_SPOOL", "")
 DELAY = float(os.environ.get("FAKE_PBS_DELAY", "0.5"))
 ENFORCE_WALLTIME = os.environ.get("FAKE_PBS_ENFORCE_WALLTIME", "0") == "1"
+ARRAY_DEPEND = os.environ.get("FAKE_PBS_ARRAY_DEPEND", "ordering")
+DROP_DEPENDENTS = os.environ.get("FAKE_PBS_DROP_DEPENDENTS", "0") == "1"
 SERVER = "fake"
 
 
@@ -154,7 +161,8 @@ def cmd_qsub(argv):
 
 def _wait_dependency(dep):
     """Block until the dependency finished; True iff it exited 0 -- or, for
-    an array dependency, True once it finished (ordering only, D-006)."""
+    an array dependency, True once it finished (ordering only, D-006), unless
+    one of the two switches of the module docstring says otherwise."""
     num = int(dep.split("[")[0].split(".")[0])
     is_array = "[" in dep
     while True:
@@ -163,7 +171,13 @@ def _wait_dependency(dep):
         except (OSError, ValueError):
             return False
         if d["state"] == "F":
-            return True if is_array else d["exit_status"] == 0
+            if not is_array:
+                return d["exit_status"] == 0
+            if DROP_DEPENDENTS:
+                return False
+            if ARRAY_DEPEND == "gating":
+                return d["exit_status"] == 0
+            return True
         time.sleep(0.1)
 
 
@@ -219,6 +233,13 @@ def cmd_run(num):
     rec = _load(num)
     time.sleep(DELAY)
     if rec["depend"] and not _wait_dependency(rec["depend"]):
+        if "[" in rec["depend"]:
+            # ended unrun, as davinci ended the bank's gate (2026-10-16): no exit status, no log
+            rec["state"], rec["exit_status"] = "F", None
+            rec["comment"] = "Job deleted as result of dependency on job %s" % rec["depend"]
+            rec["finished"] = time.time()
+            _save(rec)
+            return 0
         rec["state"], rec["exit_status"] = "F", -1
         rec["comment"] = "dependency %s did not finish with exit 0" % rec["depend"]
         rec["started"] = rec["finished"] = time.time()
@@ -263,7 +284,7 @@ def cmd_qstat(argv):
              "    Job_Name = %s" % rec["name"],
              "    job_state = %s" % rec["state"],
              "    queue = %s" % rec["queue"]]
-    if rec["state"] == "F":
+    if rec["state"] == "F" and rec["exit_status"] is not None:
         lines.append("    Exit_status = %d" % rec["exit_status"])
     if rec["started"]:
         end = rec["finished"] or time.time()

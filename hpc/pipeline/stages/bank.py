@@ -36,6 +36,14 @@ job has finished with neither its file nor its script's own end line
 (`[job] <name>_exit=<rc>`) in the log, the stage waits up to
 `PIPELINE_LOG_GRACE_S` seconds (default 300) before deciding (2026-10-16).
 
+A gate can end without ever running: on davinci (2026-10-16 12:29) the
+gate behind the array finished with no log, no record and no exit status.
+The gate's log counts only when it is fresh (absent, or of another size or
+mtime, when the gate was submitted); a finished gate with no record and no
+fresh log after its grace period never ran, and the stage runs the gate
+alone (`launch_bank.sh gate`, no dependency) once the array has finished --
+once; a second gate that never runs fails the stage (specs/SPEC.md, block 2).
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
@@ -86,6 +94,28 @@ def job_exit_line(text, name):
     (the Sbi-extractor job scripts print it last), or None when absent."""
     found = re.findall(r"(?:^|\n)(?:\[job\] )?%s_exit=(-?\d+)" % re.escape(name), text)
     return int(found[-1]) if found else None
+
+
+def file_stat(path):
+    """[size, mtime] of a file (a list, as the state file keeps it), or None."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return [int(st.st_size), float(st.st_mtime)]
+
+
+def log_is_fresh(path, before):
+    """True when the log at `path` was written after a stat `before` taken
+    at its job's submission: absent then and present now, or present then
+    with another size or mtime. `before` is the string "unknown" for a state
+    written before the stat was kept: any log counts then."""
+    now = file_stat(path)
+    if now is None:
+        return False
+    if before == "unknown":
+        return True
+    return before is None or list(before) != now
 
 
 def grace_over(sub, job_id):
@@ -296,6 +326,8 @@ class SimBankStage(_BankBase):
 
     def _start_array(self, cfg, st, pbs):
         sub = st["sub"]
+        gate_log = os.path.join(self._log_dir(cfg), "bank_gate.log")
+        before = file_stat(gate_log)
         rc, text = self._run_launcher(cfg, "array", self._login_log(cfg),
                                       WALLTIME=str(cfg.data["bank"]["walltime"]), TEST_INDEX="0")
         jobs = self._jobs_of(text)
@@ -308,12 +340,52 @@ class SimBankStage(_BankBase):
                 pbs.log("sim_bank: " + line.strip())
         pbs.record(jobs["job"], "bank array", ["launch_bank.sh", "array"],
                    log_path=os.path.join(self._log_dir(cfg), "bank_task_<index>.log"))
-        pbs.record(jobs["gate"], "bank gate", ["launch_bank.sh", "array"],
-                   log_path=os.path.join(self._log_dir(cfg), "bank_gate.log"))
+        pbs.record(jobs["gate"], "bank gate", ["launch_bank.sh", "array"], log_path=gate_log)
         sub["array_job"] = jobs["job"]
         sub["gate_job"] = jobs["gate"]
-        sub["gate_log"] = os.path.join(self._log_dir(cfg), "bank_gate.log")
+        sub["gate_log"] = gate_log
+        sub["gate_log_stat"] = before
         sub["phase"] = "gate"
+
+    def _start_gate_alone(self, cfg, st, pbs):
+        """`launch_bank.sh gate`: the gate with no dependency, recorded like
+        the first; the phase stays `gate`."""
+        sub = st["sub"]
+        gate_log = os.path.join(self._log_dir(cfg), "bank_gate.log")
+        before = file_stat(gate_log)
+        rc, text = self._run_launcher(cfg, "gate", self._login_log(cfg))
+        jobs = self._jobs_of(text)
+        if rc != 0 or "gate" not in jobs:
+            sub["fail"] = "the gate alone could not be submitted (exit %d): %s" % (rc, self._refusal(text))
+            sub["phase"] = "failed"
+            return
+        pbs.record(jobs["gate"], "bank gate alone", ["launch_bank.sh", "gate"], log_path=gate_log)
+        sub["gate_job"] = jobs["gate"]
+        sub["gate_log"] = gate_log
+        sub["gate_log_stat"] = before
+
+    def _gate_never_ran(self, cfg, st, pbs, finished, by_id):
+        """The finished gate left no record and no fresh log: it never ran.
+        Once the array has finished, run the gate alone -- once."""
+        sub = st["sub"]
+        job_id = sub["gate_job"]
+        array_id = sub.get("array_job")
+        if array_id and not finished.get(array_id):
+            return "running"
+        unrun = list(sub.get("gates_unrun", [])) + [job_id]
+        sub["gates_unrun"] = unrun
+        exit_status = by_id[job_id].get("exit_status")
+        if len(unrun) > 1:
+            sub["fail"] = ("the gate did not run (jobs %s finished with no record and no log at %s; "
+                           "exit %s): read qstat -x -f %s" % (", ".join(unrun), sub["gate_log"],
+                                                               exit_status, job_id))
+            sub["phase"] = "failed"
+            return "finished"
+        pbs.log("sim_bank: the gate %s never ran (finished with exit %s, no record, no log at %s; "
+                "the array %s has ended): the gate alone" % (job_id, exit_status, sub["gate_log"],
+                                                             array_id or "-"))
+        self._start_gate_alone(cfg, st, pbs)
+        return "running" if sub.get("phase") == "gate" else "finished"
 
     def start(self, cfg, st, pbs):
         sub = st["sub"]
@@ -369,7 +441,9 @@ class SimBankStage(_BankBase):
             job_id = sub["gate_job"]
             if not finished.get(job_id):
                 return "running"
-            text = read_log(sub["gate_log"])
+            # only this gate's log counts: a log left by an earlier gate is not read
+            fresh = log_is_fresh(sub["gate_log"], sub.get("gate_log_stat", "unknown"))
+            text = read_log(sub["gate_log"]) if fresh else ""
             wrote = [l for l in text.split("\n")
                      if l.startswith("wrote ") and "BANK_RECORD.json" in l]
             done, why = self.is_done(cfg)
@@ -380,6 +454,8 @@ class SimBankStage(_BankBase):
             ended = job_exit_line(text, "bank_gate")
             if (wrote or ended is None) and not grace_over(sub, job_id):
                 return "running"
+            if not fresh:
+                return self._gate_never_ran(cfg, st, pbs, finished, by_id)
             fails = [l for l in text.split("\n") if l.startswith("[gate] FAIL") or
                      l.startswith("REFUSED")]
             sub["fail"] = ("the gate refused (job %s, exit %s; %s): %s"
@@ -400,6 +476,8 @@ class SimBankStage(_BankBase):
                 "(-J 0-<n-1>%%%d) and its gate job (depend=afterok)"
                 % (d["bank"]["walltime"], int(d["bank"]["concurrency"]), d["bank"]["queue"], ld,
                    int(d["bank"]["concurrency"])),
+                "a gate that never runs (no record, no log of its own): bash %s/launch_bank.sh gate "
+                "-> the gate alone, once the array has ended" % ld,
                 "pass line: the gate's log ends 'wrote %s/BANK_RECORD.json  sha256 <16 hex>'; artefact "
                 "BANK_RECORD.json + .sha256" % self._bank_root(cfg)]
 

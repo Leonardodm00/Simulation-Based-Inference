@@ -23,12 +23,20 @@ Checks (specs/SPEC.md block 2, "Test oracles")
     test_edge_cases     a refused gate (a shard removed after the test task)
                         stops the run with the [gate] FAIL line; a missing
                         input stops S4 before anything runs
+    test_dropped_gate   the scheduler ends the gate unrun (davinci 2026-10-16):
+                        an element failed under the fake PBS's gating switch
+                        -> the gate alone refuses the task, STOP with its
+                        [gate] FAIL line, 4 jobs; every element fine, the gate
+                        dropped anyway, a stale gate log with a REFUSED ->
+                        not read, the gate alone writes the record, 4 jobs
     test_log_timing     the pass is read from the job's own files: a test
                         log with lines after TASK 0 OK passes by its marker;
                         a finished gate with neither record nor log waits,
                         then fails at once when the log arrives with its end
                         line; a record with no log passes; the grace run out
-                        with nothing fails
+                        with nothing runs the gate alone, and a second gate
+                        without a log fails "the gate did not run"; the gate
+                        alone waits for the array; a stale log is not read
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block2.py
@@ -95,22 +103,25 @@ class Standin(object):
                     fh.write('{"pre_made": true}\n')
         self.spool = os.path.join(self.root, "spool")
 
-    def env(self, delay="0.2"):
+    def env(self, delay="0.2", extra=None):
         env = dict(os.environ)
         env["PATH"] = _FAKE + os.pathsep + self.fakebin + os.pathsep + env.get("PATH", "")
         env["FAKE_PBS_SPOOL"] = self.spool
         env["FAKE_PBS_DELAY"] = delay
         env["PIPELINE_SKIP_CONDA"] = "1"
         env["PYTHONPATH"] = _PIPE + os.pathsep + env.get("PYTHONPATH", "")
-        for k in ("DRYRUN", "WALLTIME", "TEST_INDEX", "PROFILE", "QUEUE", "CONCURRENCY"):
+        for k in ("DRYRUN", "WALLTIME", "TEST_INDEX", "PROFILE", "QUEUE", "CONCURRENCY",
+                  "FAKE_PBS_ARRAY_DEPEND", "FAKE_PBS_DROP_DEPENDENTS", "PIPELINE_LOG_GRACE_S"):
             env.pop(k, None)
+        env.update(extra or {})
         return env
 
-    def run(self, extra, timeout=600, delay="0.2"):
+    def run(self, extra, timeout=600, delay="0.2", env_extra=None):
         cmd = [PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config", self.path,
                "--poll-seconds", "0.5"] + list(extra)
-        proc = subprocess.run(cmd, cwd=self.root, env=self.env(delay), stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, universal_newlines=True, timeout=timeout)
+        proc = subprocess.run(cmd, cwd=self.root, env=self.env(delay, env_extra),
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              universal_newlines=True, timeout=timeout)
         return proc.returncode, proc.stdout
 
     def n_submitted(self):
@@ -316,6 +327,57 @@ def test_edge_cases():
         s.close()
 
 
+def test_dropped_gate():
+    """The scheduler ends the gate unrun (davinci, 2026-10-16 12:29): the
+    stage runs the gate alone once the array has ended."""
+    # (i) an element fails and the fake PBS gates the array's dependent: the
+    #     gate never runs; the gate alone refuses the failed task -> STOP with
+    #     its [gate] FAIL line, no record, 4 jobs
+    s = Standin()
+    try:
+        env = {"FAKE_PBS_ARRAY_DEPEND": "gating", "PIPELINE_LOG_GRACE_S": "1"}
+        rc, out = s.run(["--max-ticks", "2"], timeout=600, delay="4.0", env_extra=env)
+        assert rc == 0 and "tick limit 2 reached" in out and "recorded bank test task 0" in out, out
+        bank = os.path.join(s.cfg["paths"]["banks_root"], "synth_sim")
+        shutil.rmtree(s.ds["fixture"]["tasks"][1]["out_dir"])
+        rc, out = s.run([], timeout=900, env_extra=env)
+        assert rc == 3, out
+        assert "never ran (finished with exit None, no record, no log at" in out, out
+        assert "sim_bank: recorded bank gate alone -> " in out, out
+        assert "STOP: stage sim_bank failed: the gate refused" in out and "[gate] FAIL" in out, out
+        assert not os.path.isfile(os.path.join(bank, "BANK_RECORD.json"))
+        assert s.n_submitted() == 4, s.n_submitted()
+        recs = dict((json.load(open(p))["name"] + str(json.load(open(p))["depend"] is not None),
+                     json.load(open(p))) for p in glob.glob(os.path.join(s.spool, "*.json")))
+        dropped = recs["bank_gateTrue"]
+        assert dropped["state"] == "F" and dropped["exit_status"] is None and dropped["started"] is None
+        assert "dependency" in dropped["comment"], dropped
+        assert recs["bank_gateFalse"]["exit_status"] == 1, recs["bank_gateFalse"]
+    finally:
+        s.close()
+    # (ii) every element fine, the gate dropped anyway, a stale gate log with a
+    #      REFUSED from an earlier run: the stale log is not read; the gate alone
+    #      writes the record; PIPELINE DONE with 4 jobs
+    s = Standin()
+    try:
+        env = {"FAKE_PBS_DROP_DEPENDENTS": "1", "PIPELINE_LOG_GRACE_S": "1"}
+        logdir = os.path.join(s.sbix, "export_windows", "synth", "logs")
+        os.makedirs(logdir, exist_ok=True)
+        with open(os.path.join(logdir, "bank_gate.log"), "w") as fh:
+            fh.write("[gate] FAIL stale/task: an earlier run\nREFUSED: 1 problem(s), nothing "
+                     "written\n[job] bank_gate_exit=1 finished=x\n")
+        rc, out = s.run([], timeout=900, env_extra=env)
+        assert rc == 0 and "PIPELINE DONE" in out, out
+        assert "never ran" in out and "sim_bank: recorded bank gate alone -> " in out, out
+        assert "stale/task" not in out, out
+        bank = os.path.join(s.cfg["paths"]["banks_root"], "synth_sim")
+        assert "sim_bank: wrote %s/BANK_RECORD.json" % bank in out, out
+        assert os.path.isfile(os.path.join(bank, "BANK_RECORD.json.sha256"))
+        assert s.n_submitted() == 4, s.n_submitted()
+    finally:
+        s.close()
+
+
 def test_log_timing():
     import hashlib
     import pbs as PBS
@@ -390,11 +452,62 @@ def test_log_timing():
         st = state("gate", "3.fake")
         assert stage.poll(cfg, st, sub) == "finished" and st["sub"]["phase"] == "complete", st["sub"]
         assert "fail" not in st["sub"]
-        # (d) the grace run out with neither record nor log: fail, saying so
+        # (d) the grace run out with neither record nor log: the gate never ran ->
+        #     the gate alone (no array recorded here); that gate also without a
+        #     log: the stage fails, saying the gate did not run [amended 2026-10-16;
+        #     was: fails with "no log"]
         os.remove(rec)
         os.environ["PIPELINE_LOG_GRACE_S"] = "0"
+        alone = []
+
+        def fake_alone(c, st_, p, new_id):
+            alone.append(new_id)
+            st_["jobs"].append({"id": new_id, "role": "bank gate alone", "finished": False})
+            st_["sub"].update(gate_job=new_id,
+                              gate_log_stat=B.file_stat(st_["sub"]["gate_log"]))
+
+        ids = iter(["5.fake", "8.fake", "9.fake"])
+        stage._start_gate_alone = lambda c, st_, p: fake_alone(c, st_, p, next(ids))
         st = state("gate", "4.fake")
-        assert stage.poll(cfg, st, sub) == "finished" and "no log" in st["sub"]["fail"], st["sub"]
+        assert stage.poll(cfg, st, sub) == "running" and alone == ["5.fake"], st["sub"]
+        assert "fail" not in st["sub"], st["sub"]
+        assert any("the gate 4.fake never ran" in l for l in sub.lines), sub.lines
+        assert stage.poll(cfg, st, sub) == "finished", st["sub"]
+        assert "the gate did not run (jobs 4.fake, 5.fake" in st["sub"]["fail"], st["sub"]
+        # (f) a gate that never ran while its array still runs: the gate alone waits
+        class ArrayRunning(FakeSub):
+            def status(self, job_id):
+                if job_id == "7[].fake":
+                    return PBS.JobStatus(job_id, "B")
+                return PBS.JobStatus(job_id, "F")
+        st = state("gate", "6.fake")
+        st["jobs"].append({"id": "7[].fake", "role": "bank array", "finished": False})
+        st["sub"]["array_job"] = "7[].fake"
+        assert stage.poll(cfg, st, ArrayRunning()) == "running" and alone == ["5.fake"], st["sub"]
+        assert stage.poll(cfg, st, sub) == "running" and alone == ["5.fake", "8.fake"], st["sub"]
+        # (g) a log left by an earlier gate (its stat unchanged since this gate's
+        #     submission) is not this gate's: it is not read, the gate never ran
+        with open(os.path.join(logdir, "bank_gate.log"), "w") as fh:
+            fh.write("[gate] FAIL stale/task: an earlier run\nREFUSED: 1 problem(s)\n"
+                     "[job] bank_gate_exit=1 finished=x\n")
+        st = state("gate", "10.fake")
+        st["sub"]["gate_log_stat"] = B.file_stat(os.path.join(logdir, "bank_gate.log"))
+        assert stage.poll(cfg, st, sub) == "running" and alone[-1] == "9.fake", st["sub"]
+        assert "fail" not in st["sub"], st["sub"]
+        # ... while a state written before the stat was kept reads any log (as before)
+        st = state("gate", "11.fake")
+        assert stage.poll(cfg, st, sub) == "finished" and "stale/task" in st["sub"]["fail"], st["sub"]
+        # the freshness rule itself
+        p = os.path.join(logdir, "fresh_probe.log")
+        assert B.file_stat(p) is None and not B.log_is_fresh(p, None)
+        with open(p, "w") as fh:
+            fh.write("a\n")
+        assert B.log_is_fresh(p, None) and B.log_is_fresh(p, "unknown")
+        before = B.file_stat(p)
+        assert not B.log_is_fresh(p, before)
+        with open(p, "a") as fh:
+            fh.write("b\n")
+        assert B.log_is_fresh(p, before)
         # the end-line reader
         assert B.job_exit_line("x\n[job] bank_gate_exit=3 finished=y\n", "bank_gate") == 3
         assert B.job_exit_line("cohort_manifest_exit=0\n", "cohort_manifest") == 0
@@ -412,7 +525,8 @@ def test_log_timing():
 CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_reference),
           ("test_convergence", test_convergence), ("test_invariants", test_invariants),
           ("test_contract", test_contract), ("test_determinism", test_determinism),
-          ("test_edge_cases", test_edge_cases), ("test_log_timing", test_log_timing)]
+          ("test_edge_cases", test_edge_cases), ("test_dropped_gate", test_dropped_gate),
+          ("test_log_timing", test_log_timing)]
 
 
 def main():
