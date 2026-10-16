@@ -94,6 +94,27 @@ class _BankBase(Stage):
         env.update(extra)
         return env
 
+    def ensure_profile(self, cfg, pbs):
+        """The profile the launcher reads, (re)written from the configuration
+        before any launcher call -- whichever stage runs first. When the plan
+        stage was skipped (its artefact exists, as for a data set whose plan
+        is of record) no earlier stage wrote it. Idempotent: the same
+        configuration and artefacts give the same file."""
+        path = self._profile_path(cfg)
+        before = CM.read_json(path) if os.path.isfile(path) else None
+        prof = BankPlanStage().write_profile(cfg)
+        after = dict((k, v) for k, v in prof.items() if not k.startswith("_"))
+        if before is not None:
+            before = dict((k, v) for k, v in before.items() if not k.startswith("_"))
+            if before != after:
+                changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+                pbs.log("%s: profile %s rewritten; changed: %s" % (self.name, path, ", ".join(changed)))
+        else:
+            pbs.log("%s: profile %s written (record %s, freeze %s, manifest %s)"
+                    % (self.name, path, prof["record_sha256_prefix"], prof["freeze_sha256_prefix"],
+                       prof["cohort_manifest_sha256_prefix"]))
+        return prof
+
     def _run_launcher(self, cfg, mode, log_path, **extra):
         """`bash launch_bank.sh <mode>` in envs.extract from export_windows/;
         returns (rc, text)."""
@@ -167,10 +188,7 @@ class BankPlanStage(_BankBase):
 
     def start(self, cfg, st, pbs):
         sub = st["sub"]
-        prof = self.write_profile(cfg)
-        pbs.log("bank_plan: profile %s (record %s, freeze %s, manifest %s)"
-                % (self._profile_path(cfg), prof["record_sha256_prefix"],
-                   prof["freeze_sha256_prefix"], prof["cohort_manifest_sha256_prefix"]))
+        self.ensure_profile(cfg, pbs)
         rc, text = self._run_launcher(cfg, "plan", self._login_log(cfg))
         sub["plan_rc"] = rc
         if rc != 0 or "BANK PLAN OK" not in text:
@@ -258,6 +276,7 @@ class SimBankStage(_BankBase):
 
     def start(self, cfg, st, pbs):
         sub = st["sub"]
+        self.ensure_profile(cfg, pbs)
         if self._test_marker_ok(cfg):
             pbs.log("sim_bank: the test task's marker belongs to this plan: test skipped")
             sub["test_skipped"] = True
@@ -336,6 +355,7 @@ class RealBankStage(_BankBase):
 
     def start(self, cfg, st, pbs):
         sub = st["sub"]
+        self.ensure_profile(cfg, pbs)
         rc, text = self._run_launcher(cfg, "real", self._login_log(cfg))
         if rc != 0 or "REAL BANK OK" not in text:
             sub["fail"] = "the real bank was refused (exit %d): %s" % (rc, self._refusal(text))

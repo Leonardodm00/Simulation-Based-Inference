@@ -247,12 +247,14 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
             if done:
                 log("%s: would be skipped (artefact of record exists)" % stage.name)
                 continue
-            if not _deps_satisfied(state, stage):
-                by_name = dict((s.name, s) for s in graph)
-                waits = [d for d in stage.deps
-                         if state.stage(d)["status"] not in ("done", "skipped")
-                         and not by_name[d].is_done(cfg)[0]]
-                log("%s: would wait for %s" % (stage.name, ", ".join(waits) or "its dependencies"))
+            # a dependency counts as satisfied when its artefact exists (it
+            # would be skipped) or the state says done / skipped
+            by_name = dict((s.name, s) for s in graph)
+            waits = [d for d in stage.deps
+                     if state.stage(d)["status"] not in ("done", "skipped")
+                     and not by_name[d].is_done(cfg)[0]]
+            if waits:
+                log("%s: would wait for %s" % (stage.name, ", ".join(waits)))
             else:
                 log("%s: would run" % stage.name)
             for line in stage.dry_run(cfg, st):

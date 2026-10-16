@@ -469,7 +469,16 @@ part of the pipeline.
     (ordering only after an array in the fake PBS too, D-006) refuses, the
     run stops with the `[gate] FAIL` line and no record; a wrong
     `expected_p` -> the plan's REFUSED stops the run before any job.
-- Status: smoke-tested 2026-10-16 (6 pass, 1 skip, about 20 s; the Sbi-
+- Defect found on davinci (2026-10-16 10:35, the first run): with the plan
+  of record (S4 skipped) and a fresh work root, no stage had written the
+  profile and `launch_bank.sh test` aborted on the missing file. Fixed the
+  same morning: every bank stage (re)writes the profile from the
+  configuration before its first launcher call (`_BankBase.ensure_profile`,
+  idempotent; a changed file is logged with the keys that changed), and the
+  dry run reads a dependency as satisfied when its artefact exists. The
+  contract test now repeats the run with the work root and the banks
+  removed and the plan kept (S4 skipped, S5 and S6 run).
+- Status: smoke-tested 2026-10-16 (6 pass, 1 skip, about 30 s; the Sbi-
   extractor bank suite untouched).
 
 ### Block 3: the input stages S1-S3 (`stages/inputs.py`)

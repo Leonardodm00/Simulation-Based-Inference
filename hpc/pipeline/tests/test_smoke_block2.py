@@ -200,6 +200,7 @@ def test_contract():
     try:
         rc, out = s.run(["--dry-run"])
         assert rc == 0 and "REFUSE" not in out, out
+        assert "bank_plan: would run" in out and "sim_bank: would wait for bank_plan" in out, out
         assert s.n_submitted() == 0
         rc, out = s.run([], timeout=900)
         assert rc == 0 and "PIPELINE DONE" in out, out
@@ -239,6 +240,18 @@ def test_contract():
             n_real = z["x"].shape[0]
         assert n_real >= 1
         assert rec.get("plan_sha256") or rec.get("n_rows") is not None
+        # the davinci situation of 2026-10-16: the plan is of record (S4 skipped), the
+        # banks are not, the work root is fresh -- no earlier stage wrote the profile:
+        # S5 and S6 write it themselves
+        shutil.rmtree(cfg["paths"]["work_root"])
+        shutil.rmtree(bank)
+        shutil.rmtree(real)
+        rc, out4 = s.run([], timeout=900)
+        assert rc == 0 and "PIPELINE DONE" in out4, out4
+        assert "bank_plan: skipped, artefact of record exists" in out4, out4
+        assert "sim_bank: profile %s written" % os.path.join(cfg["paths"]["work_root"], "bank_profile_synth.json") in out4, out4
+        assert "sim_bank: wrote" in out4 and "real_bank: REAL BANK OK" in out4, out4
+        assert s.n_submitted() == 6, s.n_submitted()
     finally:
         s.close()
 
