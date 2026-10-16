@@ -24,7 +24,7 @@ import re
 __all__ = ["Config", "ConfigError", "load_config", "unhonoured_keys",
            "SCHEMA", "NEEDS_CODE", "CONFIG_VERSION"]
 
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 _WALLTIME = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
 _MEM = re.compile(r"^[0-9]+(kb|mb|gb|tb)$")
@@ -110,6 +110,7 @@ SCHEMA = (
     ("search.trial.ncpus", "int>=1"),
     ("search.trial.mem", "mem"),
     ("search.trial.walltime", "walltime"),
+    ("search.trial.queue", "str"),
     ("search.trial.max_resubmits", "int>=0"),
     ("search.budget_gate.probe_steps", "int>=1"),
     ("search.budget_gate.probe_val_rows", "int>=1"),
@@ -126,6 +127,7 @@ SCHEMA = (
     ("best_fit.ncpus", "int>=1"),
     ("best_fit.mem", "mem"),
     ("best_fit.walltime", "walltime"),
+    ("best_fit.queue", "str"),
     ("best_fit.max_resubmits", "int>=0"),
     ("loader.buffer_shards", "int>=1"),
 )
@@ -134,26 +136,10 @@ SCHEMA = (
 # (key, block number, what the block adds, the stages that use the key).
 # Checked by unhonoured_keys() for the stages still to run. A later block
 # removes its rows here in the same commit that builds them, and the smoke
-# test asserts the exact list, so the two cannot drift.
-_SB = ("search", "best_fit")
-NEEDS_CODE = (
-    # the runner's side of these (blocks 4-6, 2026-10-15) exists; what is
-    # missing is the stage that passes them: block 7's search and best fit
-    ("split.fractions", 7, "the search and best-fit stages pass --split-fracs (the runner flag exists)", _SB),
-    ("search.space_overrides", 7, "npe_tune_joint.py reads the ranges to override from the config", ("search",)),
-    ("search.space_overrides.head_pool_ops", 7, "the axis in joint_space; the stages pass --head-pool-ops (the runner flag exists)", _SB),
-    ("search.flow.conditioner_hidden_layers", 7, "the stages pass --flow-hidden-layers (the runner flag exists)", _SB),
-    ("search.flow.num_bins", 7, "build_argv passes --num-bins", _SB),
-    ("search.gp_seed", 7, "propose --gp-seed, apart from the training seed", ("search",)),
-    ("search.trial.passes", 7, "the search stage passes --passes (the runner flag exists)", ("search",)),
-    ("search.trial.max_resubmits", 7, "the search stage resubmits with --resume (the runner's checkpoint exists)", ("search",)),
-    ("search.budget_gate", 7, "the probe jobs before round 0", ("search",)),
-    ("best_fit.split_seed", 7, "the best-fit stage passes --split-seed (the runner flag exists)", ("best_fit",)),
-    ("best_fit.member_seeds", 7, "the member jobs and the ensemble NLL", ("best_fit",)),
-    ("best_fit.passes", 7, "the best-fit stage passes --passes (the runner flag exists)", ("best_fit",)),
-    ("best_fit.patience_epochs", 7, "the best-fit stage passes --patience (the runner flag exists)", ("best_fit",)),
-    ("loader.buffer_shards", 7, "the stages pass --buffer-shards (the streaming loader exists, block 5)", _SB),
-)
+# test asserts the exact list, so the two cannot drift. Empty since block 7
+# (2026-10-16): every key of SCHEMA reaches the code that honours it. The
+# mechanism stays for a future key.
+NEEDS_CODE = ()
 
 
 # ---------------------------------------------------------------------------

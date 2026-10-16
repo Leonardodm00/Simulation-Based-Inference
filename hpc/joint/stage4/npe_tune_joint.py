@@ -30,6 +30,8 @@ Subcommands
   evaluate    run one configuration (or --dry-run) and write a TrialRecord
   status      ledger table + escalation verdict against measured sigma_seed
   finalists   the top-k by ranking split, with the gate split named
+  costliest   [block 7] the space's costliest configuration at each
+              searched batch size (the pipeline's budget gate probes it)
   controls    per-finalist shuffled controls: plan them, or score them
   report      the shipped configuration and everything required to trust it
 
@@ -90,6 +92,7 @@ AXIS_TO_FLAG: Dict[str, str] = {
     "embedding_size": "--embedding-size",
     "head_fusion": "--head-fusion",
     "dropout": "--dropout",
+    "head_pool_ops": "--head-pool-ops",
     "warmup_frac_rep": "--warmup-frac-rep",
     "n_posterior_draws": "--n-posterior-draws",
     "hidden_features": "--hidden-features",
@@ -146,8 +149,22 @@ def build_argv(config: Dict[str, Any],
                sbi_hpc_dir: Optional[str] = None,
                dry_run: bool = False,
                spec_fixed: Optional[Dict[str, Any]] = None,
-               extra: Optional[Sequence[str]] = None) -> List[str]:
+               extra: Optional[Sequence[str]] = None,
+               flow_hidden_layers: Optional[int] = None,
+               split_fracs: Optional[Sequence[float]] = None,
+               split_seed: Optional[int] = None,
+               passes: Optional[float] = None,
+               patience: Optional[int] = None,
+               buffer_shards: Optional[int] = None,
+               resume: bool = False,
+               threads: Optional[int] = None) -> List[str]:
     """Turn one joint configuration into a run_joint_arms command line.
+
+    The keyword arguments after `extra` [block 7, 2026-10-15] carry the
+    pipeline's configuration to the runner's flags of block 6; each is
+    omitted from the argv when None, so a call without them gives the
+    argv of 9fcbc88 plus `--num-bins` and `--head-pool-ops` (D-038's F-a
+    and F-b: the space's values now reach the runner).
 
     The two loss weights are the only non-trivial conversion: the space
     searches log10(lambda) with an on/off switch, while the runner takes the
@@ -209,6 +226,26 @@ def build_argv(config: Dict[str, Any],
     # projection's result depends on it.
     if spec_fixed is not None and "strict_semihard" in spec_fixed:
         argv += ["--strict-semihard", str(int(spec_fixed["strict_semihard"]))]
+    # [D-038, F-a] the space declares num_bins; the runner's own default is
+    # 8, so the ledger would record a cell that did not run without this.
+    if spec_fixed is not None and "num_bins" in spec_fixed:
+        argv += ["--num-bins", str(int(spec_fixed["num_bins"]))]
+    if flow_hidden_layers is not None:
+        argv += ["--flow-hidden-layers", str(int(flow_hidden_layers))]
+    if split_fracs is not None:
+        argv += ["--split-fracs"] + [repr(float(f)) for f in split_fracs]
+    if split_seed is not None:
+        argv += ["--split-seed", str(int(split_seed))]
+    if passes is not None:
+        argv += ["--passes", repr(float(passes))]
+    if patience is not None:
+        argv += ["--patience", str(int(patience))]
+    if buffer_shards is not None:
+        argv += ["--buffer-shards", str(int(buffer_shards))]
+    if threads is not None:
+        argv += ["--threads", str(int(threads))]
+    if resume:
+        argv += ["--resume"]
 
     lam_dsn = (10.0 ** float(config["log10_lambda_dsn"])
                if int(config["dsn_on"]) else 0.0)
@@ -339,12 +376,54 @@ def _trial_id(config: Dict[str, Any], split_hash: str, contract_digest: str,
 # Subcommands
 # ---------------------------------------------------------------------------
 
+def load_space_overrides(text: Optional[str]) -> Optional[Dict[str, Any]]:
+    """`--space-overrides`: a path to a JSON file, or inline JSON (an object
+    axis -> [lo, hi] or [levels]); None when not given."""
+    if not text:
+        return None
+    if os.path.isfile(text):
+        with open(text, "r", encoding="ascii") as fh:
+            d = json.load(fh)
+    else:
+        d = json.loads(text)
+    if not isinstance(d, dict):
+        raise SystemExit("--space-overrides must be a JSON object axis -> range")
+    return d
+
+
 def _spec_from_args(args) -> JS.JointSpaceSpec:
     return JS.default_joint_space(p=int(args.p),
                                   embedding_dim=int(args.embedding_dim),
                                   d_theta=int(args.d_theta),
                                   n_train=(int(args.n_train)
-                                           if args.n_train else None))
+                                           if args.n_train else None),
+                                  overrides=load_space_overrides(
+                                      getattr(args, "space_overrides", None)))
+
+
+def _runner_kwargs(args) -> Dict[str, Any]:
+    """The pipeline's runner flags from the CLI (None = not given)."""
+    return dict(flow_hidden_layers=getattr(args, "flow_hidden_layers", None),
+                split_fracs=getattr(args, "split_fracs", None),
+                split_seed=getattr(args, "split_seed", None),
+                passes=getattr(args, "passes", None),
+                patience=getattr(args, "patience", None),
+                buffer_shards=getattr(args, "buffer_shards", None),
+                resume=bool(getattr(args, "resume", False)),
+                threads=getattr(args, "threads", None),
+                extra=runner_extra(getattr(args, "runner_extra", None)))
+
+
+def runner_extra(text: Optional[str]) -> Optional[List[str]]:
+    """`--runner-extra`: whitespace-separated run_joint_arms arguments
+    appended LAST, so a flag given here overrides the one the configuration
+    gives (argparse keeps the last occurrence): the pipeline's probe mode
+    (`--probe-steps N --probe-val-rows M`) and the best fit's diagnostic
+    draws (`--n-posterior-draws 512`, which the canonicalisation would
+    otherwise pin). None when not given."""
+    if not text or not text.strip():
+        return None
+    return text.split()
 
 
 def cmd_space(args) -> int:
@@ -389,9 +468,13 @@ def cmd_propose(args) -> int:
         except (OSError, ValueError):
             continue
 
+    # [block 7] the proposal's random state is --gp-seed when given; --seed
+    # stays the trials' training seed and part of their ids, so one donor
+    # split serves the whole search (D-085's (b)).
+    gp_seed = int(args.seed if args.gp_seed is None else args.gp_seed)
     props = TSR.propose(spec, observations=obs, n_points=int(args.n_points),
                         n_initial_points=int(args.n_initial_points),
-                        seed=int(args.seed),
+                        seed=gp_seed,
                         noise=(float(args.sigma_seed) ** 2
                                if args.sigma_seed else None),
                         exclude=exclude, adapter=ad)
@@ -450,7 +533,11 @@ def cmd_argv(args) -> int:
                       steps_per_epoch=int(args.steps_per_epoch),
                       runner=args.runner, dsn_main_dir=args.dsn_main_dir,
                       sbi_hpc_dir=args.sbi_hpc_dir, dry_run=args.dry_run,
-                      spec_fixed=spec.fixed)
+                      spec_fixed=spec.fixed, **_runner_kwargs(args))
+    if getattr(args, "argv_file", None):
+        os.makedirs(os.path.dirname(os.path.abspath(args.argv_file)), exist_ok=True)
+        with open(args.argv_file, "w", encoding="ascii") as fh:
+            fh.write("\n".join(argv) + "\n")
     print(" ".join(argv))
     return 0
 
@@ -483,7 +570,7 @@ def cmd_evaluate(args) -> int:
                       steps_per_epoch=int(args.steps_per_epoch),
                       runner=args.runner, dsn_main_dir=args.dsn_main_dir,
                       sbi_hpc_dir=args.sbi_hpc_dir, dry_run=args.dry_run,
-                      spec_fixed=spec.fixed)
+                      spec_fixed=spec.fixed, **_runner_kwargs(args))
     print("[evaluate] %s  arm=%s  tag=%r" % (tid, arm, args.tag), flush=True)
     print("[evaluate] %s" % " ".join(argv), flush=True)
     if args.dry_run:
@@ -508,6 +595,13 @@ def cmd_evaluate(args) -> int:
     found = sorted(glob.glob(os.path.join(out_dir, "*_seed%d.json"
                                           % int(args.seed))))
     if not found:
+        if glob.glob(os.path.join(out_dir, "*_train_ckpt.pt")):
+            # [block 7] the runner stopped at a checkpoint (--stop-after-epoch,
+            # or a kill after the checkpoint): no record, no ledger entry; the
+            # pipeline resubmits with --resume.
+            print("[evaluate] no record but a training checkpoint in %s: "
+                  "stopped, not failed; resume to continue" % out_dir, flush=True)
+            return 3
         rec.update(status="failed", error="runner wrote no record in %s"
                    % out_dir)
         write_record(args.results_dir, args.campaign, rec)
@@ -600,6 +694,75 @@ def cmd_finalists(args) -> int:
         print("  %d  nll=%.4f  %s" % (f["rank"], f["nll_rank_split"],
                                       f["trial_id"]))
     print("wrote %s" % path)
+    return 0
+
+
+# [block 7] The budget gate's probe configuration. The rule names, per axis,
+# the end of its range that costs the most time and memory per training
+# row: the encoder's depth, width, embedding and the flow's width and depth
+# at their upper bounds; ResNet blocks (code 0: the measurement in the
+# Giulia configuration's note, about 5x a ResNeXt corner's time); every
+# fusion and pooling on; a loss term on when its switch is free (its
+# posterior draws then at their upper bound). Axes without a cost (rates,
+# penalties, dropout) take their lower bound so the configuration is a
+# legal, canonical point of the space; the batch size takes EACH level in
+# turn, since the step's cost and memory scale with it.
+COSTLIEST_RULE: Dict[str, Any] = {
+    "depth_exponent": "hi", "width_multiplier": "hi", "block_family": 0,
+    "embedding_size": "hi", "head_fusion": 1, "dropout": "lo", "head_pool_ops": 1,
+    "dsn_on": 1, "log10_lambda_dsn": "hi", "loss_type": "joint_sep",
+    "mining_strategy": "easy_pos_semihard_neg", "margin": "lo",
+    "angular_alpha_deg": "lo", "lambda_sep": "lo",
+    "rep_on": 1, "log10_lambda_rep": "hi", "warmup_frac_rep": "lo",
+    "n_posterior_draws": "hi",
+    "hidden_features": "hi", "num_transforms": "hi",
+    "lr": "lo", "one_minus_beta1": "lo", "weight_decay": "lo",
+}
+
+
+def costliest_config(spec: JS.JointSpaceSpec, campaign_name: str,
+                     batch_size: int) -> Dict[str, Any]:
+    """The campaign's costliest configuration at one batch size: the free
+    axes by COSTLIEST_RULE, the pinned axes as the campaign pins them,
+    then canonicalised (so an inactive axis ends at its canonical value)."""
+    cfg: Dict[str, Any] = {}
+    pins = JS.resolved_pins(campaign_name, spec)
+    for axis in JS.JOINT_KNOB_ORDER:
+        if axis in pins:
+            cfg[axis] = pins[axis]
+            continue
+        if axis == "batch_size_npe":
+            cfg[axis] = int(batch_size)
+            continue
+        rule = COSTLIEST_RULE[axis]
+        rng = spec.range_of(axis)
+        if rule == "hi":
+            cfg[axis] = rng[1] if axis not in JS._STR_AXES else rng[-1]
+        elif rule == "lo":
+            cfg[axis] = rng[0]
+        else:
+            if axis in JS._STR_AXES:
+                cfg[axis] = rule if rule in rng else rng[0]
+            else:
+                cfg[axis] = rule if rule in rng else rng[-1]
+    cfg["_campaign"] = campaign_name
+    return JS.canonicalise_config(cfg, spec=spec)
+
+
+def cmd_costliest(args) -> int:
+    spec = _spec_from_args(args)
+    os.makedirs(args.out_dir, exist_ok=True)
+    levels = [int(b) for b in spec.batch_size_npe]
+    for b in levels:
+        cfg = costliest_config(spec, args.campaign, b)
+        path = os.path.join(args.out_dir, "costliest_b%d.json" % b)
+        with open(path, "w", encoding="ascii") as fh:
+            json.dump({"campaign": args.campaign, "batch_size_npe": b,
+                       "rule": COSTLIEST_RULE, "config": cfg,
+                       "arm": arm_for_config(cfg)}, fh, indent=2, sort_keys=True)
+        print("COSTLIEST: b%d %s %s" % (b, path, JS.config_key(cfg)[:100]), flush=True)
+    print("COSTLIEST OK: %d batch level(s): %s" % (len(levels), ", ".join(str(b) for b in levels)),
+          flush=True)
     return 0
 
 
@@ -757,6 +920,9 @@ def build_parser() -> argparse.ArgumentParser:
         q.add_argument("--split-hash", default="")
         q.add_argument("--contract-digest", default="")
         q.add_argument("--seed", type=int, default=0)
+        q.add_argument("--space-overrides", default=None,
+                       help="[block 7] a JSON file or inline JSON: axis -> "
+                            "[lo, hi] or [levels]; applied on every call")
         if need_shards:
             q.add_argument("--sim-shards", required=True)
             q.add_argument("--real-shards", default=None)
@@ -769,6 +935,19 @@ def build_parser() -> argparse.ArgumentParser:
                                 "run_joint_arms; default is hpc/dsn")
             q.add_argument("--sbi-hpc-dir", default=None)
             q.add_argument("--dry-run", action="store_true")
+            # [block 7] the pipeline's runner flags (block 6); None = not passed
+            q.add_argument("--flow-hidden-layers", type=int, default=None)
+            q.add_argument("--split-fracs", type=float, nargs=3, default=None)
+            q.add_argument("--split-seed", type=int, default=None)
+            q.add_argument("--passes", type=float, default=None)
+            q.add_argument("--patience", type=int, default=None)
+            q.add_argument("--buffer-shards", type=int, default=None)
+            q.add_argument("--threads", type=int, default=None)
+            q.add_argument("--resume", action="store_true")
+            q.add_argument("--runner-extra", default=None,
+                           help="[block 7] run_joint_arms arguments appended last "
+                                "(the last occurrence of a flag wins), e.g. "
+                                "'--probe-steps 20 --probe-val-rows 5000'")
         return q
 
     common(sub.add_parser("space"))
@@ -776,6 +955,8 @@ def build_parser() -> argparse.ArgumentParser:
     q = common(sub.add_parser("propose"))
     q.add_argument("--n-points", type=int, default=8)
     q.add_argument("--n-initial-points", type=int, default=12)
+    q.add_argument("--gp-seed", type=int, default=None,
+                   help="[block 7] the proposal's random state; default --seed")
     q.add_argument("--sigma-seed", type=float, default=None,
                    help="measured across-seed spread; its SQUARE is given to "
                         "the GP as the observation noise variance")
@@ -783,6 +964,8 @@ def build_parser() -> argparse.ArgumentParser:
     q = common(sub.add_parser("argv"), need_shards=True)
     q.add_argument("--config-json", default=None)
     q.add_argument("--pending-id", default=None)
+    q.add_argument("--argv-file", default=None,
+                   help="[block 7] also write the argv, one token per line")
 
     q = common(sub.add_parser("evaluate"), need_shards=True)
     q.add_argument("--config-json", default=None)
@@ -797,6 +980,10 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--top-k", type=int, default=3)
     q.add_argument("--rank-split", default="sel")
     q.add_argument("--gate-split", default="gate")
+
+    q = common(sub.add_parser("costliest"))
+    q.add_argument("--out-dir", required=True,
+                   help="[block 7] writes costliest_b<B>.json per batch level")
 
     q = common(sub.add_parser("controls"))
     g = q.add_mutually_exclusive_group(required=True)
@@ -823,7 +1010,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return {"space": cmd_space, "propose": cmd_propose, "argv": cmd_argv,
             "evaluate": cmd_evaluate, "status": cmd_status,
             "finalists": cmd_finalists, "controls": cmd_controls,
-            "report": cmd_report}[args.command](args)
+            "costliest": cmd_costliest, "report": cmd_report}[args.command](args)
 
 
 if __name__ == "__main__":

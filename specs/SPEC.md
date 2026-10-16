@@ -26,9 +26,10 @@ new on that branch)
 Paths this spec covers (files, directories ending in `/`, or globs):
 
 - `hpc/pipeline/` -- the pipeline: `pipeline.py`, `config.py`, `state.py`,
-  `pbs.py`, `stages/`, `run_pipeline.sh`, `README.md`, `tests/`
+  `pbs.py`, `envs.py`, `stages/`, `jobs/`, `tools/`, `run_pipeline.sh`,
+  `README.md`, `tests/`
 - `hpc/pipeline/projects/giulia/giulia.json` -- the Giulia project's
-  configuration (config v4)
+  configuration (config v5)
 - the changes the later blocks make under `hpc/joint/` (listed per block in
   sec. 5 as they are written; the rest of `hpc/joint/` is their input, not
   under test here): `hpc/joint/stage1/latent_bank.py` (`ShardIndex`,
@@ -36,7 +37,10 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   batcher's `sim_stream` and state), `stage2/joint_train.py` (`evaluate_npe_
   shards`, the checkpoint, `StoppedAfterEpoch`), `stage2/joint_model.py`
   (`flow_hidden_layers`), `stage3/run_joint_arms.py` (the campaign prior,
-  the streaming path, the flags), `stage3/smoke_test_blocks_4_6.py`
+  the streaming path, the flags, the probe mode), `stage3/smoke_test_blocks_4_6.py`,
+  `stage4/joint_space.py` (the `head_pool_ops` axis, `apply_overrides`),
+  `stage4/npe_tune_joint.py` (the runner flags, `--space-overrides`,
+  `--gp-seed`, `--runner-extra`, `costliest`)
 
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
@@ -215,7 +219,7 @@ Claude's as the log records (D-085..D-090).
 
 | Key | Type | Constraint |
 |---|---|---|
-| `config_version` | int | 4 |
+| `config_version` | int | 5 (v5, 2026-10-16: the two queue keys below) |
 | `dataset` | str | `[a-z0-9_]+`; the `<tag>` of the folder and of the artefact names |
 | `paths.{sbix_dir, sbi_dir, work_root, banks_root, runs_root, tune_root}` | str | absolute paths |
 | `envs.{extract, train}` | str | conda environment names |
@@ -240,6 +244,7 @@ Claude's as the log records (D-085..D-090).
 | `search.trial.{passes}` | float | > 0 |
 | `search.trial.{epochs, ncpus, max_resubmits}` | int | >= 1; `max_resubmits` >= 0 |
 | `search.trial.{mem, walltime}` | str | PBS memory (`<n>gb`), `hh:mm:ss` |
+| `search.trial.queue` | str | the trial jobs' and the probes' queue (v5) |
 | `search.budget_gate.{probe_steps, probe_val_rows}` | int | >= 1 |
 | `search.budget_gate.safety_factor` | float | >= 1 |
 | `search.max_total_walltime_h` | float or null | > 0; null = no cap |
@@ -250,6 +255,7 @@ Claude's as the log records (D-085..D-090).
 | `best_fit.passes` | float | > 0 |
 | `best_fit.{epochs, patience_epochs, n_posterior_draws, ncpus, max_resubmits}` | int | >= 1; `max_resubmits` >= 0 |
 | `best_fit.{mem, walltime}` | str | as for the trial |
+| `best_fit.queue` | str | the member jobs' queue (v5) |
 | `loader.buffer_shards` | int | >= 1 |
 
 Keys whose code is not built yet (the NEEDS-CODE keys) are refused by
@@ -299,10 +305,13 @@ part of the pipeline.
   (the ensemble NLL); the trainers' own precision is theirs.
 - Randomness: none in the pipeline itself; the seeds it passes are the
   configuration's (`gp_seed`, `train_seed`, `split_seed`, `member_seeds`).
-- Python: the stdlib only in `hpc/pipeline/` (json, os, subprocess, time,
-  hashlib, argparse); syntax compatible with Python 3.6 (no f-strings, no
-  walrus, no postponed annotations), since the sequencer runs on the login
-  node under the project's `envs.extract` environment; pure ASCII, LF.
+- Python: the stdlib only in the sequencer's process (`hpc/pipeline/*.py`,
+  `stages/`; json, os, subprocess, time, hashlib, argparse); syntax
+  compatible with Python 3.6 (no f-strings, no walrus, no postponed
+  annotations), since the sequencer runs on the login node under the
+  project's `envs.extract` environment; pure ASCII, LF. The tools of
+  `hpc/pipeline/tools/` are run by the stages inside `envs.train` (numpy,
+  scipy, torch) and are not held to the stdlib rule.
 - Binding decisions (their content, so the tester needs no log):
   - D-039: the training is arm `A1` of the joint stack (encoder and flow on
     simulated windows alone); the search is campaign `S-A1`.
@@ -345,7 +354,7 @@ part of the pipeline.
   `pbs.py` (sec. 3.3), `stages/__init__.py` (the `Stage` interface, the
   eight stage names with their dependencies and done-predicates, the
   registry), `run_pipeline.sh` (the one command), `projects/giulia/giulia.
-  json` (config v4), `README.md`.
+  json` (config v4; v5 since block 7), `README.md`.
 - Public API: `config.load_config(path) -> Config` (raises `ConfigError`
   listing every problem); `config.unhonoured_keys(cfg) -> [(key, block,
   what)]`; `state.State.load(work_root)`, `.save()`, `.stage(name)`;
@@ -645,7 +654,153 @@ part of the pipeline.
   Stage 2 suite 40/40 + 1 skip, the Stage 1 suite 46/46 + 1 skip, the
   Stage 4 suites 9/9 and 8/8 under `SKIP_CONDA=1`, the Sbi-extractor bank
   suite 15/15 + 1 skip, all unchanged)
-### Block 7: the search and the best fit S7-S8 -- planned (`stages/search.py`, `stages/best_fit.py`, `hpc/joint/stage4/npe_tune_joint.py`, `stage4/joint_space.py`)
+### Block 7: the search and the best fit S7-S8
+
+- Modules: `hpc/pipeline/stages/search.py` (`SearchStage`), `stages/best_fit.py`
+  (`BestFitStage`), `stages/common.py` (the tuner's common arguments, the
+  qsub line, the argv files, the clock), `envs.py` (`run_in_env`: a command
+  in a conda environment on the login node, `PIPELINE_SKIP_CONDA=1` for the
+  tests), `jobs/run_argv.pbs` (one job = one command line read from a file),
+  `tools/bank_split_hash.py`, `tools/ensemble_nll.py`; `hpc/joint/stage4/
+  joint_space.py` (`head_pool_ops` as an axis, `apply_overrides`: a range
+  per axis from the configuration, an axis freed by two levels or pinned by
+  one), `stage4/npe_tune_joint.py` (the runner flags passed through
+  `build_argv`, `--space-overrides`, `--gp-seed`, `--runner-extra`, `argv
+  --argv-file`, `evaluate` exit 3 on a checkpoint without a record, the
+  `costliest` subcommand), `stage3/run_joint_arms.py` (`--probe-steps`,
+  `--probe-val-rows`: the probe mode); `config.py` (v5: `search.trial.
+  queue`, `best_fit.queue`; `NEEDS_CODE` empty); `pipeline.py` (a
+  `SchedulerError` in a poll is logged and retried next tick; the status
+  table summarises a stage with more than eight jobs).
+- Public API: `stages.search.SearchStage`, `stages.best_fit.BestFitStage`
+  (the `Stage` interface of block 1, `max_resubmits` 0: the trials and the
+  members carry their own); `envs.run_in_env(env_name, argv, cwd, log_path)
+  -> (rc, text)`; `stages.common.tuner_common_args(cfg, identity) -> [str]`,
+  `qsub_line(cfg, name, queue, ncpus, mem, walltime, log, argv_file, workdir)
+  -> [str]`, `elapsed_hours(start_utc)`, `mem_to_gb`; the tuner's
+  `costliest --out-dir D` (writes `costliest_b<B>.json` per searched batch
+  size), `--runner-extra "<args>"` (appended last to the runner's argv; the
+  last occurrence of a flag wins); `tools/bank_split_hash.py --sim-shards
+  G --split-fracs a b c --split-seed s --out F` (the pass line `SPLIT OK:
+  hash=... contract=...`), `tools/ensemble_nll.py --members F... --out F`
+  (`ENSEMBLE OK: M=.. n=.. L_bar=..`).
+- Inputs: the configuration; the two banks (S5, S6); the scheduler. Outputs
+  under `<tune_root>/<campaign>/`: `bank_split.json` (the identity),
+  `gate/costliest_b<B>.json` and `gate/b<B>/<stem>_probe.json`,
+  `pending/`, `trials/` (the tuner's ledger; a trial the pipeline gives up
+  on is a record with `status` `killed`, written by the pipeline),
+  `runs/<trial_id>/` (the runner's outputs), `jobs/` (every argv file, job
+  log and the login-node log), `pipeline_rounds.json` (the identity, the
+  gate's verdict, the rounds with their trial ids, the clock; survives a
+  `--retry`), `finalists.json`, `SEARCH_COMPLETE.json` (the artefact of
+  record: `ended_by` in {rounds, budget, no_new_proposals}, the counts, the
+  elapsed hours, the finalist's id, nll and configuration). Under
+  `<runs_root>/<tag>_best/`: `finalist_config.json`, `member_seed<k>/`
+  (the runner's outputs, stem `<arm>_seed<k>` when k equals the split seed
+  and `<arm>_split<s>_seed<k>` otherwise), `jobs/`, `ensemble_nll.json`,
+  `BEST_FIT_COMPLETE.json` (the artefact of record: the members' records
+  and L_m, the ensemble's L_bar, M, n).
+- Parameters: every value of `search`, `best_fit`, `split`, `loader` and
+  `envs` (sec. 3.1); the elapsed clock starts at round 0's first
+  submission (not at the gate's probes: block 7's proposal 1); GP round r
+  proposes with `--gp-seed gp_seed + r`; the trials' `--patience` is 99
+  (no patience, D-088's reading); the members' `--n-posterior-draws` is
+  `best_fit.n_posterior_draws` through `--runner-extra`.
+- Library calls relied on: the tuner's `propose` (`npe_tune_search.
+  propose`: skopt's `Optimizer.ask(n_points, strategy="cl_min")`), `evaluate`,
+  `finalists`; `scipy.special.logsumexp`; `run_joint_arms.grouped_split`
+  (the split hash: the pipeline computes it with the runner's function, not
+  a copy); the runner's checkpoint and `--resume` (block 6).
+- Custom code: the round loop and the throttle (no library drives PBS
+  jobs from a ledger); the budget gate's rule; the ensemble formula (three
+  lines over `logsumexp`); the `costliest` rule table (which end of each
+  axis costs the most, stated per axis in the tuner).
+- Rule of the budget gate: with T_B the runner's projection at batch size
+  B, T_B = N_ep (S_B t_step + n_sel t_val_row) from `probe_steps` steps
+  (the first excluded as warm-up) and `probe_val_rows` rows, the gate
+  passes iff max_B T_B x safety_factor <= `search.trial.walltime` and
+  max_B maxrss_B <= `search.trial.mem`; it STOPs the run otherwise, with
+  the numbers; an existing probe file is reused rather than re-probed.
+- Rule of the rounds: a trial's job ending with a ledger record is `ok`
+  or `failed` as the record says (its pending file is removed); ending
+  without one, it is resubmitted with `--resume` while `resubmits <
+  trial.max_resubmits` and `resubmit_killed`, else recorded `killed`;
+  `evaluate` exits 3 when a training checkpoint exists without a record
+  (a stop, not a failure). A round is complete when every trial of it is
+  terminal; then the search ends by `rounds` (r == gp_rounds), by `budget`
+  (the elapsed clock >= `max_total_walltime_h`; the running trials had
+  finished by then) or by `no_new_proposals`, else round r + 1 is proposed
+  with `trials_per_round` points and `n_initial_points` as skopt's initial
+  design size (so if fewer than `n_initial_points` trials are `ok`, the
+  surrogate is not consulted yet and the proposals are random: the
+  initial design continues). A finished search with no `ok` trial fails
+  the stage.
+- Rule of the retry: `--retry search` on a search that did not complete
+  restores the rounds from `pipeline_rounds.json`, treats a trial with a
+  ledger record as terminal, and revives every trial the pipeline recorded
+  `killed` (the record set aside as `<id>.json.killed<n>`, the pending spec
+  rewritten from it, the resubmission counter reset, `ended_by` cleared),
+  so raising the walltime or `max_resubmits` and retrying re-runs them;
+  a completed search is skipped by its artefact, so its killed trials
+  stay killed unless `SEARCH_COMPLETE.json` is removed first.
+- Rule of the identity: `pipeline_rounds.json` carries the split hash,
+  the contract digest, n_train, the campaign, the anchors, the overrides
+  and the flow settings; a results folder whose file disagrees with the
+  configuration is refused before anything is submitted (proposal 2).
+- Test oracles (`hpc/pipeline/tests/test_smoke_block7.py`, the fake PBS
+  with `FAKE_PBS_ENFORCE_WALLTIME`, the blocks 4-6 bank fixture: 194 rows,
+  8 shards, 44 donors; the trial jobs run the real tuner and runner):
+  - known answer: the split tool's hash equals `grouped_split`'s on the
+    fixture and its contract digest the sidecar's; `ensemble_nll.py` on
+    three copies of one member gives that member's mean within 1e-12, on
+    two members L_bar <= the members' mean (Jensen), and refuses members
+    of different row counts; `costliest` on the Giulia space gives depth
+    5, width 3.0, ResNet, embedding 64, fusion, pooling 1, hidden 512, 12
+    transforms at each of 256 / 512 / 1024; the committed configuration
+    has no NEEDS-CODE key and `config_version` 5.
+  - reference: the Giulia dry run prints the gate's, the trials' and the
+    members' qsub lines (`cpu`, 48 cores, 160gb / 200gb, 120 / 300 h) and
+    no REFUSE line for S7 / S8 (blocks 2-3's not-built lines remain).
+  - invariants: `tuner_common_args` is a pure function of the
+    configuration and the identity; a `pipeline_rounds.json` of another
+    identity stops the run (exit 3, `REFUSE:` in the STOP line, nothing
+    submitted); no project value in the code.
+  - contract: on the fixture (overrides pinning the encoder and the flow,
+    batch levels 16 / 32, 2 initial points, 1 GP round of 2, throttle 1,
+    passes 1 in 2 epochs, members seeds 1 and 2 on split seed 1): the gate
+    submits 2 probes and passes; round 0 and round 1 run their 2 trials
+    each with no two trial jobs overlapping; `SEARCH_COMPLETE.json` says
+    `rounds`, 4 ok; every record's `split_hash` is the identity's; the
+    runner's argv in the job log carries `--num-bins 10`, `--head-pool-
+    ops`, `--passes 1.0`, `--split-fracs 0.85 0.1 0.05`, `--buffer-shards
+    2`, `--threads 1`, `--flow-hidden-layers 2`, `--patience 99`; the best
+    fit's two members share the split hash (seed 1, different from the
+    search's), carry `n_posterior_draws` 16, `patience` 10, the finalist's
+    lr / weight decay / pooling / fusion / batch size; L_bar <= the
+    members' mean; the sequencer stopped after 12 polls and re-run submits
+    no job twice (8 submissions in all); `PIPELINE DONE`.
+  - determinism (the kill path): under a 3 s trial walltime enforced by
+    the fake PBS (exit 271) with pre-seeded probe files, every trial is
+    resubmitted twice with `--resume` (the first argv file without, the
+    later ones with) and then recorded `killed`; the search ends with no
+    ok trial and the run stops with exit 3 and the STOP line; 12
+    submissions; then, with the walltime raised to 10 min, `--retry
+    search --accept-config-change` revives the 4 killed trials (their
+    records set aside as `.json.killed1`), runs them, and the search ends
+    `rounds` with 4 ok, the best fit following (18 submissions in all).
+  - edge: `max_total_walltime_h` 1e-6 ends the search after round 0
+    (`budget`, 1 round evaluated, 2 ok), the GP round never proposed; a
+    pre-made `BEST_FIT_COMPLETE.json` skips S8.
+- Not in the sandbox: davinci's queues and conda (the tests run with
+  `PIPELINE_SKIP_CONDA=1`); the first run on davinci is the dry run, then
+  the plain command; the probes of the real space at 48 cores.
+- Confirmed: the values yes (D-085..D-093); the two proposals (the clock
+  starts at round 0's first submission; a results folder of another
+  identity is refused) built as proposed, to confirm.
+- Status: smoke-tested 2026-10-16 (`test_smoke_block7.py` 6 pass, 1 skip,
+  about 2 minutes; `test_smoke_pipeline.py` 6 pass, 1 skip; the Stage 4
+  suites 8/8 under `SKIP_CONDA=1` and 9/9; the Stage 3 suite and
+  `smoke_test_blocks_4_6.py` unchanged)
 ### Block 8: end to end on the stand-in and the delivery -- planned
 
 Each planned block gets its entry in the format of block 1 when it is
@@ -659,6 +814,7 @@ written; its constraints are those of secs. 2-4 above.
 | `bash hpc/pipeline/run_pipeline.sh --project giulia` | the one command: starts the sequencer under `nohup`, prints the log and state paths | davinci | days |
 | `bash hpc/pipeline/run_pipeline.sh --project giulia --status` | the stage table from the state file and the live scheduler | -- | seconds |
 | `python3 hpc/pipeline/tests/test_smoke_pipeline.py` | block 1's smoke test under the fake PBS | none (synthetic project in a temporary directory) | about 30 s |
+| `python3 hpc/pipeline/tests/test_smoke_block7.py` | block 7's smoke test: the search and the best fit under the fake PBS on the fixture banks | the training environment (torch, sbi, skopt) | about 2 min |
 
 ## 7. Not executable in the sandbox
 
@@ -683,6 +839,18 @@ stated in the README.
 - Whether PBS Pro on davinci honours an array throttle (`-J 0-49%25`) for
   the search's `max_concurrent_trials` (the bank's array used `%20`, so it
   is likely; `[NOT VERIFIED]` for the tune job) -- block 7 (raised
-  2026-10-15).
+  2026-10-15). [closed 2026-10-16: block 7 submits one job per trial and
+  throttles in the sequencer, so no array throttle is needed; the tuner's
+  array job (`joint_tune.pbs`) is not used by the pipeline, because the
+  pending set is its index map and shrinks as elements finish.]
 - The `NCPUS` job variable for torch's thread count (block 6; `[NOT
-  VERIFIED on davinci]`) (raised 2026-10-15).
+  VERIFIED on davinci]`) (raised 2026-10-15). [narrowed 2026-10-16: the
+  pipeline passes `--threads` from `search.trial.ncpus` / `best_fit.ncpus`
+  explicitly, so the variable is not relied on; `run_argv.pbs` prints it.]
+- Block 7's two proposals, built as proposed and to confirm: the elapsed
+  clock starts at round 0's first submission (the gate's probes are
+  before it); a results folder holding a search of another identity is
+  refused rather than merged (raised 2026-10-16).
+- Config v5 added `search.trial.queue` and `best_fit.queue` (both `cpu`,
+  the queue whose per-job cap is 300:00:00 [KB, the C8 handoff]); the
+  user to confirm the queue (raised 2026-10-16).

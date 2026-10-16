@@ -14,6 +14,11 @@ which is what the sequencer must see as a failure.
 Exit_status when finished, resources_used.walltime, array_state_count for
 arrays. An unknown id prints `qstat: Unknown Job Id <id>` and exits 153.
 
+With FAKE_PBS_ENFORCE_WALLTIME=1 a non-array job whose `-l walltime=` has
+elapsed is killed (its process group, SIGKILL) and finishes with
+Exit_status 271, as PBS Pro reports a job killed at its walltime (block 7's
+tests: a trial killed and resubmitted).
+
 Pure ASCII, LF only; stdlib only.
 """
 
@@ -25,6 +30,7 @@ import time
 
 SPOOL = os.environ.get("FAKE_PBS_SPOOL", "")
 DELAY = float(os.environ.get("FAKE_PBS_DELAY", "0.5"))
+ENFORCE_WALLTIME = os.environ.get("FAKE_PBS_ENFORCE_WALLTIME", "0") == "1"
 SERVER = "fake"
 
 
@@ -172,8 +178,36 @@ def _run_one(rec, index):
         os.makedirs(d)
     with open(out, "ab") as fh:
         proc = subprocess.Popen(["bash", rec["script"]], cwd=rec["cwd"], env=env,
-                                stdout=fh, stderr=subprocess.STDOUT)
+                                stdout=fh, stderr=subprocess.STDOUT,
+                                start_new_session=True)
     return proc
+
+
+def _walltime_limit(rec):
+    """Seconds of `-l walltime=hh:mm:ss`, or None."""
+    for r in rec["resources"]:
+        if r.startswith("walltime="):
+            h, m, s = r[len("walltime="):].split(":")
+            return int(h) * 3600 + int(m) * 60 + int(s)
+    return None
+
+
+def _wait_with_walltime(proc, rec):
+    """Wait for a job's process; with the enforcement on, kill its process
+    group at the walltime and report 271."""
+    limit = _walltime_limit(rec) if ENFORCE_WALLTIME else None
+    if limit is None:
+        return proc.wait()
+    try:
+        return proc.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, 9)
+        except OSError:
+            pass
+        proc.wait()
+        rec["comment"] = "job killed: walltime %d exceeded limit %d" % (limit + 1, limit)
+        return 271
 
 
 def cmd_run(num):
@@ -197,7 +231,7 @@ def cmd_run(num):
             _save(rec)
         rec["exit_status"] = max(codes.values())
     else:
-        rec["exit_status"] = _run_one(rec, None).wait()
+        rec["exit_status"] = _wait_with_walltime(_run_one(rec, None), rec)
     rec["state"] = "F"
     rec["finished"] = time.time()
     _save(rec)

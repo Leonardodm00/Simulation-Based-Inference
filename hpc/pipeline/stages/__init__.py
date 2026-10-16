@@ -251,3 +251,15 @@ def topological_order(graph):
     for s in graph:
         visit(s)
     return order
+
+
+# ---------------------------------------------------------------------------
+# The built stages register here (block 7: S7, S8). The import sits at the
+# end so the stage modules can import the interface above.
+# ---------------------------------------------------------------------------
+
+from .search import SearchStage        # noqa: E402
+from .best_fit import BestFitStage     # noqa: E402
+
+BUILT["search"] = SearchStage
+BUILT["best_fit"] = BestFitStage

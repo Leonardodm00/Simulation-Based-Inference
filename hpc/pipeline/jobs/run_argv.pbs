@@ -1,0 +1,57 @@
+#!/bin/bash
+# hpc/pipeline/jobs/run_argv.pbs -- one job = one command line (block 7).
+#
+# The sequencer writes the command it wants run, one argument per line, to
+# a file, and submits this script with the resources on the qsub line:
+#
+#   qsub -N <name> -q <queue> -l select=1:ncpus=<n>:mem=<mem> -l walltime=<w> \
+#        -j oe -o <log> -v ARGV_FILE=<file>,ENV_NAME=<conda env>,WORKDIR=<dir> \
+#        hpc/pipeline/jobs/run_argv.pbs
+#
+# Variables (qsub -v):
+#   ARGV_FILE   the command, one argument per line (no quoting, no shell)
+#   ENV_NAME    the conda environment to activate (the configuration's
+#               envs.train for the trials and the members)
+#   WORKDIR     the directory to run in
+#   SKIP_CONDA  1 = run under the shell's own python (the tests)
+#
+# The conda activation is the proven block of the Stage 1/3 job scripts:
+# `set -u` off across the hook AND the activate (third-party deactivate.d
+# scripts are not -u clean on davinci), on again after. Exit 97 = the hook
+# failed, 98 = the activation failed, 90 = WORKDIR unreachable, 91 = no
+# ARGV_FILE; the command's own exit status otherwise, echoed as the last
+# line `RUN_ARGV EXIT: <n>` (the pass line of a job is its command's).
+#
+# Pure ASCII, LF only.
+
+set -u
+
+: "${ARGV_FILE:?ARGV_FILE is unset (qsub -v ARGV_FILE=...)}"
+: "${WORKDIR:=${PBS_O_WORKDIR:-$PWD}}"
+: "${ENV_NAME:=}"
+: "${SKIP_CONDA:=0}"
+
+cd "$WORKDIR" || exit 90
+if [ ! -f "$ARGV_FILE" ]; then
+    echo "RUN_ARGV: no argv file at $ARGV_FILE" >&2
+    exit 91
+fi
+
+if [ "$SKIP_CONDA" != "1" ]; then
+    set +u
+    eval "$(conda shell.bash hook)" || exit 97
+    conda activate "$ENV_NAME" || exit 98
+    set -u
+fi
+
+ARGV=()
+while IFS= read -r line || [ -n "$line" ]; do
+    ARGV+=("$line")
+done < "$ARGV_FILE"
+
+echo "RUN_ARGV: host $(hostname), job ${PBS_JOBID:-<none>}, ncpus ${NCPUS:-<unset>}, env ${ENV_NAME:-<none>}"
+echo "RUN_ARGV: ${ARGV[*]}"
+"${ARGV[@]}"
+rc=$?
+echo "RUN_ARGV EXIT: $rc"
+exit $rc

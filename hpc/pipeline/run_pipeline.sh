@@ -16,7 +16,9 @@
 # The sequencer runs on the login node under the project's extraction
 # environment (the configuration's envs.extract); it needs only the standard
 # library. SKIP_CONDA=1 skips the activation (the tests; a shell that is
-# already in the right environment).
+# already in the right environment) and is passed on as PIPELINE_SKIP_CONDA
+# to the stages' login-node tools and jobs (block 7), which otherwise
+# activate the configuration's envs.train themselves.
 #
 # ORDER on a cluster: --dry-run first and read it; then the plain call; then
 # --status whenever you like. The pass lines: the dry run ends without a
@@ -60,6 +62,7 @@ if [ "${SKIP_CONDA:-0}" != "1" ]; then
     conda activate "$ENV_NAME" || { echo "ABORT: conda activate $ENV_NAME failed"; exit 2; }
     set -u
 fi
+export PIPELINE_SKIP_CONDA="${SKIP_CONDA:-0}"
 echo "[pipeline] python3 : $(command -v python3)  (env ${CONDA_DEFAULT_ENV:-none})"
 echo "[pipeline] config  : $CONFIG"
 

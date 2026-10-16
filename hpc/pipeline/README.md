@@ -42,8 +42,8 @@ the same command with `--retry <name>`.
 | `bank_plan` (S4, after S1-S3) | `<paths.sbix_dir>/export_windows/<tag>/bank_plan.json` +sha256 | block 2 |
 | `sim_bank` (S5, after S4) | `<paths.banks_root>/<tag>_sim/BANK_RECORD.json` +sha256 | block 2 |
 | `real_bank` (S6, after S4) | `<paths.banks_root>/<tag>_real/shard_0000.npz` + `.json` | block 2 |
-| `search` (S7, after S5, S6) | `<paths.tune_root>/<search.campaign>/SEARCH_COMPLETE.json` | block 7 |
-| `best_fit` (S8, after S7) | `<paths.runs_root>/<tag>_best/BEST_FIT_COMPLETE.json` | block 7 |
+| `search` (S7, after S5, S6) | `<paths.tune_root>/<search.campaign>/SEARCH_COMPLETE.json` | block 7, built |
+| `best_fit` (S8, after S7) | `<paths.runs_root>/<tag>_best/BEST_FIT_COMPLETE.json` | block 7, built |
 
 A stage whose artefact exists when the run starts is skipped, so the command
 starts wherever the data set stands. A stage whose runner is not built yet
@@ -67,34 +67,86 @@ loses that job id and would submit it again on resume; the runners refuse
 to overwrite their artefacts, so the duplicate stops with a refusal rather
 than corrupting anything.
 
+## The search and the best fit (block 7)
+
+The search stage runs on the login node (in `envs.train`, through the
+sequencer) the bank's split hash (`tools/bank_split_hash.py`, the runner's
+own `grouped_split`), the tuner's `costliest`, `propose` and `finalists`;
+and submits one job per probe and one job per trial (`jobs/run_argv.pbs`,
+which reads the command from an argv file and runs it in `envs.train` with
+the resources of `search.trial`). Its phases, logged as `search: ...` lines:
+
+1. the budget gate: the space's costliest configuration at each searched
+   batch size runs `budget_gate.probe_steps` steps and `probe_val_rows`
+   validation rows on the trial's resources; the projected trial time x
+   `safety_factor` must fit `search.trial.walltime` and the peak memory
+   `search.trial.mem`, else `STOP: stage search failed: budget gate: ...`;
+   the pass line is `search: budget gate passed: ...`;
+2. round 0 (`n_initial_points` random configurations) and the GP rounds
+   (`trials_per_round` each, expected improvement with the constant liar,
+   the GP refitted on the ledger before each round), at most
+   `max_concurrent_trials` trial jobs at once; a trial whose job ends with
+   no ledger record is resubmitted with `--resume` up to
+   `search.trial.max_resubmits` times, then recorded `killed`; the elapsed
+   clock (D-090) starts at round 0's first submission and no new round
+   starts past `max_total_walltime_h`;
+3. `finalists --top-k 1` and `SEARCH_COMPLETE.json` (`ended_by` rounds,
+   budget or no_new_proposals).
+
+Everything lives under `<paths.tune_root>/<search.campaign>/`: `pending/`
+and `trials/` (the tuner's), `runs/<trial>/` (the runner's outputs),
+`gate/`, `jobs/` (argv files and job logs), `pipeline_rounds.json` (the
+rounds, the identity, the gate, the clock -- it survives `--retry search`,
+and a folder holding a search of another bank, split, space or campaign is
+refused; a `--retry search` after a stop revives the trials recorded
+`killed` -- raise `search.trial.walltime` or `max_resubmits` first, and
+pass `--accept-config-change`). The best-fit stage reads the finalist from `SEARCH_COMPLETE.json`,
+submits one job per `best_fit.member_seeds` entry on the split of
+`best_fit.split_seed` (a member whose record exists is not re-run; a member
+killed is resubmitted with `--resume` up to `best_fit.max_resubmits` times),
+then computes the ensemble's report-split NLL (`tools/ensemble_nll.py`,
+D-089) and writes `<paths.runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`.
+
 ## The project folder
 
 `projects/<tag>/<tag>.json` -- every key required, documented in the file by
 the `_<key>` string beside it; the schema is `specs/SPEC.md` sec. 3.1 and
-`config.py`. The Giulia file is config v4 (2026-10-15): v3's values with the
-search's wall budget at 400 h (D-090).
+`config.py`. The Giulia file is config v5 (2026-10-16): v4's values (the
+search's wall budget at 400 h, D-090) plus the queue of the trial and
+member jobs (`search.trial.queue`, `best_fit.queue`: `cpu`).
 
 ## Layout
 
 ```
 pipeline.py        the sequencer: run (--dry-run), status, paths
-config.py          the schema, the loader, the NEEDS-CODE capability table
+config.py          the schema, the loader, the NEEDS-CODE capability table (empty since block 7)
 state.py           the state file
 pbs.py             qsub / qstat -x -f, the only scheduler calls
+envs.py            a command in a conda environment on the login node
 stages/__init__.py the Stage interface, the graph, the registry
+stages/common.py   what the stages share: the tuner's arguments, the qsub line, the clock
+stages/search.py   S7 (block 7)
+stages/best_fit.py S8 (block 7)
+jobs/run_argv.pbs  one job = one command line from an argv file
+tools/             bank_split_hash.py, ensemble_nll.py (run in envs.train by the stages)
 run_pipeline.sh    the one command (nohup, conda, --dry-run, --status)
 projects/<tag>/    the project's configuration
-tests/             the smoke test, the fake PBS, the synthetic graph
+tests/             the smoke tests, the fake PBS, the synthetic graph
 ```
 
 ## Tests
 
 ```
-python3 hpc/pipeline/tests/test_smoke_pipeline.py
+python3 hpc/pipeline/tests/test_smoke_pipeline.py      # block 1, about 25 s, stdlib
+python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
 ```
 
 Block 1's smoke test under the fake PBS; blocks 4-6 (the runner) are tested by
-`hpc/joint/stage3/smoke_test_blocks_4_6.py` (about 3 minutes; needs torch and sbi).
+`hpc/joint/stage3/smoke_test_blocks_4_6.py` (about 3 minutes; needs torch and sbi);
+block 7's test runs the search and the best fit end to end on the fixture
+banks under the fake PBS (the real tuner and runner in the trial jobs; a
+trial killed at its walltime; the budget stop; the sequencer stopped and
+re-run), with `PIPELINE_SKIP_CONDA=1`.
 Block 1's test (`tests/fake_pbs/`): the schema's
 refusals, the state file, the qstat parser against a recorded davinci
 record, and the sequencer on a synthetic three-stage graph -- the dry run,
@@ -112,5 +164,5 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
 | 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |
 | 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch` | built 2026-10-15, smoke-tested |
-| 7 | the search and the best fit S7-S8 | planned |
+| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5 | built 2026-10-16, smoke-tested |
 | 8 | end to end on the stand-in; delivery | planned |

@@ -303,6 +303,13 @@ def build_parser():
     p.add_argument("--stop-after-epoch", type=int, default=None,
                    help="[block 6] end after this epoch's checkpoint, exit 0, "
                         "no record (resume to continue)")
+    p.add_argument("--probe-steps", type=int, default=None,
+                   help="[block 7, the budget gate] train this many steps and "
+                        "time them, score --probe-val-rows selection rows, "
+                        "write <stem>_probe.json (time per step and per "
+                        "validation row, peak memory, the projected trial "
+                        "time under --passes/--epochs); no record, exit 0")
+    p.add_argument("--probe-val-rows", type=int, default=5000)
     return p
 
 
@@ -453,6 +460,72 @@ def _encode_shards(model, index, rows, batch_size=256):
             out.append(model.encode(torch.as_tensor(x, dtype=torch.float32)).cpu().numpy())
     model.train()
     return np.concatenate(out) if out else np.zeros((0, 0))
+
+
+def run_probe(args, model, batcher, tcfg, index, theta, x, se, stem, n_train,
+              steps_per_epoch, n_threads, W, d_theta, split_hash, streaming):
+    """[block 7] The budget gate's measurement: wall seconds per training
+    step and per validation row on this node, the peak resident memory, and
+    the projection of one trial under --passes / --epochs:
+        T = epochs * (steps_per_epoch * t_step + n_sel * t_val_row).
+    Written to <stem>_probe.json; no record is written."""
+    import resource
+    import time
+    n_steps = int(args.probe_steps)
+    if n_steps < 2:
+        raise SystemExit("--probe-steps must be >= 2 (the first step warms up)")
+    probe_cfg = TrainConfig(epochs=1, steps_per_epoch=n_steps, lr=tcfg.lr,
+                            weight_decay=tcfg.weight_decay, lambda_dsn=tcfg.lambda_dsn,
+                            lambda_rep=tcfg.lambda_rep, patience=99,
+                            rho_grad_probe=False, beta1=tcfg.beta1, beta2=tcfg.beta2)
+    # the first step alone (warm-up: allocations, graph build), then the rest
+    t0 = time.perf_counter()
+    train_joint(model, batcher, TrainConfig(epochs=1, steps_per_epoch=1, lr=tcfg.lr,
+                                            weight_decay=tcfg.weight_decay, patience=99,
+                                            rho_grad_probe=False, beta1=tcfg.beta1,
+                                            beta2=tcfg.beta2),
+                seed=args.seed, log_fn=None)
+    t1 = time.perf_counter()
+    probe_cfg.steps_per_epoch = n_steps - 1
+    train_joint(model, batcher, probe_cfg, seed=args.seed, log_fn=None)
+    t2 = time.perf_counter()
+    t_step = (t2 - t1) / float(n_steps - 1)
+    # validation rows: the first --probe-val-rows selection rows
+    n_val = int(min(int(args.probe_val_rows), int(se.sum())))
+    t_val_row = None
+    if n_val > 0:
+        sel_rows = np.flatnonzero(se)[:n_val]
+        t3 = time.perf_counter()
+        if streaming:
+            mask = np.zeros(index.n_rows, dtype=bool)
+            mask[sel_rows] = True
+            evaluate_npe_shards(model, index, mask)
+        else:
+            evaluate_npe(model, theta[torch.as_tensor(sel_rows)], x[torch.as_tensor(sel_rows)])
+        t_val_row = (time.perf_counter() - t3) / float(n_val)
+    maxrss_gb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024.0 ** 2)
+    n_sel = int(se.sum())
+    projected = None
+    if t_val_row is not None:
+        projected = float(args.epochs) * (steps_per_epoch * t_step + n_sel * t_val_row)
+    rec = {"probe_steps": n_steps, "first_step_seconds": t1 - t0,
+           "step_seconds": t_step, "val_rows_timed": n_val, "val_row_seconds": t_val_row,
+           "maxrss_gb": maxrss_gb, "threads": int(n_threads),
+           "n_train": int(n_train), "n_sel": n_sel, "b_sim": int(args.b_sim),
+           "epochs": int(args.epochs), "passes": args.passes,
+           "steps_per_epoch": int(steps_per_epoch),
+           "projected_trial_seconds": projected, "W": int(W), "d_theta": int(d_theta),
+           "split_hash": split_hash, "streamed": bool(streaming),
+           "buffer_shards": int(args.buffer_shards), "config": vars(args)}
+    os.makedirs(os.path.dirname(stem) or ".", exist_ok=True)
+    with open(stem + "_probe.json", "w") as fh:
+        json.dump(rec, fh, indent=1, sort_keys=True, default=str)
+    print("PROBE OK: %.3f s/step (first %.2f s), %s s/val row, peak %.2f GB, "
+          "projected trial %s h at %d steps/epoch x %d epochs; wrote %s_probe.json"
+          % (t_step, t1 - t0, ("%.5f" % t_val_row) if t_val_row is not None else "-",
+             maxrss_gb, ("%.1f" % (projected / 3600.0)) if projected is not None else "-",
+             steps_per_epoch, args.epochs, stem), flush=True)
+    return 0
 
 
 def main(argv=None):
@@ -750,6 +823,12 @@ def main(argv=None):
         val_eval = None
         val_theta = theta[se] if se.sum() else None
         val_x = x[se] if se.sum() else None
+
+    if args.probe_steps is not None:
+        return run_probe(args, model, batcher, tcfg, index, theta, x, se, stem,
+                         n_train=n_train, steps_per_epoch=steps_per_epoch,
+                         n_threads=n_threads, W=W, d_theta=d_theta, split_hash=split_hash,
+                         streaming=streaming)
 
     try:
         history = train_joint(model, batcher, tcfg,

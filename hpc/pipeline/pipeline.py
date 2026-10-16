@@ -126,6 +126,9 @@ class Submitter(object):
     def status(self, job_id):
         return self._pbs.status(job_id)
 
+    def log(self, text):
+        self._log(text)
+
 
 # ---------------------------------------------------------------------------
 # The sequencer
@@ -157,13 +160,28 @@ def stage_table(cfg, graph, state, live=False, pbs_module=PBS):
         detail = why
         if live and st["status"] == "running" and st["jobs"]:
             parts = []
-            for job in st["jobs"]:
-                if job.get("finished"):
-                    parts.append("%s %s finished (exit %s)" % (job["role"], job["id"],
-                                                                job.get("exit_status")))
-                else:
-                    js = pbs_module.status(job["id"])
-                    parts.append("%s %s state %s" % (job["role"], job["id"], js.state))
+            if len(st["jobs"]) > 8:
+                # a stage with many jobs (the search's trials): counts, not lines
+                n_fin = sum(1 for j in st["jobs"] if j.get("finished"))
+                parts.append("%d job(s): %d finished, %d not yet" % (len(st["jobs"]), n_fin,
+                                                                      len(st["jobs"]) - n_fin))
+                sub = st.get("sub") or {}
+                if sub.get("trials"):
+                    c = {}
+                    for tr in sub["trials"].values():
+                        c[tr["status"]] = c.get(tr["status"], 0) + 1
+                    parts.append("trials " + ", ".join("%s %d" % kv for kv in sorted(c.items())))
+                    parts.append("round %s of %s" % (sub.get("round"), cfg.data["search"]["gp_rounds"]))
+                if sub.get("phase"):
+                    parts.append("phase " + str(sub["phase"]))
+            else:
+                for job in st["jobs"]:
+                    if job.get("finished"):
+                        parts.append("%s %s finished (exit %s)" % (job["role"], job["id"],
+                                                                    job.get("exit_status")))
+                    else:
+                        js = pbs_module.status(job["id"])
+                        parts.append("%s %s state %s" % (job["role"], job["id"], js.state))
             detail = "; ".join(parts)
         rows.append((stage.name, st["status"], "yes" if done else "no", detail))
     return rows
@@ -291,7 +309,13 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                     st = state.stage(stage.name)
                     status = st["status"]
                 if status == "running":
-                    r = stage.poll(cfg, st, sub)
+                    try:
+                        r = stage.poll(cfg, st, sub)
+                    except PBS.SchedulerError as exc:
+                        # the scheduler is unreachable: keep the state, try again next tick
+                        state.save()
+                        log("%s: scheduler unreachable (%s); will retry next tick" % (stage.name, exc))
+                        continue
                     state.save()
                     if r == "running":
                         continue

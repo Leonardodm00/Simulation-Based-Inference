@@ -117,22 +117,16 @@ def _n_submitted(spool):
 def test_known_answer():
     cfg = C.load_config(GIULIA)
     assert cfg.tag == "giulia"
-    assert cfg.data["config_version"] == 4
+    assert cfg.data["config_version"] == 5
     assert cfg.data["search"]["max_total_walltime_h"] == 400, "D-090"
     assert cfg.data["split"]["fractions"] == [0.85, 0.10, 0.05], "D-088"
     assert cfg.data["best_fit"]["member_seeds"] == list(range(1, 11)), "D-089"
     assert cfg.data["best_fit"]["split_seed"] == 1
     assert cfg.data["search"]["space_overrides"]["head_pool_ops"] == [0, 1], "D-086"
     got = [(k, b) for k, b, _ in C.unhonoured_keys(cfg)]
-    want = [("split.fractions", 7), ("search.space_overrides", 7),
-            ("search.space_overrides.head_pool_ops", 7),
-            ("search.flow.conditioner_hidden_layers", 7), ("search.flow.num_bins", 7),
-            ("search.gp_seed", 7), ("search.trial.passes", 7),
-            ("search.trial.max_resubmits", 7), ("search.budget_gate", 7),
-            ("best_fit.split_seed", 7), ("best_fit.member_seeds", 7),
-            ("best_fit.passes", 7), ("best_fit.patience_epochs", 7),
-            ("loader.buffer_shards", 7)]
+    want = []           # every key honoured since block 7 (2026-10-16)
     assert got == want, "NEEDS-CODE keys: %r" % (got,)
+    assert cfg.data["search"]["trial"]["queue"] == "cpu" and cfg.data["best_fit"]["queue"] == "cpu"
 
 
 _QSTAT_SAMPLE = """Job Id: 1829506.davinci
@@ -235,7 +229,7 @@ def test_invariants():
         def version(d):
             d["config_version"] = 3
         p = problems(version)
-        assert len(p) == 1 and "config_version must be 4" in p[0], p
+        assert len(p) == 1 and "config_version must be 5" in p[0], p
 
         # documentation keys are ignored, and the file's digest is recorded
         with open(path, "rb") as fh:

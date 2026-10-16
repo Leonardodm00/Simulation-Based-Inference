@@ -38,8 +38,10 @@ Axis inventory (S5.1)
   optimiser  lr, one_minus_beta1, weight_decay, batch_size_npe
 
 Fixed by S5.1 and therefore ABSENT from this space: stem_width, group_width,
-the GroupNorm settings, kernels and strides, head_pool_ops, strict_semihard,
-sep_warmup_frac, num_bins, one_minus_beta2. `strict_semihard` is fixed but
+the GroupNorm settings, kernels and strides, strict_semihard,
+sep_warmup_frac, num_bins, one_minus_beta2. head_pool_ops is an axis since
+2026-10-15 (D-086), pinned at S5.1's code 1 by every campaign unless an
+override frees it (apply_overrides). `strict_semihard` is fixed but
 still passes through the legality projection, because the projection may move
 it and a silently unprojected value would make two nominally different cells
 the same experiment.
@@ -90,9 +92,9 @@ __all__ = [
 # Grouped by block, blocks in the order S5.1 lists them. NEVER reorder; append
 # only, and only at the end of the block concerned.
 JOINT_KNOB_ORDER: Tuple[str, ...] = (
-    # encoder
+    # encoder ("head_pool_ops" appended 2026-10-15, D-086: the end of the block)
     "depth_exponent", "width_multiplier", "block_family", "embedding_size",
-    "head_fusion", "dropout",
+    "head_fusion", "dropout", "head_pool_ops",
     # DSN loss
     "dsn_on", "log10_lambda_dsn", "loss_type", "mining_strategy",
     "margin", "angular_alpha_deg", "lambda_sep",
@@ -106,7 +108,7 @@ JOINT_KNOB_ORDER: Tuple[str, ...] = (
 
 BLOCKS: Dict[str, Tuple[str, ...]] = {
     "encoder": ("depth_exponent", "width_multiplier", "block_family",
-                "embedding_size", "head_fusion", "dropout"),
+                "embedding_size", "head_fusion", "dropout", "head_pool_ops"),
     "dsn_loss": ("dsn_on", "log10_lambda_dsn", "loss_type",
                  "mining_strategy", "margin", "angular_alpha_deg",
                  "lambda_sep"),
@@ -125,6 +127,8 @@ RANGE_PROVENANCE: Dict[str, str] = {
     "embedding_size": "DSN config.SearchConfig.embedding_size_range",
     "head_fusion": "DSN config.SearchConfig.head_fusion_choices",
     "dropout": "DSN config.SearchConfig.dropout_range",
+    "head_pool_ops": "DSN condition_space.HEAD_POOL_OPS_LEVELS (codes 0, 1; D-086); "
+                     "pinned at 1 by every campaign unless an override frees it",
     "dsn_on": "campaign switch (plan S5.2)",
     "log10_lambda_dsn": "plan S5.1, [-3, 1]",
     "loss_type": "DSN condition_space.LOSS_TYPES",
@@ -199,6 +203,7 @@ def _inactive_value(axis: str, spec: Optional["JointSpaceSpec"]) -> Any:
 
 _INT_AXES = frozenset((
     "depth_exponent", "block_family", "embedding_size", "head_fusion",
+    "head_pool_ops",
     "dsn_on", "rep_on", "n_posterior_draws", "hidden_features",
     "num_transforms", "batch_size_npe",
 ))
@@ -219,6 +224,7 @@ class JointSpaceSpec:
     embedding_size: Tuple[int, int] = (8, 16)
     head_fusion: Tuple[int, ...] = (0, 1)
     dropout: Tuple[float, float] = (0.0, 0.3)
+    head_pool_ops: Tuple[int, ...] = (0, 1)     # D-086; pinned at 1 by the campaigns
 
     log10_lambda_dsn: Tuple[float, float] = (-3.0, 1.0)
     loss_type: Tuple[str, ...] = ("triplet", "joint", "joint_sep")
@@ -259,13 +265,82 @@ class JointSpaceSpec:
         return getattr(self, axis)
 
 
+# Axes an override may FREE from a campaign's pins (D-086): a pin of these
+# is a default of the plan, not a semantic of the campaign (dsn_on / rep_on
+# and the inactive loss axes are the campaign's and are never freed).
+OVERRIDE_FREEABLE: Tuple[str, ...] = ("head_pool_ops",)
+
+
+def apply_overrides(spec: JointSpaceSpec, overrides: Optional[Dict[str, Any]]) -> JointSpaceSpec:
+    """Replace the ranges of `spec` by `overrides` (axis -> [lo, hi] for a
+    numeric axis, [levels] for a categorical one), recording them in
+    `anchored_to["overrides"]`. Unknown axes and malformed ranges are
+    errors: an override that silently did nothing would make the ledger
+    say the search covered a range it never did."""
+    if not overrides:
+        return spec
+    for axis, rng in overrides.items():
+        if axis not in JOINT_KNOB_ORDER:
+            raise KeyError("space override names no axis of the joint space: %r" % (axis,))
+        if axis in ("dsn_on", "rep_on"):
+            raise ValueError("%s is a campaign switch, not a range" % axis)
+        cur = getattr(spec, axis)
+        if axis in _STR_AXES or axis in ("block_family", "head_fusion", "head_pool_ops",
+                                         "batch_size_npe"):
+            levels = tuple(_cast(axis, v) for v in rng)
+            if len(levels) < 1 or len(set(levels)) != len(levels):
+                raise ValueError("%s: levels must be distinct and non-empty, got %r" % (axis, rng))
+            for v in levels:
+                if v not in cur and axis != "batch_size_npe":
+                    raise ValueError("%s: level %r is not one the space knows (%r)" % (axis, v, cur))
+            setattr(spec, axis, levels)
+        else:
+            if len(rng) != 2:
+                raise ValueError("%s: a numeric override is [lo, hi], got %r" % (axis, rng))
+            lo, hi = _cast(axis, rng[0]), _cast(axis, rng[1])
+            if lo > hi:
+                raise ValueError("%s: lo > hi in %r" % (axis, rng))
+            setattr(spec, axis, (lo, hi))
+    spec.anchored_to["overrides"] = dict((k, list(v)) for k, v in overrides.items())
+    # free a pinned axis the override gives more than one level
+    for axis in OVERRIDE_FREEABLE:
+        if axis in overrides and len(overrides[axis]) >= 2:
+            for name, c in list(CAMPAIGNS.items()):
+                if axis in c.pinned:
+                    pinned = dict(c.pinned)
+                    del pinned[axis]
+                    CAMPAIGNS[name] = Campaign(name=c.name, pinned=pinned,
+                                               note=c.note + " [%s freed by an override]" % axis)
+    # pin an axis the override gives ONE value ([v, v] or [level]): skopt
+    # refuses a degenerate dimension, and a one-point range is a pin by
+    # any reading; the campaign then carries it like its own pins
+    for axis, rng in overrides.items():
+        cur = getattr(spec, axis)
+        one = (len(cur) == 1) if (axis in _STR_AXES or axis in (
+            "block_family", "head_fusion", "head_pool_ops", "batch_size_npe")) else (cur[0] == cur[1])
+        if one:
+            value = _cast(axis, cur[0])
+            for name, c in list(CAMPAIGNS.items()):
+                if axis not in c.pinned or c.pinned[axis] != value:
+                    pinned = dict(c.pinned)
+                    pinned[axis] = value
+                    CAMPAIGNS[name] = Campaign(name=c.name, pinned=pinned,
+                                               note=c.note + " [%s pinned at %r by an override]"
+                                               % (axis, value))
+    return spec
+
+
 def default_joint_space(p: int,
                         embedding_dim: int,
                         d_theta: int,
                         n_train: Optional[int] = None,
                         strict_semihard: int = 1,
-                        n_posterior_draws_max: int = 400) -> JointSpaceSpec:
+                        n_posterior_draws_max: int = 400,
+                        overrides: Optional[Dict[str, Any]] = None) -> JointSpaceSpec:
     """Ranges for a problem of this shape.
+
+    `overrides` [block 7, D-085/D-086]: ranges from the pipeline's
+    configuration, applied by `apply_overrides` after the shape rules.
 
     Two ranges are resolved rather than constant:
 
@@ -315,12 +390,12 @@ def default_joint_space(p: int,
             "downwards -- raise the upper bound instead."
             % (draws_hi, draws_lo))
 
-    return JointSpaceSpec(
+    spec = JointSpaceSpec(
         hidden_features=(int(lo), int(hi)),
         n_posterior_draws=(int(draws_lo), int(draws_hi)),
         batch_size_npe=tuple(int(b) for b in batches),
         fixed={"strict_semihard": int(strict_semihard),
-               "head_pool_ops": 1, "sep_warmup_frac": 0.0,
+               "sep_warmup_frac": 0.0,
                "num_bins": 10, "one_minus_beta2": 1e-3},
         anchored_to={"p": p, "embedding_dim": embedding_dim,
                      "d_theta": d_theta,
@@ -328,6 +403,7 @@ def default_joint_space(p: int,
                      "width_rule": "clamp([2,8] * max(p,E), [64,256])",
                      "draws_rule": "lower bound = 4 * d_theta"},
     )
+    return apply_overrides(spec, overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -372,25 +448,30 @@ _REP_AXES_OFF = {
     "n_posterior_draws": INACTIVE_CANONICAL["n_posterior_draws"],
 }
 
+# head_pool_ops: the joint plan's S5.1 fixes it at code 1; it is an axis of
+# the space since 2026-10-15 (D-086) and every campaign pins it there
+# unless apply_overrides() frees it (the Giulia search: both codes).
+_HEAD_POOL_PIN = {"head_pool_ops": 1}
+
 CAMPAIGNS: Dict[str, Campaign] = {
     "S-A1": Campaign(
         name="S-A1",
-        pinned=dict(**_DSN_AXES_OFF, **_REP_AXES_OFF),
+        pinned=dict(**_DSN_AXES_OFF, **_REP_AXES_OFF, **_HEAD_POOL_PIN),
         note="NPE only: dsn_on = rep_on = 0. The nested baseline that A2 "
              "and A5 must beat at the optimum, not on average."),
     "S-A2": Campaign(
         name="S-A2",
-        pinned=dict(**_REP_AXES_OFF),
+        pinned=dict(**_REP_AXES_OFF, **_HEAD_POOL_PIN),
         note="DSN term free (dsn_on searched), replicate term off. Nests "
              "S-A1 at dsn_on = 0."),
     "S-A5": Campaign(
         name="S-A5",
-        pinned=dict(**_DSN_AXES_OFF),
+        pinned=dict(**_DSN_AXES_OFF, **_HEAD_POOL_PIN),
         note="Replicate term free (rep_on searched), DSN term off. Nests "
              "S-A1 at rep_on = 0."),
     "S-A25": Campaign(
         name="S-A25",
-        pinned={},
+        pinned=dict(**_HEAD_POOL_PIN),
         note="Both terms free. Not one of the four campaigns of S5.2; "
              "provided because the union space is the natural object and a "
              "combined campaign may be wanted once the partial dependences "
@@ -451,7 +532,7 @@ def space_dimensions(spec: JointSpaceSpec, campaign_name: str):
     dims = []
     for axis in c.free():
         r = spec.range_of(axis)
-        if axis in ("block_family", "head_fusion", "dsn_on", "rep_on"):
+        if axis in ("block_family", "head_fusion", "head_pool_ops", "dsn_on", "rep_on"):
             dims.append(Categorical([int(v) for v in r], name=axis))
         elif axis == "batch_size_npe":
             dims.append(Categorical([int(v) for v in r], name=axis))
@@ -761,8 +842,8 @@ def assert_control_identity(candidate: Dict[str, Any],
 # Axes with no meaningful "edge". A Categorical dimension has no boundary to
 # widen: the best configuration choosing "joint_sep" is not evidence that the
 # range was too narrow, it is the answer. Switches likewise.
-_NO_BOUNDARY = frozenset(("block_family", "head_fusion", "dsn_on", "rep_on",
-                          "loss_type", "mining_strategy", "batch_size_npe"))
+_NO_BOUNDARY = frozenset(("block_family", "head_fusion", "head_pool_ops", "dsn_on",
+                          "rep_on", "loss_type", "mining_strategy", "batch_size_npe"))
 
 
 def boundary_axes(config: Dict[str, Any],
