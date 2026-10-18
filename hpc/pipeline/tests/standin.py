@@ -129,8 +129,29 @@ def write_dataset(root, sbix, tag="synth", extra_topos=None):
             "expected_p": len(FX.ACTIVE) + 1, "n_tasks": len(fx["tasks"])}
 
 
+def premake_bank_record(sim_dir, body='{"pre_made": true}\n'):
+    """BANK_RECORD.json + .sha256 and the certificate BANK_VERIFIED.json +
+    .sha256 naming the record's sha256 -- S5's artefact of record since
+    2026-10-18 (D-094): a simulated bank the stages treat as done."""
+    if not os.path.isdir(sim_dir):
+        os.makedirs(sim_dir)
+    rec = os.path.join(sim_dir, "BANK_RECORD.json")
+    with open(rec, "w") as fh:
+        fh.write(body)
+    h = hashlib.sha256(open(rec, "rb").read()).hexdigest()
+    with open(rec + ".sha256", "w") as fh:
+        fh.write("%s  BANK_RECORD.json\n" % h)
+    cert = os.path.join(sim_dir, "BANK_VERIFIED.json")
+    with open(cert, "w") as fh:
+        json.dump({"certificate": "bank_verified", "record_sha256": h, "pre_made": True}, fh)
+    hc = hashlib.sha256(open(cert, "rb").read()).hexdigest()
+    with open(cert + ".sha256", "w") as fh:
+        fh.write("%s  BANK_VERIFIED.json\n" % hc)
+    return rec
+
+
 def synthetic_config(root, sbix, sbi_dir, ds, tag="synth", bank_walltime="00:30:00"):
-    """A pipeline configuration (config v5) on the stand-in, from the
+    """A pipeline configuration (config v6) on the stand-in, from the
     committed Giulia file's shape."""
     here = os.path.dirname(os.path.abspath(__file__))
     giulia = os.path.join(here, "..", "projects", "giulia", "giulia.json")

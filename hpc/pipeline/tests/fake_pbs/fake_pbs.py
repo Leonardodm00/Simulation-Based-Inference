@@ -17,6 +17,9 @@ as davinci did on 2026-10-16 (the bank's gate: no log, no exit status):
 FAKE_PBS_ARRAY_DEPEND=gating ends it unrun when an element exited non-zero;
 FAKE_PBS_DROP_DEPENDENTS=1 ends it unrun whatever the elements did. Such a
 job finishes with state F, no Exit_status, a comment, and no output file.
+FAKE_PBS_FAIL_ONCE=<i>[,<j>...] makes array element i fail to start the
+first time an array runs it (code -2, PBS's JOB_EXEC_FAIL2, and no log:
+davinci's element 63 of 2026-10-16); later arrays run it (a spool flag).
 
 `qstat -x -f <id>` prints a PBS-like record: job_state (Q, R, B, F),
 Exit_status when finished, resources_used.walltime, array_state_count for
@@ -41,6 +44,8 @@ DELAY = float(os.environ.get("FAKE_PBS_DELAY", "0.5"))
 ENFORCE_WALLTIME = os.environ.get("FAKE_PBS_ENFORCE_WALLTIME", "0") == "1"
 ARRAY_DEPEND = os.environ.get("FAKE_PBS_ARRAY_DEPEND", "ordering")
 DROP_DEPENDENTS = os.environ.get("FAKE_PBS_DROP_DEPENDENTS", "0") == "1"
+FAIL_ONCE = set(x.strip() for x in os.environ.get("FAKE_PBS_FAIL_ONCE", "").split(",")
+                if x.strip())
 SERVER = "fake"
 
 
@@ -176,7 +181,9 @@ def _wait_dependency(dep):
             if DROP_DEPENDENTS:
                 return False
             if ARRAY_DEPEND == "gating":
-                return d["exit_status"] == 0
+                # any element that did not exit 0 -- a code of its own, or one
+                # that never started (-2) -- ends the dependent unrun
+                return all(int(c) == 0 for c in d["elements"].values())
             return True
         time.sleep(0.1)
 
@@ -249,12 +256,22 @@ def cmd_run(num):
     rec["started"] = time.time()
     _save(rec)
     if rec["indices"]:
-        procs = dict((k, _run_one(rec, k)) for k in rec["indices"])
-        codes = {}
+        procs, codes = {}, {}
+        for k in rec["indices"]:
+            flag = os.path.join(_spool(), "failed_once_%d" % k)
+            if str(k) in FAIL_ONCE and not os.path.exists(flag):
+                with open(flag, "w") as fh:
+                    fh.write("%s\n" % rec["id"])
+                codes[k] = -2                 # never started: no process, no log
+                rec["elements"][str(k)] = -2
+                continue
+            procs[k] = _run_one(rec, k)
         for k, p in procs.items():
             codes[k] = p.wait()
             rec["elements"][str(k)] = codes[k]
             _save(rec)
+        # as davinci's record of 2026-10-16: an element that never started
+        # leaves the array's Exit_status at the others' maximum
         rec["exit_status"] = max(codes.values())
     else:
         rec["exit_status"] = _wait_with_walltime(_run_one(rec, None), rec)

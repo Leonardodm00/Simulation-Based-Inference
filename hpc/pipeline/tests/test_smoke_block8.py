@@ -8,7 +8,8 @@ sequencer stopped and re-run at several points.
 
 Checks
     test_contract      from an empty work root to BEST_FIT_COMPLETE.json:
-                       the plan, the test task, the array and its gate, the
+                       the plan, the test task, the array, its gate and the
+                       verification job (the certificate), the
                        real bank, the budget gate's probes, 2 + 2 trials,
                        the finalists, 2 members, the ensemble NLL; the
                        sequencer stopped after 3, 8 and 15 polls and re-run
@@ -148,6 +149,8 @@ def test_contract():
         assert "bank_plan: BANK PLAN OK" in log, log
         assert "sim_bank: test task passed: TASK 0 OK" in log, log
         assert "sim_bank: wrote %s/BANK_RECORD.json" % bank in log, log
+        assert "sim_bank: VERIFY OK on " in log and "sim_bank: VERIFIED:" in log, log
+        assert os.path.isfile(os.path.join(bank, "BANK_VERIFIED.json.sha256"))
         assert "real_bank: REAL BANK OK" in log, log
         n_shards = len(glob.glob(os.path.join(bank, "shard_*.npz")))
         assert n_shards >= 3, n_shards
@@ -162,8 +165,9 @@ def test_contract():
         bf = json.load(open(os.path.join(best, "BEST_FIT_COMPLETE.json")))
         assert bf["ensemble"]["M"] == 2 and bf["ensemble"]["L_bar"] <= sum(bf["ensemble"]["L_members"]) / 2.0 + 1e-12
         assert "best_fit: BEST FIT COMPLETE" in log and "PIPELINE DONE" in log
-        # the jobs: 3 bank jobs + 2 probes + 4 trials + 2 members; none twice
-        assert s.n_submitted() == 11, s.n_submitted()
+        # the jobs: 4 bank jobs (the test task, the array, its gate, the verification
+        # job) + 2 probes + 4 trials + 2 members; none twice
+        assert s.n_submitted() == 12, s.n_submitted()
         # every stage done in the state; --status prints it
         state = json.load(open(os.path.join(cfg["paths"]["work_root"], "state.json")))
         statuses = dict((k, v["status"]) for k, v in state["stages"].items())
@@ -174,7 +178,7 @@ def test_contract():
         assert rc == 0 and st.count("| done     | yes") == 5 and st.count("| skipped  | yes") == 3, st
         # a last run on the state: nothing to do
         rc, out = s.run([])
-        assert rc == 0 and "PIPELINE DONE" in out and s.n_submitted() == 11
+        assert rc == 0 and "PIPELINE DONE" in out and s.n_submitted() == 12
     finally:
         s.close()
 

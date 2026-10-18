@@ -175,6 +175,13 @@ def _synthetic_project(root, search=None, best_fit=None, pre_make_best=False):
         with open(p, "w") as fh:
             fh.write('{"synthetic": true}\n')
         _sha256_file(p)
+    # S5's artefact of record since 2026-10-18 also holds the certificate (D-094)
+    rec = os.path.join(sim_dir, "BANK_RECORD.json")
+    import hashlib
+    with open(os.path.join(sim_dir, "BANK_VERIFIED.json"), "w") as fh:
+        json.dump({"certificate": "bank_verified",
+                   "record_sha256": hashlib.sha256(open(rec, "rb").read()).hexdigest()}, fh)
+    _sha256_file(os.path.join(sim_dir, "BANK_VERIFIED.json"))
     if pre_make_best:
         p = os.path.join(cfg["paths"]["runs_root"], "synth_best", "BEST_FIT_COMPLETE.json")
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -274,7 +281,7 @@ def test_known_answer():
         assert got == want, got
         # (d) no NEEDS-CODE key left
         assert C.unhonoured_keys(cfg) == [], C.unhonoured_keys(cfg)
-        assert cfg.data["config_version"] == 5
+        assert cfg.data["config_version"] == 6
         assert cfg.data["search"]["trial"]["queue"] == "cpu" and cfg.data["best_fit"]["queue"] == "cpu"
     finally:
         shutil.rmtree(root, ignore_errors=True)

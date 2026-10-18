@@ -29,7 +29,7 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   `pbs.py`, `envs.py`, `stages/`, `jobs/`, `tools/`, `run_pipeline.sh`,
   `README.md`, `tests/`
 - `hpc/pipeline/projects/giulia/giulia.json` -- the Giulia project's
-  configuration (config v5)
+  configuration (config v6)
 - the changes the later blocks make under `hpc/joint/` (listed per block in
   sec. 5 as they are written; the rest of `hpc/joint/` is their input, not
   under test here): `hpc/joint/stage1/latent_bank.py` (`ShardIndex`,
@@ -219,7 +219,7 @@ Claude's as the log records (D-085..D-090).
 
 | Key | Type | Constraint |
 |---|---|---|
-| `config_version` | int | 5 (v5, 2026-10-16: the two queue keys below) |
+| `config_version` | int | 6 (v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
 | `dataset` | str | `[a-z0-9_]+`; the `<tag>` of the folder and of the artefact names |
 | `paths.{sbix_dir, sbi_dir, work_root, banks_root, runs_root, tune_root}` | str | absolute paths |
 | `envs.{extract, train}` | str | conda environment names |
@@ -233,6 +233,8 @@ Claude's as the log records (D-085..D-090).
 | `bank.topology_axes` | [str] | non-empty |
 | `bank.{expected_p, n_e, sample_seed, bootstrap_resamples, bootstrap_seed, bytes_sample_rows, rows_per_shard, concurrency}` | int | >= 1 (seeds >= 0) |
 | `bank.{t_win_s, floor_hz, floor_rtol}` | float | > 0 |
+| `bank.verify.{ncpus}`, `bank.verify.{mem, walltime}` | int; str | >= 1; PBS memory, `hh:mm:ss` -- the verification job (v6) |
+| `bank.max_rerun_rounds` | int | >= 0 -- reruns of the array after a quarantine (v6) |
 | `split.fractions` | [float, float, float] | each in (0, 1), sum 1 within 1e-9 |
 | `search.{campaign, arm}` | str | `campaign` in {S-A1, S-A2, S-A5, S-A25}; `arm` in the runner's arms |
 | `search.shape_anchors.{p, d_theta, embedding_dim}` | int | >= 1 |
@@ -558,6 +560,122 @@ part of the pipeline.
   contract test's ordering assertion corrected: it assumed S1's fake jobs
   outlast the first tick, which fails under load -- now S2 after S1's
   `done`); block 7 6 pass 1 skip; block 8 1 pass 1 skip.]
+  [2026-10-18, the self-healing bank (D-094, D-095): smoke-tested, 11
+  pass, 1 skip, about 2 min; five mutations each caught by a check (no
+  quarantine; no member read in the verifier; any record taken as this
+  gate's; no reuse of round 0's walltime; done without the certificate).
+  Regression: block 1 6 pass 1 skip; block 3 6 pass 1 skip; block 7 6
+  pass 1 skip; block 8 1 pass 1 skip (12 jobs: the verification job
+  added). Not run here: davinci's PBS, Lustre, a real failing node.]
+- Self-healing simulated bank [amended 2026-10-18; the user's answers
+  D-094 and D-095]. Found by the read-only check of 2026-10-18: two tasks
+  that FINISHED on the failing node (exit 0, markers written) left one
+  shard each that is not a zip file -- a marker's sha256 is taken after
+  the write, so it cannot vouch for what a failing node wrote, and the
+  gate reads only the small arrays, so damage inside `x` passes it.
+  Rules:
+  (a) Every round of the simulated bank ends with a verification JOB,
+      never on the login node: `tools/bank_verify.py --plan <the plan of
+      record> --bank-root <bank_root> --out <work_root>/bank_verify/
+      round<r>_try<a>_<YYYYmmdd_HHMMSS>.json --workers <bank.verify.ncpus>`
+      (a new name each try, so no earlier report is read), through
+      `jobs/run_argv.pbs` in `envs.extract`, on `bank.queue` with
+      `bank.verify.{ncpus, mem, walltime}`. For every task of the plan it
+      checks: a marker of this plan (its sha256) listing exactly the
+      plan's chunks (shard, start, stop); for every chunk the marker gives
+      a file, the `.npz` and the `.json` present, both sha256 equal to the
+      marker's, every zip member's CRC (`zipfile.ZipFile.testzip`, which
+      decompresses every member), the sidecar valid JSON; for a chunk the
+      marker gives no file, no `.npz` present. It lists the bank folder: a
+      `shard_NNNN.*` or `tasks/task_NNNN.*` file the plan's chunks or
+      markers do not name belongs to that chunk's or that index's task; a
+      `shard_*` file of no planned chunk, or a marker of another plan, is
+      a GLOBAL problem; other files are reported, not judged. It also
+      reads the record (`BANK_RECORD.json`: present, its sidecar, its
+      plan). It writes the report -- each bad task with its problems and
+      its files on disk (paths relative to the bank folder), the global
+      problems, the record's state, the verdict `OK` or `BAD`, the host,
+      the seconds -- and prints `VERIFY OK: ...` or `VERIFY BAD: ...` last.
+      Exit 0 whatever it found; 2 on bad arguments or a plan that does not
+      match its .sha256; 75 when it cannot read the plan or list the bank
+      folder (an I/O error: the node it runs on is suspect). Stdlib only.
+  (b) The round: `launch_bank.sh array` (the array and its gate); once the
+      gate has ended -- passed, refused, or never ran (the rule above) --
+      and the array has ended, the verification job. The gate PASSED only
+      when the record was written after its submission (the record's
+      stat, like the log's, is taken before the launcher call): a record
+      left by an earlier round or run is not this gate's. Its report decides:
+      - BAD with a global problem: STOP with the problems; nothing moved.
+      - BAD with tasks only, and more than half of the plan's tasks (and
+        at least 3) bad by an I/O error alone (`unreadable`): the
+        verifier is suspect; verify again, nothing moved.
+      - BAD with tasks only, otherwise, and fewer than
+        `bank.max_rerun_rounds` reruns made: QUARANTINE -- every file the
+        report lists for each bad task, and `BANK_RECORD.json`,
+        `BANK_VERIFIED.json` and their sidecars when present, are moved
+        with `os.rename` (never copied, never deleted; a move across file
+        systems is refused) into `<paths.banks_root>/<tag>_sim_quarantine/
+        <YYYYmmdd_HHMMSS>_round<r>/` under their names relative to the
+        bank folder, with `QUARANTINE.json` there (each move's from, to,
+        bytes, task and reasons; the report and its sha256; the time);
+        then `launch_bank.sh array` again, round r + 1, with WALLTIME the
+        value round 0 used (read from the launcher's `WALLTIME=auto ...
+        -> hh:mm:ss` line, so a quarantined test-task marker does not stop
+        the auto rule); finished tasks skip on their markers.
+      - BAD after `bank.max_rerun_rounds` reruns: STOP with each task
+        still bad, its problems and its task log's last `FAILED:` line.
+      - OK and the record present with its sidecar: the stage writes
+        `<bank_root>/BANK_VERIFIED.json` + .sha256 (the record's sha256,
+        the report's path and sha256, the verifying host, the rounds, the
+        quarantine folders) and is done.
+      - OK and no record: the gate never ran -> the gate alone (once),
+        then the certificate; the gate ran and refused -> STOP with its
+        `[gate] FAIL` lines (a problem the verifier does not test: the
+        contract, the donors, a repeated row).
+      A verification job that ends without its report after the grace
+      period is submitted again; at most 3 tries per round, then STOP.
+  (c) S5's artefact of record is `BANK_RECORD.json` + .sha256 AND
+      `BANK_VERIFIED.json` + .sha256 whose `record_sha256` is the
+      record's sha256: a record without a matching certificate is not
+      done (a `--retry sim_bank` or a fresh state verifies the bank).
+  Config v6 adds `bank.verify.{ncpus, mem, walltime}` (Giulia: 8, 16gb,
+  02:00:00 -- the gate's resources) and `bank.max_rerun_rounds` (Giulia:
+  2, as the trials' and the members' `max_resubmits`); Claude's values
+  `[proposed]`, D-094's "at most 2 rounds".
+  Oracles (`tests/test_smoke_block2.py`):
+  - verifier, in process, on the stand-in's bank built by the real
+    tools: the intact bank -> OK, every shard tested, exit 0; a shard
+    truncated -> BAD `not a zip file`; one byte flipped inside `x`'s
+    compressed data with the marker's sha256 rewritten to match (bytes a
+    failing node wrote and hashed) -> BAD, a CRC problem naming `x.npy`,
+    while the gate passes that bank; a marker removed -> BAD `no marker`
+    with the task's shards as its files; a `shard_NNNN.npz.tmp.npz` ->
+    one of its task's files; a `shard_0999.npz` -> a global problem; a
+    directory in place of a shard -> BAD `unreadable`; no plan -> exit
+    2; no bank folder -> exit 75.
+  - healing, end to end (the stand-in, the fake PBS): (h1) the gate
+    passes a bank whose test task's shard is CRC-bad (marker rewritten):
+    verify BAD -> the task and the record quarantined -> rerun with the
+    round-0 walltime -> gate, verify OK, certificate, done; the
+    quarantine folder holds the moved files and `QUARANTINE.json`; (h2)
+    the davinci case: one task's element never starts in round 0
+    (`FAKE_PBS_FAIL_ONCE`, exit -2, under the gating switch) and another
+    task's shard truncated with its marker rewritten -> the gate dropped,
+    verify names both, quarantine, rerun, done; (h3) a task that fails
+    every time -> STOP after `max_rerun_rounds` reruns with its problem
+    and its `FAILED:` line; (h4) a `shard_0999.npz` in the bank folder ->
+    STOP with the global problem, nothing moved; the dropped gate's two
+    cases (a dropped gate now leads to verify; with every task good, the
+    gate alone, then the certificate).
+  - decisions, in process (`test_decisions`): each kind of report --
+    OK with this round's record (the certificate, then `is_done`; a record
+    rewritten after it is not done), OK with an older record and an unrun
+    gate (the gate alone; unrun twice: STOP), OK after a refusal (STOP
+    with the gate's lines), a global problem, an I/O majority (verify
+    again; the third time STOP), bad tasks with and without a rerun left
+    (the quarantine's moves and its QUARANTINE.json; the STOP with the
+    task log's `FAILED:` line) -- and a verification job that leaves no
+    report (again; the third time STOP).
 
 ### Block 3: the input stages S1-S3 (`stages/inputs.py`)
 
@@ -935,7 +1053,7 @@ part of the pipeline.
     of different row counts; `costliest` on the Giulia space gives depth
     5, width 3.0, ResNet, embedding 64, fusion, pooling 1, hidden 512, 12
     transforms at each of 256 / 512 / 1024; the committed configuration
-    has no NEEDS-CODE key and `config_version` 5.
+    has no NEEDS-CODE key and `config_version` 6 [5 until 2026-10-18].
   - reference: the Giulia dry run prints the gate's, the trials' and the
     members' qsub lines (`cpu`, 48 cores, 160gb / 200gb, 120 / 300 h) and
     no REFUSE line for S7 / S8 (blocks 2-3's not-built lines remain).

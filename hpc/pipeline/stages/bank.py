@@ -15,9 +15,12 @@ stand).
                      line `TASK <i> OK` is reported with it); `array` with
                      WALLTIME from `bank.walltime` (`auto` = the launcher's
                      rule from the test task's pace) -- the array and its
-                     gate job, passed when `BANK_RECORD.json` + .sha256
-                     exist (the gate's `wrote ...` line reported with it);
-                     artefact `BANK_RECORD.json` + .sha256
+                     gate job; then a verification JOB (tools/bank_verify.py:
+                     every shard's sha256 and every zip member's CRC); bad
+                     tasks are moved to a quarantine folder (never deleted)
+                     and the array runs again, at most bank.max_rerun_rounds
+                     times (D-094, D-095); artefact `BANK_RECORD.json` +
+                     .sha256 and `BANK_VERIFIED.json` + .sha256
     real_bank (S6)   `launch_bank.sh real` on the login node; pass line
                      `REAL BANK OK`; artefact `shard_0000.npz` + .json
 
@@ -37,12 +40,16 @@ job has finished with neither its file nor its script's own end line
 `PIPELINE_LOG_GRACE_S` seconds (default 300) before deciding (2026-10-16).
 
 A gate can end without ever running: on davinci (2026-10-16 12:29) the
-gate behind the array finished with no log, no record and no exit status.
-The gate's log counts only when it is fresh (absent, or of another size or
-mtime, when the gate was submitted); a finished gate with no record and no
-fresh log after its grace period never ran, and the stage runs the gate
-alone (`launch_bank.sh gate`, no dependency) once the array has finished --
-once; a second gate that never runs fails the stage (specs/SPEC.md, block 2).
+gate behind the array finished with no log, no record and no exit status,
+because one element had failed to start on a node without its home file
+system. The gate's log counts only when it is fresh (absent, or of another
+size or mtime, when the gate was submitted); a finished gate with no record
+and no fresh log after its grace period never ran. Whatever the gate did,
+the round goes on to the verification job; a verified round whose gate
+never ran gets the gate alone (`launch_bank.sh gate`, no dependency), once
+(specs/SPEC.md, block 2). The same node had finished two other tasks whose
+shards were not zip files though their markers existed: hence the job that
+re-reads every shard from another node (2026-10-18).
 
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
@@ -52,10 +59,20 @@ import os
 import re
 import time
 
-from . import DEPS, Stage, artefact_of, artefact_done
+from . import DEPS, Stage, artefact_of, artefact_done, sha256_sidecar_ok
 from . import common as CM
 
 _JOB_LINE = re.compile(r"^\s*(job|gate)\s*:\s*(\S+)\s*$", re.M)
+_WALLTIME_USED = re.compile(r"->\s*([0-9]+:[0-5][0-9]:[0-5][0-9])")
+MAX_VERIFY_TRIES = 3          # verification jobs per round before a STOP
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _sha256_prefix(path):
@@ -286,11 +303,71 @@ class BankPlanStage(_BankBase):
 # ---------------------------------------------------------------------------
 
 class SimBankStage(_BankBase):
+    """S5, the simulated bank, as phases (specs/SPEC.md block 2; the
+    self-healing rules D-094, D-095):
+
+        test        one task as a job (skipped when its marker is this plan's)
+        gate        round r: `launch_bank.sh array` -- the array and its gate --
+                    until the gate has ended (passed, refused, never ran) and
+                    the array too
+        verify      the verification job (tools/bank_verify.py, every shard's
+                    sha256 and every zip member's CRC); its report decides:
+                    OK -> the certificate (or the gate alone first, when the
+                    gate never ran); bad tasks -> quarantine (moved, never
+                    deleted) and round r + 1, at most bank.max_rerun_rounds;
+                    a global problem -> STOP
+        gate_alone  the gate with no dependency, after a verified round whose
+                    gate never ran
+    The artefact of record: BANK_RECORD.json + .sha256 and BANK_VERIFIED.json
+    + .sha256 naming that record's sha256."""
+
     name = "sim_bank"
     deps = DEPS["sim_bank"]
 
+    # -- places -------------------------------------------------------------
+
     def _bank_root(self, cfg):
         return os.path.join(cfg.data["paths"]["banks_root"], cfg.data["dataset"] + "_sim")
+
+    def _record_path(self, cfg):
+        return os.path.join(self._bank_root(cfg), "BANK_RECORD.json")
+
+    def _cert_path(self, cfg):
+        return os.path.join(self._bank_root(cfg), "BANK_VERIFIED.json")
+
+    def _verify_dir(self, cfg):
+        return os.path.join(cfg.data["paths"]["work_root"], "bank_verify")
+
+    def _quarantine_root(self, cfg):
+        return os.path.join(cfg.data["paths"]["banks_root"], cfg.data["dataset"] + "_sim_quarantine")
+
+    # -- the done-predicate: the record AND its certificate ------------------
+
+    def is_done(self, cfg):
+        rec = self._record_path(cfg)
+        ok, why = artefact_done("sha256", rec)
+        if not ok:
+            return False, why
+        cert = self._cert_path(cfg)
+        if not sha256_sidecar_ok(cert):
+            return False, ("%s exists, but the bank is not verified: %s or its .sha256 is missing or "
+                           "does not match" % (rec, cert))
+        try:
+            c = CM.read_json(cert)
+        except ValueError:
+            return False, "%s cannot be read" % cert
+        if c.get("record_sha256") != _sha256(rec):
+            return False, "%s certifies another record than %s" % (cert, rec)
+        return True, "%s (sha256 matches its sidecar), verified (%s)" % (rec, cert)
+
+    def _record_fresh(self, cfg, sub):
+        """The record exists with its sidecar AND this round's gate wrote it
+        (its stat changed since the gate's submission)."""
+        rec = self._record_path(cfg)
+        return (artefact_done("sha256", rec)[0]
+                and log_is_fresh(rec, sub.get("record_stat", "unknown")))
+
+    # -- helpers ---------------------------------------------------------------
 
     def _test_marker_ok(self, cfg):
         """The test task's marker exists and belongs to this plan."""
@@ -310,6 +387,36 @@ class SimBankStage(_BankBase):
     def _jobs_of(self, text):
         return dict((k, v) for k, v in _JOB_LINE.findall(text))
 
+    @staticmethod
+    def _fail(sub, text):
+        sub["fail"] = text
+        sub["phase"] = "failed"
+        return "finished"
+
+    def _refresh_jobs(self, st, pbs):
+        finished = {}
+        for job in st["jobs"]:
+            if not job.get("finished"):
+                js = pbs.status(job["id"])
+                if js.finished:
+                    job["finished"] = True
+                    job["exit_status"] = js.exit_status
+                    job["walltime_s"] = js.walltime_s
+                    job["state"] = js.state
+            finished[job["id"]] = bool(job.get("finished"))
+        return finished, dict((j["id"], j) for j in st["jobs"])
+
+    def _task_failed_line(self, cfg, index):
+        """The last `FAILED:` line of a task's log, else its last line."""
+        path = os.path.join(self._log_dir(cfg), "bank_task_%d.log" % int(index))
+        text = read_log(path, limit=200000)
+        lines = [l.strip() for l in text.split("\n") if l.startswith("FAILED:")]
+        if lines:
+            return lines[-1]
+        return _last_line(path).strip()
+
+    # -- submissions -------------------------------------------------------------
+
     def _start_test(self, cfg, st, pbs):
         sub = st["sub"]
         log_path = os.path.join(self._log_dir(cfg), "bank_test_0.log")
@@ -325,34 +432,50 @@ class SimBankStage(_BankBase):
         sub["phase"] = "test"
 
     def _start_array(self, cfg, st, pbs):
+        """`launch_bank.sh array` for round sub['round']: the array and its
+        gate. A rerun round passes the WALLTIME round 0 used (the launcher's
+        auto rule needs the test task's marker, which a quarantine may have
+        moved)."""
         sub = st["sub"]
+        r = int(sub.get("round", 0))
         gate_log = os.path.join(self._log_dir(cfg), "bank_gate.log")
         before = file_stat(gate_log)
+        record_before = file_stat(self._record_path(cfg))
+        walltime = sub.get("walltime_used") or str(cfg.data["bank"]["walltime"])
         rc, text = self._run_launcher(cfg, "array", self._login_log(cfg),
-                                      WALLTIME=str(cfg.data["bank"]["walltime"]), TEST_INDEX="0")
+                                      WALLTIME=walltime, TEST_INDEX="0")
         jobs = self._jobs_of(text)
         if rc != 0 or "job" not in jobs or "gate" not in jobs:
-            sub["fail"] = "the array could not be submitted (exit %d): %s" % (rc, self._refusal(text))
+            sub["fail"] = ("the array could not be submitted (round %d, exit %d): %s"
+                           % (r, rc, self._refusal(text)))
             sub["phase"] = "failed"
             return
         for line in text.split("\n"):
             if line.startswith("[launch] WALLTIME=auto") or line.startswith("# tasks"):
                 pbs.log("sim_bank: " + line.strip())
-        pbs.record(jobs["job"], "bank array", ["launch_bank.sh", "array"],
+            if line.startswith("[launch] WALLTIME=auto") and not sub.get("walltime_used"):
+                m = _WALLTIME_USED.search(line)
+                if m:
+                    sub["walltime_used"] = m.group(1)
+        if not sub.get("walltime_used") and walltime != "auto":
+            sub["walltime_used"] = walltime
+        label = "" if r == 0 else " (rerun round %d)" % r
+        pbs.record(jobs["job"], "bank array" + label, ["launch_bank.sh", "array"],
                    log_path=os.path.join(self._log_dir(cfg), "bank_task_<index>.log"))
-        pbs.record(jobs["gate"], "bank gate", ["launch_bank.sh", "array"], log_path=gate_log)
-        sub["array_job"] = jobs["job"]
-        sub["gate_job"] = jobs["gate"]
-        sub["gate_log"] = gate_log
-        sub["gate_log_stat"] = before
-        sub["phase"] = "gate"
+        pbs.record(jobs["gate"], "bank gate" + label, ["launch_bank.sh", "array"], log_path=gate_log)
+        for k in ("gate_outcome", "gate_said", "gate_alone_unrun_of"):
+            sub.pop(k, None)
+        sub.update(array_job=jobs["job"], gate_job=jobs["gate"], gate_log=gate_log,
+                   gate_log_stat=before, record_stat=record_before, verify_try=0,
+                   round=r, phase="gate")
 
     def _start_gate_alone(self, cfg, st, pbs):
-        """`launch_bank.sh gate`: the gate with no dependency, recorded like
-        the first; the phase stays `gate`."""
+        """`launch_bank.sh gate`: the gate with no dependency, after a verified
+        round whose gate never ran."""
         sub = st["sub"]
         gate_log = os.path.join(self._log_dir(cfg), "bank_gate.log")
         before = file_stat(gate_log)
+        record_before = file_stat(self._record_path(cfg))
         rc, text = self._run_launcher(cfg, "gate", self._login_log(cfg))
         jobs = self._jobs_of(text)
         if rc != 0 or "gate" not in jobs:
@@ -360,36 +483,214 @@ class SimBankStage(_BankBase):
             sub["phase"] = "failed"
             return
         pbs.record(jobs["gate"], "bank gate alone", ["launch_bank.sh", "gate"], log_path=gate_log)
-        sub["gate_job"] = jobs["gate"]
-        sub["gate_log"] = gate_log
-        sub["gate_log_stat"] = before
+        sub.update(gate_alone_unrun_of=sub.get("gate_job"), gate_job=jobs["gate"],
+                   gate_log=gate_log, gate_log_stat=before, record_stat=record_before,
+                   phase="gate_alone")
 
-    def _gate_never_ran(self, cfg, st, pbs, finished, by_id):
-        """The finished gate left no record and no fresh log: it never ran.
-        Once the array has finished, run the gate alone -- once."""
+    def _submit_verify(self, cfg, st, pbs):
+        """The verification job of this round (a new report path each try)."""
         sub = st["sub"]
-        job_id = sub["gate_job"]
-        array_id = sub.get("array_job")
-        if array_id and not finished.get(array_id):
+        d = cfg.data
+        v = d["bank"]["verify"]
+        r = int(sub.get("round", 0))
+        a = int(sub.get("verify_try", 0)) + 1
+        sub["verify_try"] = a
+        base = os.path.join(self._verify_dir(cfg), "round%d_try%d_%s" % (r, a, time.strftime("%Y%m%d_%H%M%S")))
+        stem, k = base, 0
+        while os.path.exists(stem + ".json") or os.path.exists(stem + ".argv"):
+            k += 1
+            stem = "%s_%d" % (base, k)
+        report, argv_file, log_path = stem + ".json", stem + ".argv", stem + ".log"
+        argv = [CM.E.python_in_env(), CM.paths_of(cfg)["verify_tool"],
+                "--plan", artefact_of("bank_plan", cfg)[1], "--bank-root", self._bank_root(cfg),
+                "--out", report, "--workers", str(int(v["ncpus"]))]
+        try:
+            CM.write_argv_file(argv_file, argv)
+            line = CM.qsub_line(cfg, "bank_verify", d["bank"]["queue"], v["ncpus"], v["mem"],
+                                v["walltime"], log_path, argv_file, d["paths"]["work_root"],
+                                env_name=d["envs"]["extract"])
+            job_id = pbs.submit(line, role="bank verify (round %d, try %d)" % (r, a),
+                                log_path=log_path)
+        except (RuntimeError, OSError, ValueError) as exc:
+            return self._fail(sub, "the verification job could not be submitted: %s" % exc)
+        sub.update(verify_job=job_id, verify_report=report, verify_log=log_path, phase="verify")
+        return "running"
+
+    # -- the verification's verdict -----------------------------------------------
+
+    def _verify_done(self, cfg, st, pbs, finished, by_id):
+        sub = st["sub"]
+        job_id = sub["verify_job"]
+        if not finished.get(job_id):
             return "running"
-        unrun = list(sub.get("gates_unrun", [])) + [job_id]
-        sub["gates_unrun"] = unrun
-        exit_status = by_id[job_id].get("exit_status")
-        if len(unrun) > 1:
-            sub["fail"] = ("the gate did not run (jobs %s finished with no record and no log at %s; "
-                           "exit %s): read qstat -x -f %s" % (", ".join(unrun), sub["gate_log"],
-                                                               exit_status, job_id))
-            sub["phase"] = "failed"
-            return "finished"
-        pbs.log("sim_bank: the gate %s never ran (finished with exit %s, no record, no log at %s; "
-                "the array %s has ended): the gate alone" % (job_id, exit_status, sub["gate_log"],
-                                                             array_id or "-"))
-        self._start_gate_alone(cfg, st, pbs)
+        path = sub["verify_report"]
+        rep = None
+        if os.path.isfile(path):
+            try:
+                rep = CM.read_json(path)
+            except ValueError:
+                rep = None
+        if rep is None:
+            if not grace_over(sub, job_id):
+                return "running"
+            es = by_id[job_id].get("exit_status")
+            tail = (_last_lines(sub["verify_log"], 4) or "no log").replace("\n", " | ")
+            if int(sub.get("verify_try", 0)) >= MAX_VERIFY_TRIES:
+                return self._fail(sub, "the verification job ended without its report %d times in round "
+                                       "%d (the last: job %s, exit %s; %s: %s)"
+                                  % (int(sub["verify_try"]), int(sub.get("round", 0)), job_id, es,
+                                     sub["verify_log"], tail))
+            pbs.log("sim_bank: the verification job %s ended without its report (exit %s; %s): again"
+                    % (job_id, es, tail))
+            return self._submit_verify(cfg, st, pbs)
+        sub["last_report"] = path
+        return self._act_on_report(cfg, st, pbs, rep, path)
+
+    def _act_on_report(self, cfg, st, pbs, rep, path):
+        sub = st["sub"]
+        host = rep.get("host", "?")
+        bad = rep.get("bad_tasks") or {}
+        glob_p = rep.get("global_problems") or []
+        r = int(sub.get("round", 0))
+        if rep.get("verdict") == "OK" and not bad and not glob_p:
+            pbs.log("sim_bank: VERIFY OK on %s: %s tasks, %s shard files, %s members' CRCs, %s s"
+                    % (host, rep.get("n_tasks"), rep.get("n_npz_checked"),
+                       rep.get("n_members_checked"), rep.get("seconds")))
+            if self._record_fresh(cfg, sub):
+                return self._certify(cfg, st, pbs, path)
+            if sub.get("gate_outcome") == "never_ran":
+                if not sub.get("gate_alone_unrun_of"):
+                    pbs.log("sim_bank: every task verified and no record (the gate never ran): the gate alone")
+                    self._start_gate_alone(cfg, st, pbs)
+                    return "running" if sub.get("phase") == "gate_alone" else "finished"
+                return self._fail(sub, "the gate did not run, alone either (jobs %s and %s), though every task "
+                                       "verified OK on %s (%s)" % (sub.get("gate_alone_unrun_of"),
+                                                                   sub.get("gate_job"), host, path))
+            return self._fail(sub, "the gate refused (job %s; %s): %s -- and every task verified OK on %s "
+                                   "(%s), so the problem is one the verifier does not test (the contract, "
+                                   "the donors, a repeated row)"
+                              % (sub.get("gate_job"), sub.get("gate_log"), sub.get("gate_said", "?"),
+                                 host, path))
+        if glob_p:
+            return self._fail(sub, "the bank folder has problems no rerun fixes (%s): %s; nothing was moved"
+                              % (path, "; ".join(glob_p[:10])))
+        n_tasks = int(rep.get("n_tasks") or 0)
+        io_bad = [k for k, b in bad.items() if b.get("io_only")]
+        if len(io_bad) >= 3 and 2 * len(io_bad) > n_tasks:
+            if int(sub.get("verify_try", 0)) >= MAX_VERIFY_TRIES:
+                return self._fail(sub, "the verifier could not read %d of %d tasks (I/O errors alone) %d "
+                                       "times in round %d; the last on %s (%s)"
+                                  % (len(io_bad), n_tasks, int(sub["verify_try"]), r, host, path))
+            pbs.log("sim_bank: the verifier on %s could not read %d of %d tasks (I/O errors alone): the "
+                    "node is suspect; verifying again, nothing moved" % (host, len(io_bad), n_tasks))
+            return self._submit_verify(cfg, st, pbs)
+        keys = sorted(bad, key=int)
+        for k in keys:
+            pbs.log("sim_bank: VERIFY BAD task %s (%s): %s" % (k, bad[k].get("name"),
+                                                               "; ".join(bad[k].get("problems", [])[:4])))
+        max_r = int(cfg.data["bank"]["max_rerun_rounds"])
+        if r >= max_r:
+            parts = []
+            for k in keys:
+                line = self._task_failed_line(cfg, k)
+                parts.append("task %s (%s): %s%s" % (k, bad[k].get("name"),
+                                                    "; ".join(bad[k].get("problems", [])[:3]),
+                                                    (" [log: %s]" % line) if line else ""))
+            return self._fail(sub, "after %d rerun round(s), %d task(s) still bad (%s): %s"
+                              % (r, len(keys), path, " | ".join(parts[:20])))
+        try:
+            self._quarantine(cfg, st, pbs, rep, path)
+        except OSError as exc:
+            return self._fail(sub, "the quarantine could not move a file (%s); the moves made are listed in "
+                                   "its QUARANTINE.json; nothing was deleted" % exc)
+        sub["round"] = r + 1
+        pbs.log("sim_bank: rerun round %d of at most %d: the array again (finished tasks skip on their "
+                "markers)" % (r + 1, max_r))
+        self._start_array(cfg, st, pbs)
         return "running" if sub.get("phase") == "gate" else "finished"
+
+    def _quarantine(self, cfg, st, pbs, rep, report_path):
+        """Move every file of every bad task, and the record and the
+        certificate, out of the bank folder (D-095: moved, never deleted)."""
+        sub = st["sub"]
+        bank = self._bank_root(cfg)
+        r = int(sub.get("round", 0))
+        base = os.path.join(self._quarantine_root(cfg), "%s_round%d" % (time.strftime("%Y%m%d_%H%M%S"), r))
+        qdir, k = base, 0
+        while os.path.exists(qdir):
+            k += 1
+            qdir = "%s_%d" % (base, k)
+        os.makedirs(qdir)
+        manifest = {"rule": "D-095: moved out of the bank folder, never deleted; delete through the "
+                            "list-then-delete tool", "round": r, "bank_root": bank,
+                    "report": report_path, "report_sha256": _sha256(report_path),
+                    "written": CM.utc_now(), "moves": []}
+        qfile = os.path.join(qdir, "QUARANTINE.json")
+
+        def move(rel, task, reasons):
+            src = os.path.join(bank, rel)
+            if not os.path.lexists(src):
+                return
+            dst = os.path.join(qdir, rel)
+            d = os.path.dirname(dst)
+            if not os.path.isdir(d):
+                os.makedirs(d)
+            size = os.lstat(src).st_size
+            try:
+                os.rename(src, dst)          # same file system: banks_root holds both
+            finally:
+                if os.path.lexists(dst):
+                    manifest["moves"].append({"from": src, "to": dst, "bytes": int(size),
+                                              "task": task, "reasons": reasons})
+                CM.write_json(qfile, manifest)
+
+        bad = rep.get("bad_tasks") or {}
+        for key in sorted(bad, key=int):
+            b = bad[key]
+            for rel in b.get("files", []):
+                move(rel, int(key), list(b.get("problems", [])))
+            pbs.log("sim_bank: quarantine task %s (%s): %d file(s) moved"
+                    % (key, b.get("name"), len(b.get("files", []))))
+        for rel in ("BANK_RECORD.json", "BANK_RECORD.json.sha256", "BANK_VERIFIED.json",
+                    "BANK_VERIFIED.json.sha256"):
+            move(rel, None, ["the bank changes: this file no longer describes it"])
+        CM.write_json(qfile, manifest)
+        sub.setdefault("quarantines", []).append(qdir)
+        pbs.log("sim_bank: quarantined %d file(s) of %d task(s) in %s (QUARANTINE.json lists every move)"
+                % (len(manifest["moves"]), len(bad), qdir))
+
+    def _certify(self, cfg, st, pbs, report_path):
+        """BANK_VERIFIED.json + .sha256: the record's sha256 and the report."""
+        sub = st["sub"]
+        rec, cert = self._record_path(cfg), self._cert_path(cfg)
+        try:
+            rep = CM.read_json(report_path)
+            body = {"certificate": "bank_verified", "version": 1, "record": rec,
+                    "record_sha256": _sha256(rec), "report": report_path,
+                    "report_sha256": _sha256(report_path), "verified_by": rep.get("host"),
+                    "n_tasks": rep.get("n_tasks"), "n_npz_checked": rep.get("n_npz_checked"),
+                    "n_members_checked": rep.get("n_members_checked"),
+                    "rerun_rounds": int(sub.get("round", 0)),
+                    "quarantines": list(sub.get("quarantines", [])), "written": CM.utc_now()}
+            CM.write_json(cert, body)
+            tmp = cert + ".sha256.tmp"
+            with open(tmp, "w") as fh:
+                fh.write("%s  %s\n" % (_sha256(cert), os.path.basename(cert)))
+            os.replace(tmp, cert + ".sha256")
+        except (OSError, ValueError) as exc:
+            return self._fail(sub, "the certificate %s could not be written: %s" % (cert, exc))
+        pbs.log("sim_bank: VERIFIED: %s shard files, every zip member's CRC checked on %s; record sha256 "
+                "%s; wrote %s" % (body["n_npz_checked"], body["verified_by"], body["record_sha256"][:16],
+                                  cert))
+        sub["phase"] = "complete"
+        return "finished"
+
+    # -- the stage -----------------------------------------------------------------
 
     def start(self, cfg, st, pbs):
         sub = st["sub"]
         self.ensure_profile(cfg, pbs)
+        sub["round"] = 0
         if self._test_marker_ok(cfg):
             pbs.log("sim_bank: the test task's marker belongs to this plan: test skipped")
             sub["test_skipped"] = True
@@ -399,17 +700,7 @@ class SimBankStage(_BankBase):
 
     def poll(self, cfg, st, pbs):
         sub = st["sub"]
-        finished = {}
-        for job in st["jobs"]:
-            if not job.get("finished"):
-                js = pbs.status(job["id"])
-                if js.finished:
-                    job["finished"] = True
-                    job["exit_status"] = js.exit_status
-                    job["walltime_s"] = js.walltime_s
-                    job["state"] = js.state
-            finished[job["id"]] = bool(job.get("finished"))
-        by_id = dict((j["id"], j) for j in st["jobs"])
+        finished, by_id = self._refresh_jobs(st, pbs)
         phase = sub.get("phase")
         if phase == "test":
             job_id = sub["test_job"]
@@ -429,46 +720,83 @@ class SimBankStage(_BankBase):
             if (ok_lines or ended is None) and not grace_over(sub, job_id):
                 return "running"
             refused = [l for l in text.split("\n") if l.startswith(("REFUSED", "ABORT", "Traceback"))]
-            sub["fail"] = ("the test task did not pass (job %s, exit %s, no marker of this plan in %s; "
-                           "log %s: %s)"
-                           % (job_id, by_id[job_id].get("exit_status"),
-                              os.path.join(self._bank_root(cfg), "tasks"), sub["test_log"],
-                              "; ".join(refused[:5]) if refused
-                              else (_last_lines(sub["test_log"], 3) or "absent")))
-            sub["phase"] = "failed"
-            return "finished"
+            return self._fail(sub, "the test task did not pass (job %s, exit %s, no marker of this plan in "
+                                   "%s; log %s: %s)"
+                              % (job_id, by_id[job_id].get("exit_status"),
+                                 os.path.join(self._bank_root(cfg), "tasks"), sub["test_log"],
+                                 "; ".join(refused[:5]) if refused
+                                 else (_last_lines(sub["test_log"], 3) or "absent")))
         if phase == "gate":
             job_id = sub["gate_job"]
             if not finished.get(job_id):
                 return "running"
-            # only this gate's log counts: a log left by an earlier gate is not read
-            fresh = log_is_fresh(sub["gate_log"], sub.get("gate_log_stat", "unknown"))
-            text = read_log(sub["gate_log"]) if fresh else ""
-            wrote = [l for l in text.split("\n")
-                     if l.startswith("wrote ") and "BANK_RECORD.json" in l]
-            done, why = self.is_done(cfg)
-            if done:
-                pbs.log("sim_bank: " + (wrote[-1].strip() if wrote else why))
-                sub["phase"] = "complete"
-                return "finished"
-            ended = job_exit_line(text, "bank_gate")
-            if (wrote or ended is None) and not grace_over(sub, job_id):
+            outcome = self._gate_outcome(cfg, st)
+            if outcome == "wait":
                 return "running"
-            if not fresh:
-                return self._gate_never_ran(cfg, st, pbs, finished, by_id)
-            fails = [l for l in text.split("\n") if l.startswith("[gate] FAIL") or
-                     l.startswith("REFUSED")]
-            sub["fail"] = ("the gate refused (job %s, exit %s; %s): %s"
-                           % (job_id, by_id[job_id].get("exit_status"), sub["gate_log"],
-                              "; ".join(fails[:20]) if fails
-                              else (_last_lines(sub["gate_log"], 3) or "no log")))
-            sub["phase"] = "failed"
-            return "finished"
+            array_id = sub.get("array_job")
+            if array_id and not finished.get(array_id):
+                return "running"
+            sub["gate_outcome"] = outcome
+            es = by_id[job_id].get("exit_status")
+            if outcome == "passed":
+                pbs.log("sim_bank: " + sub["gate_said"])
+            elif outcome == "refused":
+                pbs.log("sim_bank: the gate %s refused (exit %s): %s" % (job_id, es, sub["gate_said"]))
+            else:
+                pbs.log("sim_bank: the gate %s never ran (finished with exit %s, no record, no log at %s; "
+                        "the array %s has ended)" % (job_id, es, sub["gate_log"], array_id or "-"))
+            pbs.log("sim_bank: verifying the bank, round %d: every shard's sha256 and every zip member's "
+                    "CRC, as a job" % int(sub.get("round", 0)))
+            return self._submit_verify(cfg, st, pbs)
+        if phase == "verify":
+            return self._verify_done(cfg, st, pbs, finished, by_id)
+        if phase == "gate_alone":
+            job_id = sub["gate_job"]
+            if not finished.get(job_id):
+                return "running"
+            outcome = self._gate_outcome(cfg, st)
+            if outcome == "wait":
+                return "running"
+            es = by_id[job_id].get("exit_status")
+            if outcome == "passed":
+                pbs.log("sim_bank: " + sub["gate_said"])
+                return self._certify(cfg, st, pbs, sub["last_report"])
+            if outcome == "never_ran":
+                return self._fail(sub, "the gate did not run (jobs %s and %s finished with no record and no "
+                                       "log at %s; exit %s): read qstat -x -f %s"
+                                  % (sub.get("gate_alone_unrun_of"), job_id, sub["gate_log"], es, job_id))
+            return self._fail(sub, "the gate refused (job %s, exit %s; %s): %s"
+                              % (job_id, es, sub["gate_log"], sub["gate_said"]))
         return "finished"
+
+    def _gate_outcome(self, cfg, st):
+        """'passed' (this gate wrote the record), 'refused' (its own log, no
+        record), 'never_ran' (no record and no log of its own once the grace
+        period is over) or 'wait', for the finished gate sub['gate_job']."""
+        sub = st["sub"]
+        job_id = sub["gate_job"]
+        # only this gate's log counts: a log left by an earlier gate is not read
+        fresh = log_is_fresh(sub["gate_log"], sub.get("gate_log_stat", "unknown"))
+        text = read_log(sub["gate_log"]) if fresh else ""
+        wrote = [l for l in text.split("\n") if l.startswith("wrote ") and "BANK_RECORD.json" in l]
+        if self._record_fresh(cfg, sub):
+            sub["gate_said"] = (wrote[-1].strip() if wrote
+                                else "%s written (its sidecar matches)" % self._record_path(cfg))
+            return "passed"
+        ended = job_exit_line(text, "bank_gate")
+        if (wrote or ended is None) and not grace_over(sub, job_id):
+            return "wait"
+        if not fresh:
+            return "never_ran"
+        fails = [l for l in text.split("\n") if l.startswith("[gate] FAIL") or l.startswith("REFUSED")]
+        sub["gate_said"] = ("; ".join(fails[:20]) if fails
+                            else (_last_lines(sub["gate_log"], 3) or "no log"))
+        return "refused"
 
     def dry_run(self, cfg, st):
         d = cfg.data
         ld = self._launcher_dir(cfg)
+        v = d["bank"]["verify"]
         return ["test (skipped when %s/tasks/task_0000.json belongs to the plan): PROFILE=<profile> "
                 "QUEUE=%s TEST_INDEX=0 bash %s/launch_bank.sh test -> one job; passed by its marker "
                 "(log line TASK 0 OK)" % (self._bank_root(cfg), d["bank"]["queue"], ld),
@@ -476,10 +804,17 @@ class SimBankStage(_BankBase):
                 "(-J 0-<n-1>%%%d) and its gate job (depend=afterok)"
                 % (d["bank"]["walltime"], int(d["bank"]["concurrency"]), d["bank"]["queue"], ld,
                    int(d["bank"]["concurrency"])),
-                "a gate that never runs (no record, no log of its own): bash %s/launch_bank.sh gate "
-                "-> the gate alone, once the array has ended" % ld,
-                "pass line: the gate's log ends 'wrote %s/BANK_RECORD.json  sha256 <16 hex>'; artefact "
-                "BANK_RECORD.json + .sha256" % self._bank_root(cfg)]
+                "verify, after the gate: qsub -N bank_verify -q %s -l select=1:ncpus=%d:mem=%s -l "
+                "walltime=%s ... run_argv.pbs -> %s --plan <plan> --bank-root %s --out %s/round<r>_try<a>_"
+                "<time>.json; bad tasks moved to %s/<time>_round<r>/ and the array again, at most %d "
+                "rerun round(s)" % (d["bank"]["queue"], int(v["ncpus"]), v["mem"], v["walltime"],
+                                    CM.paths_of(cfg)["verify_tool"], self._bank_root(cfg),
+                                    self._verify_dir(cfg), self._quarantine_root(cfg),
+                                    int(d["bank"]["max_rerun_rounds"])),
+                "a gate that never runs (no record, no log of its own): once the round verifies, bash "
+                "%s/launch_bank.sh gate -> the gate alone" % ld,
+                "pass lines: 'sim_bank: VERIFY OK on <host>: ...' and 'sim_bank: VERIFIED: ...'; artefact "
+                "BANK_RECORD.json + .sha256 and BANK_VERIFIED.json + .sha256 in %s" % self._bank_root(cfg)]
 
 
 # ---------------------------------------------------------------------------

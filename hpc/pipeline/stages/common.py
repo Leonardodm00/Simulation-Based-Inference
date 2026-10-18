@@ -1,4 +1,4 @@
-"""What the search and best-fit stages share (block 7): where the tuner,
+"""What the search, best-fit and bank stages share (blocks 7, 2): where the tuner,
 the runner and the tools are, the tuner's common arguments from the
 configuration, the qsub line of a one-command job, the argv files, the
 JSON helpers and the clock.
@@ -43,6 +43,7 @@ def paths_of(cfg):
         "runner": os.path.join(sbi, "hpc", "joint", "stage3", "run_joint_arms.py"),
         "split_tool": os.path.join(pipe, "tools", "bank_split_hash.py"),
         "ensemble_tool": os.path.join(pipe, "tools", "ensemble_nll.py"),
+        "verify_tool": os.path.join(pipe, "tools", "bank_verify.py"),
         "job_script": os.path.join(pipe, "jobs", "run_argv.pbs"),
     }
 
@@ -106,12 +107,16 @@ def job_name(text, limit=15):
     return t
 
 
-def qsub_line(cfg, name, queue, ncpus, mem, walltime, log_path, argv_file, workdir):
-    """The complete qsub command line of one run_argv.pbs job."""
+def qsub_line(cfg, name, queue, ncpus, mem, walltime, log_path, argv_file, workdir,
+              env_name=None):
+    """The complete qsub command line of one run_argv.pbs job, in the
+    environment `env_name` (default the configuration's envs.train: the
+    trials, the probes and the members; the bank's verification job passes
+    envs.extract)."""
     p = paths_of(cfg)
     skip = "1" if E.skip_conda() else "0"
     variables = "ARGV_FILE=%s,ENV_NAME=%s,WORKDIR=%s,SKIP_CONDA=%s" % (
-        argv_file, cfg.data["envs"]["train"], workdir, skip)
+        argv_file, env_name or cfg.data["envs"]["train"], workdir, skip)
     for v in (argv_file, workdir):
         if "," in v:
             raise ValueError("a path with a comma cannot be passed through qsub -v: %r" % v)

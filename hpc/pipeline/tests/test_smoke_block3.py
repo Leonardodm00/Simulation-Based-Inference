@@ -97,8 +97,8 @@ class Standin(object):
         self.arts = arts
         if pre_make_rest:
             tag = "synth"
-            pre = [os.path.join(self.sbix, "export_windows", tag, "bank_plan.json"),
-                   os.path.join(self.cfg["paths"]["banks_root"], tag + "_sim", "BANK_RECORD.json")]
+            pre = [os.path.join(self.sbix, "export_windows", tag, "bank_plan.json")]
+            ST.premake_bank_record(os.path.join(self.cfg["paths"]["banks_root"], tag + "_sim"))
             for p in pre:
                 os.makedirs(os.path.dirname(p), exist_ok=True)
                 with open(p, "w") as fh:

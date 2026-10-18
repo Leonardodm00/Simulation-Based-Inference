@@ -24,7 +24,7 @@ import re
 __all__ = ["Config", "ConfigError", "load_config", "unhonoured_keys",
            "SCHEMA", "NEEDS_CODE", "CONFIG_VERSION"]
 
-CONFIG_VERSION = 5
+CONFIG_VERSION = 6
 
 _WALLTIME = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
 _MEM = re.compile(r"^[0-9]+(kb|mb|gb|tb)$")
@@ -89,6 +89,10 @@ SCHEMA = (
     ("bank.queue", "str"),
     ("bank.concurrency", "int>=1"),
     ("bank.walltime", "walltime_or_auto"),
+    ("bank.verify.ncpus", "int>=1"),
+    ("bank.verify.mem", "mem"),
+    ("bank.verify.walltime", "walltime"),
+    ("bank.max_rerun_rounds", "int>=0"),
     ("split.fractions", "fracs3"),
     ("search.campaign", "campaign"),
     ("search.arm", "arm"),
