@@ -10,8 +10,12 @@ NLL (block 7; D-089; specs/SPEC.md sec. 2.3).
               resources of `best_fit`; a member whose job ends with no
               record is resubmitted with --resume up to `max_resubmits`
               times, then the stage fails (every member is needed); a
-              member whose record exists when the stage starts is not
-              re-run (resumable)
+              member that failed of a node fault (SIGBUS or a file-system
+              error in its log) is resubmitted the same way instead of
+              failing as a refusal (D-096, `best_fit.resubmit_node_faults`);
+              a checkpoint whose zip CRCs fail is moved aside before a
+              submission (D-097); a member whose record exists when the
+              stage starts is not re-run (resumable)
     ensemble  `tools/ensemble_nll.py` over the members' per-row files:
               L_bar = -(1/n) sum_i [logsumexp_m(-l_{m,i}) - log M]
     artefact  `<runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`
@@ -121,6 +125,9 @@ class BestFitStage(Stage):
         b = cfg.data["best_fit"]
         dirs = self._dirs(cfg)
         m = st["sub"]["members"][str(seed)]
+        # D-097: a checkpoint whose zip CRCs fail is moved aside (kept) first
+        CM.set_aside_bad_checkpoints(self._member_dir(cfg, seed), pbs.log, self.name,
+                                     "member seed %d" % int(seed))
         # a checkpoint left by an earlier job (a --retry after a kill): continue it
         if glob.glob(os.path.join(self._member_dir(cfg, seed), "*_train_ckpt.pt")):
             resume = True
@@ -147,6 +154,27 @@ class BestFitStage(Stage):
             m["L"] = CM.read_json(rec).get("L")
             log("best_fit: member seed %d done: L %s (%s)" % (int(seed), m["L"], rec))
             return
+        if b["resubmit_node_faults"]:
+            # D-096 applied to the members: a node fault is not a refusal
+            text = CM.read_log_tail(job.get("log"))
+            why = CM.node_fault(None, text)
+            if why is not None:
+                host = CM.host_of_log(text) or "?"
+                m.setdefault("node_faults", []).append({"host": host, "why": why, "job": job["id"],
+                                                        "utc": CM.utc_now()})
+                if m["resubmits"] < int(b["max_resubmits"]):
+                    m["resubmits"] += 1
+                    self._submit_member(cfg, st, pbs, seed, resume=True)
+                    log("best_fit: member seed %d NODE FAULT on %s (%s); resubmitted with --resume "
+                        "(%d of %d)" % (int(seed), host, why, m["resubmits"], int(b["max_resubmits"])))
+                    return
+                m["status"] = "failed"
+                m["why"] = ("member seed %d: node fault on %s (%s) after %d resubmission(s); raise "
+                            "best_fit.max_resubmits, then --retry best_fit (finished members are "
+                            "kept)" % (int(seed), host, why, m["resubmits"]))
+                log("best_fit: member seed %d NODE FAULT on %s (%s); no resubmission left"
+                    % (int(seed), host, why))
+                return
         if job.get("exit_status") not in (None, 0) and self._refused(job):
             m["status"] = "failed"
             m["why"] = "member seed %d refused (job %s exit %s); see %s" % (
@@ -323,6 +351,11 @@ class BestFitStage(Stage):
                    float(b["passes"]), int(b["patience_epochs"]), int(d["loader"]["buffer_shards"]),
                    int(b["ncpus"]), int(d["search"]["flow"]["conditioner_hidden_layers"]),
                    int(b["n_posterior_draws"]), int(b["max_resubmits"])),
+                "node faults (D-096): %s; checkpoints whose zip CRCs fail are moved aside "
+                "before a submission (D-097)"
+                % ("a member failed of SIGBUS or a file-system error is resubmitted with --resume "
+                   "(within max_resubmits)" if b["resubmit_node_faults"]
+                   else "off (best_fit.resubmit_node_faults false): such a member fails the stage"),
                 "ensemble: %s --members <M per-row files> -> %s (L_bar, D-089)"
                 % (p["ensemble_tool"], dirs["ensemble"]),
                 "artefact: %s" % dirs["complete"]]

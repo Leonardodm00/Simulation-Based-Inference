@@ -219,7 +219,7 @@ Claude's as the log records (D-085..D-090).
 
 | Key | Type | Constraint |
 |---|---|---|
-| `config_version` | int | 6 (v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
+| `config_version` | int | 7 (v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
 | `dataset` | str | `[a-z0-9_]+`; the `<tag>` of the folder and of the artefact names |
 | `paths.{sbix_dir, sbi_dir, work_root, banks_root, runs_root, tune_root}` | str | absolute paths |
 | `envs.{extract, train}` | str | conda environment names |
@@ -252,12 +252,14 @@ Claude's as the log records (D-085..D-090).
 | `search.max_total_walltime_h` | float or null | > 0; null = no cap |
 | `search.walltime_reading` | str | `elapsed` |
 | `search.resubmit_killed` | bool | -- |
+| `search.resubmit_node_faults` | bool | a trial that failed of a node fault is resubmitted (D-096; v7) |
 | `best_fit.split_seed` | int | >= 0 |
 | `best_fit.member_seeds` | [int] | non-empty, distinct |
 | `best_fit.passes` | float | > 0 |
 | `best_fit.{epochs, patience_epochs, n_posterior_draws, ncpus, max_resubmits}` | int | >= 1; `max_resubmits` >= 0 |
 | `best_fit.{mem, walltime}` | str | as for the trial |
 | `best_fit.queue` | str | the member jobs' queue (v5) |
+| `best_fit.resubmit_node_faults` | bool | a member that failed of a node fault is resubmitted (D-096 applied to the members; v7) |
 | `loader.buffer_shards` | int | >= 1 |
 
 Keys whose code is not built yet (the NEEDS-CODE keys) are refused by
@@ -423,6 +425,27 @@ part of the pipeline.
   `STOP:` line and exits 3; with `--retry <stage>` it shows the run that
   would follow and exits 0 (the reset is not saved by a dry run). Test:
   `test_edge_cases` (a).
+- Amended 2026-10-18 (restarting the sequencer under a running search, to
+  load new code): (a) `--retry <stage>` forgets the stage's jobs
+  (`reset_stage`), so on a stage whose jobs still run it would submit
+  their work a second time; it is refused -- exit 2, `REFUSE: --retry
+  <stage>: the stage has <n> job(s) still queued or running (<ids>); a
+  retry forgets them and would submit their work again -- let them end
+  (or qdel them) first` -- when a job recorded for the stage is not
+  finished by the scheduler's answer (an unknown job counts as finished);
+  the dry run prints the same line and exits 2. (b) A requested stop:
+  `pipeline.py stop --config <file>` (`run_pipeline.sh ... --stop`) writes
+  `<work_root>/STOP_REQUEST`; SIGTERM and SIGINT set the same request in
+  the running sequencer. The request is honoured at a tick boundary only
+  -- after every running stage's poll and the state's save; the sleep
+  between ticks is cut short by it -- so a stop never falls between a
+  submission and its record; the sequencer removes the file, logs
+  `stopped on request (<how>); resumable: <n> job(s) still queued or
+  running keep running`, releases the lock and exits 0. The jobs are
+  untouched; a re-run re-attaches to them. Before this amendment a `kill`
+  could land inside a poll (the known window above). Tests:
+  `tests/test_smoke_block7b.py` `test_edge_cases` (its stop and retry part;
+  `stop_and_retry` when run alone).
 - Confirmed: yes 2026-10-15 (the user's answers to the build handoff's Q1-Q7
   and the follow-up; D-090..D-093)
 - Status: smoke-tested 2026-10-15 (6 pass, 1 skip: convergence, not a
@@ -1097,6 +1120,128 @@ part of the pipeline.
   about 2 minutes; `test_smoke_pipeline.py` 6 pass, 1 skip; the Stage 4
   suites 8/8 under `SKIP_CONDA=1` and 9/9; the Stage 3 suite and
   `smoke_test_blocks_4_6.py` unchanged)
+- Node faults and corrupt checkpoints [amended 2026-10-18; the user's
+  answers D-096 and D-097]. Found on davinci 2026-10-18 (the read-only
+  check of 14:28): trials `16641a4d79ce`, `4006d8ff495f` and
+  `42f269b8ecb8` ran one after another on `dvnode012` and failed 12-14
+  min in, when the node lost the home file system -- two runners killed
+  by SIGBUS (the ledger's `runner exited -7`, after `BrokenPipeError:
+  [Errno 108] Cannot send after transport endpoint shutdown`), one
+  `OSError: [Errno 5] Input/output error` reading a shard the
+  verification job had read intact on `dvnode001`. The tuner records any
+  non-zero runner exit as `failed`, which the rounds took as final: three
+  design points lost to a node's fault, not to their configurations.
+  - The signature (`stages/common.py`, `node_fault(record_error,
+    log_text) -> str or None`): (a) the runner killed by SIGBUS -- the
+    record's error `runner exited -<SIGBUS>` (-7 on Linux), or in the log
+    `RUN_ARGV EXIT: <128 + SIGBUS>` (135) or `Bus error`; (b) a file-system
+    error in the log -- `[Errno <n>]` for EIO (5), ENOTCONN (107),
+    ESHUTDOWN (108), ESTALE (116), EREMOTEIO (121), the numbers from
+    Python's `errno`, or the texts `Input/output error`, `Transport
+    endpoint is not connected`, `Cannot send after transport endpoint
+    shutdown`, `Stale file handle`, `Could not chdir to home directory`.
+    Not node faults: any other exit (a traceback without those errors,
+    SIGKILL -- memory or an operator --, ENOSPC and EDQUOT -- storage
+    full --, ENOENT).
+  - Rule of the search (D-096): a trial whose job ended with a ledger
+    record of status `failed` is `examining` (not terminal: its round
+    waits) until its evidence is read -- the record's error, and its
+    latest job log `jobs/<id>.<n>.log` once that log has its `RUN_ARGV
+    EXIT:` line or `LOG_GRACE_S` (300 s) have passed since the failure was
+    seen. With `search.resubmit_node_faults` and a node fault: the record
+    is moved to `trials/<id>.json.nodefault<k>` (k = 1, 2, ...; kept, out
+    of the ledger's `*.json`), the pending spec is rewritten from the
+    record's configuration if absent, and, while `resubmits <
+    trial.max_resubmits` (the counter the walltime kills use), the trial is
+    `waiting` again, to be submitted with `--resume` when the throttle has
+    a slot (earliest round first): `search: trial <id12> NODE FAULT on
+    <host> (<why>); record set aside as <name>; queued again with --resume
+    (<r> of <max>); <n> node fault(s) on <host> so far`; with no
+    resubmission left, the pipeline's `killed` record (error `killed: node
+    fault on <host> (<why>) after <r> resubmission(s)`, revivable by
+    `--retry search` as any killed trial) and `... no resubmission left:
+    recorded killed; ...`. Otherwise the trial is `failed`, final, as
+    before: `search: trial <id12> failed: not a node fault (<error>);
+    final`. A record that no longer says `failed` when it is read decides
+    as any record. A trial already `failed` and never
+    examined -- recorded before this code, or restored by a fresh state --
+    is examined at the next poll (the three of 2026-10-18 come back so).
+    With `search.resubmit_node_faults` false nothing is examined (the
+    behaviour before D-096).
+  - Rule of the best fit (D-096 applied to the members: Claude's reading,
+    `[proposed]`): a member's job that ended without a record and whose
+    log shows a node fault is resubmitted with `--resume` up to
+    `best_fit.max_resubmits` -- `best_fit: member seed <k> NODE FAULT on
+    <host> (<why>); resubmitted with --resume (<r> of <max>)` -- instead
+    of failing the stage as a refusal; with `best_fit.resubmit_node_faults`
+    false, the refusal rule as before.
+  - Rule of the checkpoints (D-097): before a trial or a member is
+    submitted, each `*_train_ckpt.pt` of its run folder is opened as a zip
+    archive and every member's CRC-32 checked (`zipfile.ZipFile.testzip`);
+    a file that is not a readable zip archive, or a member that fails, is
+    moved to `<name>.corrupt<k>` (kept) and logged `<stage>: <who>
+    checkpoint <name> failed its CRC check (<why>); moved aside as
+    <name>.corrupt<k>; it restarts from epoch 0`; a file the login node
+    cannot read (an OSError) is left in place and logged. The job is then
+    submitted as before (with `--resume` on a resubmission: the runner,
+    finding no checkpoint, starts from epoch 0). Why: torch.save writes a
+    zip archive of stored members with their CRC-32; in the sandbox (torch
+    2.14.1) `testzip` passes a fresh checkpoint, names the member after one
+    flipped byte -- which `torch.load` reads WITHOUT an error, returning
+    altered weights -- and a truncated file is not a zip archive
+    (`torch.load` raises) `[SANDBOX 2026-10-18]`.
+  - Config v7: `search.resubmit_node_faults`, `best_fit.resubmit_node_
+    faults` (bool; true for Giulia). The tuner and the runner are not
+    changed: the trial jobs on davinci keep their code.
+  - Test oracles (`tests/test_smoke_block7b.py`; the blocks 4-6 fixture
+    under the fake PBS; the real tuner, and the real runner behind a
+    wrapper that injects the faults -- a copy of `hpc/` whose
+    `stage3/run_joint_arms.py` is the wrapper; the plan per trial in the
+    order of first call, the throttle at 1, the gate's probe files
+    pre-seeded):
+    - known answer: `node_fault` names a node fault on the three davinci
+      lines of 2026-10-18 (verbatim) and on `RUN_ARGV EXIT: 135`; it
+      returns None on a ValueError traceback, `[Errno 2]`, `[Errno 28]`,
+      `[Errno 122]`, `runner exited -9` and `runner exited 1` without a
+      log.
+    - contract (the healing): trial 1 SIGBUS then ok; trial 2 EIO then ok;
+      trial 3 a ValueError (the negative control): `failed`, final; trial
+      4 ESHUTDOWN three times: resubmitted twice, then `killed` with `node
+      fault` in its error; the search completes with 2 ok, 1 failed, 1
+      killed; `trials/<id>.json.nodefault1` for trials 1, 2 and 4 and
+      `.nodefault2` for 4; the second argv of trials 1 and 2 carries
+      `--resume`; member seed 1 EIO then ok, member seed 2 ok; `PIPELINE
+      DONE`.
+    - the legacy sweep: with `resubmit_node_faults` false a SIGBUS trial
+      is recorded `failed`; the sequencer is stopped by `pipeline.py
+      stop`; with the key true and `--accept-config-change` the restarted
+      sequencer heals it (its record set aside) and the search completes
+      with every trial ok, no job submitted twice.
+    - the checkpoint guard: a trial whose first job stops after epoch 1
+      and leaves a checkpoint with one flipped byte (a CRC failure), and a
+      trial whose checkpoint is truncated: both checkpoints moved aside as
+      `.corrupt1` with the log line, both trials complete `ok`.
+    - the stop and the retry guard (block 1's amendment): SIGTERM, and
+      then `pipeline.py stop --wait`, each end a running sequencer at a
+      tick boundary (exit 0, `stopped on request (...); resumable: 1
+      job(s) still queued or running keep running`); `--retry search`
+      while a trial job runs is refused, in the dry run and the run (exit
+      2, nothing submitted), and accepted once the job has ended (the
+      search completes, 4 submissions in all); `stop` with no sequencer
+      says so.
+    - mutations: with the signature disabled the healing test fails; with
+      the sweep disabled the legacy test fails; with the guard disabled
+      the checkpoint test fails; with the retry guard disabled the stop
+      and retry test fails.
+  - Status: smoke-tested 2026-10-18 (`test_smoke_block7b.py` 6 pass, 1
+    skip, about 6 minutes; the four mutations each make their check FAIL:
+    signature -> test_contract, sweep -> test_determinism, guard -> the
+    checkpoint check, retry_guard -> the stop and retry check; regression
+    on the final code: block 1 6 pass 1 skip, block 2 11 pass 1 skip,
+    block 3 6 pass 1 skip, block 7 6 pass 1 skip, block 8 1 pass 1 skip).
+    Not in the sandbox: davinci's PBS (its job logs land when the job
+    ends, which the 300 s wait for `RUN_ARGV EXIT:` covers), its Lustre
+    errors (the signature's lines are davinci's own of 2026-10-18).
 ### Block 8: end to end on the stand-in and the delivery
 
 - Test (`tests/test_smoke_block8.py`): the one command from an empty work

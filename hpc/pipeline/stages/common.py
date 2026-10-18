@@ -1,7 +1,9 @@
 """What the search, best-fit and bank stages share (blocks 7, 2): where the tuner,
 the runner and the tools are, the tuner's common arguments from the
 configuration, the qsub line of a one-command job, the argv files, the
-JSON helpers and the clock.
+JSON helpers and the clock; since 2026-10-18 the node-fault signature
+(D-096) and the checkpoint check (D-097) that the trials and the members
+share.
 
 Nothing here names a project (D-091): every path and value comes from the
 configuration.
@@ -10,17 +12,24 @@ Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
 import calendar
+import errno
+import glob
 import json
 import os
 import re
+import signal
 import time
+import zipfile
+import zlib
 
 import envs as E
 import pbs as PBS
 
 __all__ = ["paths_of", "tuner_common_args", "shard_globs", "run_tuner", "qsub_line",
            "write_argv_file", "read_argv_file", "read_json", "write_json", "utc_now",
-           "utc_to_epoch", "elapsed_hours", "mem_to_gb", "job_name", "ToolError"]
+           "utc_to_epoch", "elapsed_hours", "mem_to_gb", "job_name", "ToolError",
+           "node_fault", "read_log_tail", "host_of_log", "checkpoint_problem",
+           "set_aside_bad_checkpoints", "LOG_GRACE_S"]
 
 
 class ToolError(RuntimeError):
@@ -193,3 +202,123 @@ def mem_to_gb(text):
 
 def walltime_seconds(text):
     return PBS.walltime_to_seconds(text)
+
+
+# ---------------------------------------------------------------------------
+# Node faults and checkpoints (D-096, D-097; SPEC block 7, amended 2026-10-18)
+# ---------------------------------------------------------------------------
+
+# A failed trial's job log is awaited this long after the failure is seen,
+# for the scheduler's copy of the log to land (as the bank stage's grace).
+LOG_GRACE_S = 300.0
+
+_SIGBUS = int(getattr(signal, "SIGBUS", 7))
+# SIGBUS seen through an exit code: bash's 128 + n for a direct child (a
+# member's runner), Python's sys.exit(-n) & 0xFF for the tuner's own exit.
+_SIGBUS_EXITS = (128 + _SIGBUS, 256 - _SIGBUS)
+_FS_ERRNOS = tuple(sorted(set(getattr(errno, n) for n in
+                              ("EIO", "ENOTCONN", "ESHUTDOWN", "ESTALE", "EREMOTEIO")
+                              if hasattr(errno, n))))
+_FS_ERRNO_RE = re.compile(r"\[Errno (?:%s)\]" % "|".join(str(n) for n in _FS_ERRNOS))
+_FS_TEXTS = ("Input/output error", "Transport endpoint is not connected",
+             "Cannot send after transport endpoint shutdown", "Stale file handle",
+             "Could not chdir to home directory", "Bus error")
+_RUNNER_EXITED = re.compile(r"^runner exited (-?[0-9]+)$")
+_RUN_ARGV_EXIT = re.compile(r"^RUN_ARGV EXIT: ([0-9]+)\s*$", re.M)
+_RUN_ARGV_HOST = re.compile(r"^RUN_ARGV: host ([^,\s]+)", re.M)
+
+
+def _line_at(text, i):
+    a = text.rfind("\n", 0, i) + 1
+    b = text.find("\n", i)
+    return (text[a:] if b < 0 else text[a:b]).strip()[:200]
+
+
+def node_fault(record_error=None, log_text=None):
+    """The node-fault signature: a short reason when a failure is the
+    node's -- the runner killed by SIGBUS, or a file-system error (EIO,
+    ENOTCONN, ESHUTDOWN, ESTALE, EREMOTEIO, or their texts) -- else None.
+
+    `record_error` is a ledger record's `error` (the tuner writes `runner
+    exited <returncode>`, negative for a signal); `log_text` the job's log.
+    Not node faults: any other exit, SIGKILL (memory, an operator), a full
+    disk (ENOSPC, EDQUOT), a missing file (ENOENT)."""
+    m = _RUNNER_EXITED.match(str(record_error or "").strip())
+    if m and int(m.group(1)) == -_SIGBUS:
+        return "SIGBUS: runner exited %s" % m.group(1)
+    text = log_text or ""
+    for mm in _RUN_ARGV_EXIT.finditer(text):
+        if int(mm.group(1)) in _SIGBUS_EXITS:
+            return "SIGBUS: RUN_ARGV EXIT %s" % mm.group(1)
+    m = _FS_ERRNO_RE.search(text)
+    if m:
+        return _line_at(text, m.start())
+    for t in _FS_TEXTS:
+        i = text.find(t)
+        if i >= 0:
+            return _line_at(text, i)
+    return None
+
+
+def read_log_tail(path, max_bytes=262144):
+    """The last `max_bytes` of a job log as text, or None when it is absent
+    or unreadable."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            n = fh.tell()
+            fh.seek(max(0, n - int(max_bytes)))
+            return fh.read().decode("ascii", "replace")
+    except OSError:
+        return None
+
+
+def host_of_log(text):
+    """The node a run_argv.pbs job ran on, from its `RUN_ARGV: host` line."""
+    m = _RUN_ARGV_HOST.search(text or "")
+    return m.group(1) if m else None
+
+
+def checkpoint_problem(path):
+    """(kind, why) for a training checkpoint, which torch.save writes as a
+    zip archive of stored members with their CRC-32: kind None when the
+    archive opens and every member's CRC matches; "content" when it is not
+    a readable zip archive or a member fails; "io" when this node cannot
+    read the file (an OSError: the file is not judged)."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            bad = z.testzip()
+    except zipfile.BadZipFile as exc:
+        return "content", "not a readable zip archive: %s" % exc
+    except (zlib.error, EOFError, NotImplementedError, ValueError) as exc:
+        return "content", "%s: %s" % (type(exc).__name__, exc)
+    except OSError as exc:
+        return "io", "unreadable here: %s" % exc
+    if bad is not None:
+        return "content", "member %s fails its CRC-32" % bad
+    return None, ""
+
+
+def set_aside_bad_checkpoints(run_dir, log, stage, who):
+    """D-097: every `*_train_ckpt.pt` of `run_dir` whose archive is damaged
+    is moved to `<name>.corrupt<k>` (kept; never deleted), so the job that
+    follows starts from epoch 0; a file this node cannot read is left in
+    place. Returns the paths moved to."""
+    moved = []
+    for p in sorted(glob.glob(os.path.join(glob.escape(run_dir), "*_train_ckpt.pt"))):
+        kind, why = checkpoint_problem(p)
+        if kind is None:
+            continue
+        if kind == "io":
+            log("%s: %s checkpoint %s could not be checked (%s); left in place"
+                % (stage, who, os.path.basename(p), why))
+            continue
+        k = len(glob.glob(glob.escape(p) + ".corrupt*")) + 1
+        dst = "%s.corrupt%d" % (p, k)
+        os.replace(p, dst)
+        log("%s: %s checkpoint %s failed its CRC check (%s); moved aside as %s; it restarts "
+            "from epoch 0" % (stage, who, os.path.basename(p), why, os.path.basename(dst)))
+        moved.append(dst)
+    return moved

@@ -28,8 +28,14 @@ another search refused:
                `max_concurrent_trials` trial jobs at once; a trial whose
                job ends with neither a record nor a refusal is resubmitted
                with --resume up to `trial.max_resubmits` times, then
-               recorded `killed`; a round is complete when every trial of
-               it is ok, failed or killed; the clock (D-090, elapsed) starts
+               recorded `killed`; a trial recorded `failed` is examined
+               (D-096): a node fault -- the runner killed by SIGBUS, or a
+               file-system error in its log -- sets the record aside
+               (`<id>.json.nodefault<k>`) and queues the trial again with
+               --resume, within the same `max_resubmits`, else `killed`;
+               before any submission a checkpoint whose zip CRCs fail is
+               moved aside (`.corrupt<k>`, D-097); a round is complete when
+               every trial of it is ok, failed or killed; the clock (D-090, elapsed) starts
                at round 0's first submission; after a complete round the
                search ends when r == gp_rounds (`rounds`) or the clock
                exceeds `max_total_walltime_h` (`budget`) or the tuner
@@ -43,6 +49,7 @@ Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 import glob
 import os
 import re
+import time
 
 from . import DEPS, Stage
 from . import common as CM
@@ -333,6 +340,13 @@ class SearchStage(Stage):
         dirs = self._dirs(cfg)
         tr = st["sub"]["trials"][tid]
         n = len(tr["jobs"])
+        # D-097: a checkpoint whose zip CRCs fail is moved aside (kept) first,
+        # so the job starts from epoch 0 instead of resuming from bad bytes
+        CM.set_aside_bad_checkpoints(os.path.join(dirs["runs"], tid), pbs.log, self.name,
+                                     "trial %s" % tid[:12])
+        # a trial healed of a node fault goes on with --resume (D-096)
+        if tr.pop("resume_next", False):
+            resume = True
         # a checkpoint left by an earlier job (a --retry after a kill): continue it
         if glob.glob(os.path.join(dirs["runs"], tid, "*_train_ckpt.pt")):
             resume = True
@@ -421,6 +435,14 @@ class SearchStage(Stage):
         rp = self._record_path(cfg, tid)
         if os.path.isfile(rp):
             rec = CM.read_json(rp)
+            if str(rec.get("status", "ok")) == "failed" and s["resubmit_node_faults"]:
+                # D-096: not final until its evidence says it was not the node's fault
+                tr["status"] = "examining"
+                tr["examining_since"] = time.time()
+                log("search: trial %s failed (%s); examining it for a node fault"
+                    % (tid[:12], rec.get("error")))
+                self._examine(cfg, st, tid, log)
+                return
             tr["status"] = str(rec.get("status", "ok"))
             tr["nll"] = rec.get("nll")
             pend = os.path.join(self._dirs(cfg)["pending"], tid + ".json")
@@ -442,6 +464,116 @@ class SearchStage(Stage):
         self._write_killed_record(cfg, st, tid, why)
         tr["status"] = "killed"
         log("search: trial %s recorded killed after %d resubmission(s)" % (tid[:12], tr["resubmits"]))
+
+    # ------------------------------------------- node faults (D-096) ---
+
+    def _latest_log(self, cfg, tid):
+        """(path, text) of the trial's last job log `jobs/<id>.<n>.log`
+        (the highest n), text None when there is none or it is unreadable."""
+        best, best_n = None, -1
+        for p in glob.glob(os.path.join(glob.escape(self._dirs(cfg)["jobs"]), tid + ".*.log")):
+            mid = os.path.basename(p)[len(tid) + 1:-len(".log")]
+            if mid.isdigit() and int(mid) > best_n:
+                best, best_n = p, int(mid)
+        return best, CM.read_log_tail(best)
+
+    def _examine(self, cfg, st, tid, log):
+        """A trial recorded `failed`: a node fault (the record's SIGBUS, or a
+        file-system error in its last job log) is healed; anything else is
+        final. Waits for the log's `RUN_ARGV EXIT:` line up to LOG_GRACE_S."""
+        sub = st["sub"]
+        tr = sub["trials"][tid]
+        dirs = self._dirs(cfg)
+        rp = self._record_path(cfg, tid)
+        pend = os.path.join(dirs["pending"], tid + ".json")
+        if not os.path.isfile(rp):
+            # the record went away (moved by hand): the trial has none, as a kill
+            tr["fault_checked"] = True
+            tr["status"] = "waiting" if os.path.isfile(pend) else "failed"
+            log("search: trial %s has no ledger record any more; %s" % (
+                tid[:12], "queued again" if tr["status"] == "waiting" else "left failed (no pending spec)"))
+            return
+        rec = CM.read_json(rp)
+        if str(rec.get("status", "ok")) != "failed":
+            # the record was replaced meanwhile: it decides, as any record
+            tr["fault_checked"] = True
+            tr.pop("examining_since", None)
+            tr["status"] = str(rec.get("status", "ok"))
+            tr["nll"] = rec.get("nll")
+            return
+        log_path, text = self._latest_log(cfg, tid)
+        why = CM.node_fault(rec.get("error"), text)
+        complete = text is not None and "RUN_ARGV EXIT:" in text
+        since = float(tr.get("examining_since") or time.time())
+        if why is None and not complete and time.time() - since < CM.LOG_GRACE_S:
+            return                       # its log may still be on its way
+        tr["fault_checked"] = True
+        tr.pop("examining_since", None)
+        if why is None:
+            tr["status"] = "failed"
+            tr["nll"] = rec.get("nll")
+            if os.path.isfile(pend):
+                os.remove(pend)
+            log("search: trial %s failed: not a node fault (%s); final" % (tid[:12], rec.get("error")))
+            return
+        self._heal(cfg, st, tid, rec, why, CM.host_of_log(text) or "?", log)
+
+    def _heal(self, cfg, st, tid, rec, why, host, log):
+        """D-096: the record set aside (kept), the pending spec back, and the
+        trial queued again with --resume while resubmissions are left, else
+        the pipeline's `killed` record (revivable by --retry search)."""
+        s = cfg.data["search"]
+        sub = st["sub"]
+        tr = sub["trials"][tid]
+        dirs = self._dirs(cfg)
+        rp = self._record_path(cfg, tid)
+        pend = os.path.join(dirs["pending"], tid + ".json")
+        if not os.path.isfile(pend):
+            if not rec.get("config"):
+                tr["status"] = "failed"
+                log("search: trial %s NODE FAULT on %s (%s), but its record has no configuration "
+                    "and no pending spec is left: final" % (tid[:12], host, why))
+                return
+            CM.write_json(pend, {"trial_id": tid, "campaign": rec.get("campaign"),
+                                 "config": rec["config"]})
+        k = len(glob.glob(glob.escape(rp) + ".nodefault*")) + 1
+        aside = "%s.nodefault%d" % (rp, k)
+        os.replace(rp, aside)
+        tr.setdefault("node_faults", []).append({"host": host, "why": why,
+                                                 "record": os.path.basename(aside),
+                                                 "jobs": list(tr["jobs"]), "utc": CM.utc_now()})
+        sub.setdefault("node_fault_hosts", {})
+        sub["node_fault_hosts"][host] = sub["node_fault_hosts"].get(host, 0) + 1
+        tr.pop("nll", None)
+        n_host = sub["node_fault_hosts"][host]
+        if tr["resubmits"] < int(s["trial"]["max_resubmits"]):
+            tr["resubmits"] += 1
+            tr["status"] = "waiting"
+            tr["resume_next"] = True
+            log("search: trial %s NODE FAULT on %s (%s); record set aside as %s; queued again with "
+                "--resume (%d of %d); %d node fault(s) on %s so far"
+                % (tid[:12], host, why, os.path.basename(aside), tr["resubmits"],
+                   int(s["trial"]["max_resubmits"]), n_host, host))
+            return
+        self._write_killed_record(cfg, st, tid, "killed: node fault on %s (%s) after %d "
+                                                "resubmission(s)" % (host, why, tr["resubmits"]))
+        tr["status"] = "killed"
+        log("search: trial %s NODE FAULT on %s (%s); record set aside as %s; no resubmission "
+            "left: recorded killed; %d node fault(s) on %s so far"
+            % (tid[:12], host, why, os.path.basename(aside), n_host, host))
+
+    def _sweep_failed(self, cfg, st, log):
+        """Every poll: the trials still being examined, and those recorded
+        `failed` without having been examined (before this code existed, or
+        restored by a fresh state)."""
+        for tid, tr in sorted(st["sub"]["trials"].items()):
+            if tr["status"] == "failed" and not tr.get("fault_checked"):
+                tr["status"] = "examining"
+                tr["examining_since"] = time.time()
+                log("search: trial %s is recorded failed and was never examined for a node "
+                    "fault; examining it" % tid[:12])
+            if tr["status"] == "examining":
+                self._examine(cfg, st, tid, log)
 
     def _round_complete(self, st):
         sub = st["sub"]
@@ -567,6 +699,9 @@ class SearchStage(Stage):
                 job = by_id.get(tr["jobs"][-1])
                 if job is not None and job.get("finished"):
                     self._finish_trial_job(cfg, st, pbs, tid, job, log)
+            # D-096: failed trials awaiting their log, and failed trials never examined
+            if s["resubmit_node_faults"]:
+                self._sweep_failed(cfg, st, log)
             # the throttle: fill the free slots with waiting trials, earliest round first
             # (a revived trial of an earlier round after a --retry comes first)
             running = sum(1 for tr in sub["trials"].values() if tr["status"] == "running")
@@ -662,6 +797,11 @@ class SearchStage(Stage):
                     " ".join(str(f) for f in d["split"]["fractions"]),
                     int(s["flow"]["conditioner_hidden_layers"]), int(d["loader"]["buffer_shards"]),
                     int(s["trial"]["ncpus"]), int(s["trial"]["max_resubmits"])),
+                 "node faults (D-096): %s; checkpoints whose zip CRCs fail are moved aside "
+                 "before a submission (D-097)"
+                 % ("a trial failed of SIGBUS or a file-system error is queued again with --resume "
+                    "(within max_resubmits), its record set aside" if s["resubmit_node_faults"]
+                    else "off (search.resubmit_node_faults false): a failed trial is final"),
                  "clock: elapsed from round 0's first submission, cap %s h (D-090)"
                  % (s["max_total_walltime_h"],),
                  "end: finalists --top-k 1 -> %s; artefact %s" % (dirs["finalists"], dirs["complete"])]

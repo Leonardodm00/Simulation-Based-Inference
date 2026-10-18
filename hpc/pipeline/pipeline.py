@@ -3,6 +3,7 @@
 
     python3 pipeline.py run    --config projects/<tag>/<tag>.json [--dry-run]
     python3 pipeline.py status --config projects/<tag>/<tag>.json
+    python3 pipeline.py stop   --config projects/<tag>/<tag>.json [--wait S]
     python3 pipeline.py paths  --config projects/<tag>/<tag>.json
 
 `run` drives the stage graph to its end: a stage whose artefact of record
@@ -10,6 +11,13 @@ exists is skipped, a stage whose dependencies are done is started, running
 stages are polled through the scheduler, and the first refusal stops the run
 with its report. It is resumable: the state file records every job, and a
 re-run re-attaches to them. `run_pipeline.sh` starts it under nohup.
+
+`stop` asks the running sequencer to stop (the file <work_root>/STOP_REQUEST;
+SIGTERM and SIGINT do the same): it stops at its next tick boundary -- after
+the polls and the state's save, never between a submission and its record --
+and its jobs keep running; a re-run re-attaches to them. `--retry <stage>`
+is refused while that stage's jobs are still queued or running, since the
+reset forgets them (amended 2026-10-18).
 
 Exit codes: 0 every stage done or skipped; 2 a configuration refusal (a
 schema problem, a key no built block honours, a stage not built); 3 a stage
@@ -23,6 +31,7 @@ Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 
 import argparse
 import os
+import signal
 import socket
 import sys
 import time
@@ -38,8 +47,13 @@ from state import State     # noqa: E402
 
 LOCK_FILE = "pipeline.lock"
 LOG_FILE = "pipeline.log"
+STOP_FILE = "STOP_REQUEST"
 
 EXIT_OK, EXIT_CONFIG, EXIT_FAILED, EXIT_LOCKED = 0, 2, 3, 4
+
+# A stop asked by SIGTERM / SIGINT while the sequencer runs: honoured at the
+# next tick boundary (a second signal forces the exit at once).
+_STOP = {"how": None}
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +114,60 @@ def release_lock(work_root):
         os.remove(p)
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# A requested stop (amended 2026-10-18): STOP_REQUEST, SIGTERM, SIGINT
+# ---------------------------------------------------------------------------
+
+def _on_signal(signum, frame):
+    if _STOP["how"] is not None:
+        raise SystemExit(128 + signum)      # a second signal: stop now
+    _STOP["how"] = "signal %d" % signum
+
+
+def _stop_requested(work_root):
+    """The stop's origin when one was asked, else None; a stop file is
+    consumed here, so it stops this sequencer once."""
+    if _STOP["how"] is not None:
+        return _STOP["how"]
+    p = os.path.join(work_root, STOP_FILE)
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p) as fh:
+            note = fh.read().strip()
+    except OSError:
+        note = ""
+    try:
+        os.remove(p)
+    except OSError:
+        pass
+    return "%s: %s" % (STOP_FILE, note) if note else STOP_FILE
+
+
+def _sleep(seconds, work_root):
+    """time.sleep(seconds), cut short by a stop request."""
+    end = time.time() + float(seconds)
+    while True:
+        left = end - time.time()
+        if left <= 0:
+            return
+        if _STOP["how"] is not None or os.path.isfile(os.path.join(work_root, STOP_FILE)):
+            return
+        time.sleep(min(1.0, left))
+
+
+def _unfinished_jobs(st, pbs_module):
+    """The ids of the stage's recorded jobs the scheduler does not report
+    finished (an unknown job counts as finished, as everywhere)."""
+    live = []
+    for job in st.get("jobs", []):
+        if job.get("finished"):
+            continue
+        if not pbs_module.status(job["id"]).finished:
+            live.append(job["id"])
+    return live
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +300,20 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
         if name not in [s.name for s in graph]:
             log("REFUSE: --retry names no stage: %s" % name)
             return EXIT_CONFIG
+        # the reset forgets the stage's jobs: refused while any still runs,
+        # or their work would be submitted a second time (amended 2026-10-18)
+        try:
+            live = _unfinished_jobs(state.stage(name), pbs_module)
+        except PBS.SchedulerError as exc:
+            log("REFUSE: --retry %s: cannot tell whether the stage's jobs still run (the "
+                "scheduler did not answer: %s); try again" % (name, exc))
+            return EXIT_CONFIG
+        if live:
+            log("REFUSE: --retry %s: the stage has %d job(s) still queued or running (%s%s); a "
+                "retry forgets them and would submit their work again -- let them end (or qdel "
+                "them) first" % (name, len(live), ", ".join(live[:6]),
+                                 ", ..." if len(live) > 6 else ""))
+            return EXIT_CONFIG
         state.reset_stage(name)
         log("%s reset to pending (--retry)" % name)
 
@@ -287,7 +369,19 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
         os.makedirs(work_root)
     if not acquire_lock(work_root, log, break_lock=break_lock):
         return EXIT_LOCKED
+    old_handlers = {}
+    _STOP["how"] = None
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            old_handlers[sig] = signal.signal(sig, _on_signal)
+        except (ValueError, OSError):      # not the main thread: no handler, no harm
+            pass
     try:
+        stale = os.path.join(work_root, STOP_FILE)
+        if os.path.isfile(stale):
+            os.remove(stale)
+            log("an earlier stop request (%s) was removed: it was for a sequencer that has "
+                "already stopped" % stale)
         refusals = _refusals(cfg, graph, state)
         if refusals:
             for line in refusals:
@@ -370,8 +464,24 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
             if max_ticks is not None and ticks >= max_ticks:
                 log("tick limit %d reached; stopping (resumable)" % max_ticks)
                 return EXIT_OK
-            time.sleep(float(poll_seconds))
+            # a stop is honoured here only: after the polls and the state's save
+            how = _stop_requested(work_root)
+            if how is None:
+                _sleep(poll_seconds, work_root)
+                how = _stop_requested(work_root)
+            if how is not None:
+                n_live = sum(1 for s_ in graph for j in state.stage(s_.name).get("jobs", [])
+                             if not j.get("finished"))
+                log("stopped on request (%s); resumable: %d job(s) still queued or running "
+                    "keep running" % (how, n_live))
+                return EXIT_OK
     finally:
+        for sig, h in old_handlers.items():
+            try:
+                signal.signal(sig, h)
+            except (ValueError, OSError):
+                pass
+        _STOP["how"] = None
         release_lock(work_root)
 
 
@@ -425,6 +535,46 @@ def cmd_status(args):
     return EXIT_OK
 
 
+def cmd_stop(args):
+    """Ask the running sequencer to stop at its next tick boundary; with
+    --wait S, wait up to S seconds for its lock to go."""
+    cfg = _load(args.config)
+    if cfg is None:
+        return EXIT_CONFIG
+    work_root = cfg.data["paths"]["work_root"]
+    log = Log(os.path.join(work_root, LOG_FILE) if os.path.isdir(work_root) else None)
+    lock = os.path.join(work_root, LOCK_FILE)
+    if not os.path.isfile(lock):
+        log("stop: no sequencer is running (no lock at %s); nothing to stop" % lock)
+        return EXIT_OK
+    with open(lock) as fh:
+        tokens = fh.read().split()
+    pid = int(tokens[0]) if tokens and tokens[0].isdigit() else -1
+    host = tokens[1] if len(tokens) > 1 else "?"
+    if host == socket.gethostname() and not _pid_alive(pid):
+        log("stop: the lock names pid %d on %s, which is not running; nothing to stop (the next "
+            "start replaces the lock)" % (pid, host))
+        return EXIT_OK
+    p = os.path.join(work_root, STOP_FILE)
+    with open(p, "w") as fh:
+        fh.write("asked %s by pid %d on %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                                 os.getpid(), socket.gethostname()))
+    log("stop: requested (%s): the sequencer (pid %d on %s) stops at its next tick boundary; "
+        "its jobs keep running" % (p, pid, host))
+    if not args.wait:
+        return EXIT_OK
+    end = time.time() + float(args.wait)
+    while time.time() < end:
+        if not os.path.isfile(lock):
+            log("stop: the sequencer has stopped (its lock is gone)")
+            return EXIT_OK
+        time.sleep(1.0)
+    log("stop: the sequencer still holds %s after %g s (it stops at its next tick, within "
+        "--poll-seconds of its last poll; a sequencer started before 2026-10-18 ignores the "
+        "request)" % (lock, float(args.wait)))
+    return EXIT_LOCKED
+
+
 def cmd_paths(args):
     cfg = _load(args.config)
     if cfg is None:
@@ -456,13 +606,17 @@ def build_parser():
     q.add_argument("--max-ticks", type=int, default=None,
                    help="stop after this many polls (tests; resumable)")
     common(sub.add_parser("status"))
+    q = common(sub.add_parser("stop"))
+    q.add_argument("--wait", type=float, default=0.0,
+                   help="wait up to this many seconds for the sequencer to stop")
     common(sub.add_parser("paths"))
     return ap
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    return {"run": cmd_run, "status": cmd_status, "paths": cmd_paths}[args.command](args)
+    return {"run": cmd_run, "status": cmd_status, "stop": cmd_stop,
+            "paths": cmd_paths}[args.command](args)
 
 
 if __name__ == "__main__":

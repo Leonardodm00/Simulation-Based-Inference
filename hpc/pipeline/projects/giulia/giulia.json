@@ -1,6 +1,6 @@
 {
-  "_comment": "The Giulia data set's pipeline configuration, v6 (2026-10-18; v6: the self-healing simulated bank, bank.verify and bank.max_rerun_rounds, D-094/D-095; v5 2026-10-16: the queue of the trial jobs and of the member jobs, search.trial.queue and best_fit.queue, both cpu -- the queue whose cap is 300:00:00 per job; every NEEDS-CODE note below is built by block 7, the search and best-fit stages; v4 2026-10-15: the search's wall budget 400 h, D-090; the file lives in the project folder hpc/pipeline/projects/giulia/, D-091; v3: the finalist fitted as an ensemble of 10, D-089). One file per data set; every key is required; a key starting with '_' documents the key after it and is ignored. v1 (2026-10-14, log D-085): the direction set by the user -- an expressive NPE network, a large GP search (initial design and guided search) and a large training budget -- with Claude's values; amended 2026-10-15 by D-086 (head_pool_ops searched). v2: the values the user set on 2026-10-15 (D-088) -- the split 85/10/5, 48 cores per trial, one best-fit seed for now, 50 initial points, 20 GP rounds of 10, 20 epochs per trial; every other value is still Claude's, for the user to inspect before any submission. Keys marked NEEDS-CODE were honoured only once the named block of claude/PLAN_2026-10-13_giulia_pipeline.md was built (the driver refuses a config it cannot honour); since block 7 (2026-10-16) every key is honoured.",
-  "config_version": 6,
+  "_comment": "The Giulia data set's pipeline configuration, v7 (2026-10-18; v7: a trial or a member that failed of a node fault is resubmitted, search.resubmit_node_faults and best_fit.resubmit_node_faults, D-096; v6: the self-healing simulated bank, bank.verify and bank.max_rerun_rounds, D-094/D-095; v5 2026-10-16: the queue of the trial jobs and of the member jobs, search.trial.queue and best_fit.queue, both cpu -- the queue whose cap is 300:00:00 per job; every NEEDS-CODE note below is built by block 7, the search and best-fit stages; v4 2026-10-15: the search's wall budget 400 h, D-090; the file lives in the project folder hpc/pipeline/projects/giulia/, D-091; v3: the finalist fitted as an ensemble of 10, D-089). One file per data set; every key is required; a key starting with '_' documents the key after it and is ignored. v1 (2026-10-14, log D-085): the direction set by the user -- an expressive NPE network, a large GP search (initial design and guided search) and a large training budget -- with Claude's values; amended 2026-10-15 by D-086 (head_pool_ops searched). v2: the values the user set on 2026-10-15 (D-088) -- the split 85/10/5, 48 cores per trial, one best-fit seed for now, 50 initial points, 20 GP rounds of 10, 20 epochs per trial; every other value is still Claude's, for the user to inspect before any submission. Keys marked NEEDS-CODE were honoured only once the named block of claude/PLAN_2026-10-13_giulia_pipeline.md was built (the driver refuses a config it cannot honour); since block 7 (2026-10-16) every key is honoured.",
+  "config_version": 7,
   "dataset": "giulia",
 
   "_paths": "Where everything lives on davinci (absolute; no '~').",
@@ -123,7 +123,9 @@
     "max_total_walltime_h": 400,
     "walltime_reading": "elapsed",
     "_resubmit_killed": "A trial killed at its walltime is resubmitted with --resume (block 6), at most max_resubmits times; then it is recorded as killed.",
-    "resubmit_killed": true
+    "resubmit_killed": true,
+    "_resubmit_node_faults": "D-096 (the user, 2026-10-18, after three trials died on dvnode012 when it lost the home file system): a trial recorded failed whose runner was killed by SIGBUS, or whose job log shows a file-system error (EIO, ENOTCONN, ESHUTDOWN, ESTALE, EREMOTEIO), is a node fault, not a result: its record is set aside as <id>.json.nodefault<k> and the trial is queued again with --resume, within trial.max_resubmits; then it is recorded killed (revivable by --retry search). false: a failed trial is final, as before D-096.",
+    "resubmit_node_faults": true
   },
 
   "_best_fit": "S8, the finalist (the search's lowest report-split NLL) fitted as an ensemble of M_ens = 10 members (the user, D-089), combined as the uniform mixture q_bar(theta | x) = (1/10) sum_m q_omega_m(theta | h_psi_m(x)). Members are independent (encoder, flow) pairs trained with the long budget, one job each. split_seed: the one donor split all members share (D-088 'one seed', read by Claude as one split; to confirm) -- seed 1, a fresh split, since seed 0 is the search's, on which the winner was chosen, so its report NLL there is biased low; member_seeds: the members' training seeds (initialisation, batch order). With one shared split the ensemble's report NLL follows from the members' per-row NLL files (run_joint_arms.py:628-633) by a log-sum-exp, with no rerun. About 5-13 days per member for a costliest-size winner without an early stop, ten nodes at once, 61-145 k core-hours in all [estimate, as for the trial walltime]; past the 300 h walltime a member resumes (block 6). NEEDS-CODE: block 6 (passes, patience_epochs, a split seed apart from the training seed), block 7 (the members, the ensemble NLL).",
@@ -140,7 +142,9 @@
     "mem": "200gb",
     "walltime": "300:00:00",
     "queue": "cpu",
-    "max_resubmits": 2
+    "max_resubmits": 2,
+    "_resubmit_node_faults": "D-096 applied to the members (Claude's reading, to confirm): a member whose job failed of a node fault (SIGBUS, or a file-system error in its log) is resubmitted with --resume within max_resubmits instead of failing the stage as a refusal. false: such a member fails the stage, as before.",
+    "resubmit_node_faults": true
   },
 
   "_loader": "D-084: the runner streams the bank through a buffer of this many shards (10,000 rows each, about 0.7 GB of windows per shard).",

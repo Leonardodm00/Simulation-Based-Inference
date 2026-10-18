@@ -6,7 +6,12 @@
 #   bash run_pipeline.sh --project <tag> --dry-run      # the stage table and every qsub line; submits nothing
 #   bash run_pipeline.sh --project <tag>                # starts the sequencer under nohup and returns
 #   bash run_pipeline.sh --project <tag> --status       # the stages, their jobs, the last events
+#   bash run_pipeline.sh --project <tag> --stop [--wait S]  # the sequencer stops at its next tick; its jobs keep running
 #   bash run_pipeline.sh --project <tag> --foreground   # the sequencer in this shell (tests, debugging)
+#
+# --stop writes <work_root>/STOP_REQUEST (SIGTERM does the same): the sequencer
+# stops after its polls and the state's save, never between a submission and
+# its record; a re-run re-attaches to the jobs (2026-10-18).
 #
 # --project <tag> names hpc/pipeline/projects/<tag>/<tag>.json; --config <path>
 # names any configuration file. Anything else on the line goes to
@@ -41,8 +46,9 @@ while [ $# -gt 0 ]; do
         --config)     shift; CONFIG="${1:-}" ;;
         --dry-run)    MODE="dry-run" ;;
         --status)     MODE="status" ;;
+        --stop)       MODE="stop" ;;
         --foreground) MODE="foreground" ;;
-        -h|--help)    sed -n '2,29p' "$HERE/run_pipeline.sh"; exit 0 ;;
+        -h|--help)    sed -n '2,34p' "$HERE/run_pipeline.sh"; exit 0 ;;
         *)            PASS+=("$1") ;;
     esac
     shift || true
@@ -76,6 +82,8 @@ case "$MODE" in
         exec python3 "$HERE/pipeline.py" run --config "$CONFIG" --dry-run ${PASS[@]+"${PASS[@]}"} ;;
     status)
         exec python3 "$HERE/pipeline.py" status --config "$CONFIG" ;;
+    stop)
+        exec python3 "$HERE/pipeline.py" stop --config "$CONFIG" ${PASS[@]+"${PASS[@]}"} ;;
     foreground)
         exec python3 "$HERE/pipeline.py" run --config "$CONFIG" ${PASS[@]+"${PASS[@]}"} ;;
     start)

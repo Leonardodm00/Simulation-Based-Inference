@@ -14,6 +14,7 @@ resources live in its folder `projects/<tag>/` (D-091). The specification is
 bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run    # 1. read it: the stage table, every qsub line, every REFUSE line
 bash hpc/pipeline/run_pipeline.sh --project giulia              # 2. the run: starts the sequencer under nohup and returns
 bash hpc/pipeline/run_pipeline.sh --project giulia --status     # 3. any time: the stages, their jobs, the last events
+bash hpc/pipeline/run_pipeline.sh --project giulia --stop --wait 180   # the sequencer stops at its next tick; the jobs keep running
 ```
 
 `--project <tag>` names `projects/<tag>/<tag>.json`; `--config <path>` names
@@ -31,6 +32,17 @@ every stage `done` or `skipped` at the end; the log's last line is
 `PIPELINE DONE: every stage done or skipped`. A stop is
 `STOP: stage <name> failed: <reason>` (exit 3): fix the cause, then re-run
 the same command with `--retry <name>`.
+
+To load new code into a running pipeline (since 2026-10-18): `--stop`
+writes `<work_root>/STOP_REQUEST` (a `kill <pid>` of the sequencer does the
+same); the sequencer stops after its polls and the state's save -- never
+between a submission and its record -- logs `stopped on request (...);
+resumable: <n> job(s) still queued or running keep running` and releases
+its lock; `--wait S` waits for that. Pull, then start it again (with
+`--accept-config-change` when the configuration changed): it re-attaches to
+its jobs. `--retry <stage>` is refused while that stage's jobs still run
+(`REFUSE: --retry <stage>: the stage has <n> job(s) still queued or
+running ...`): the reset forgets them and would submit their work again.
 
 ## The stages
 
@@ -116,7 +128,16 @@ the resources of `search.trial`). Its phases, logged as `search: ...` lines:
    the GP refitted on the ledger before each round), at most
    `max_concurrent_trials` trial jobs at once; a trial whose job ends with
    no ledger record is resubmitted with `--resume` up to
-   `search.trial.max_resubmits` times, then recorded `killed`; the elapsed
+   `search.trial.max_resubmits` times, then recorded `killed`; a trial
+   recorded `failed` whose runner was killed by SIGBUS or whose job log
+   shows a file-system error (EIO, ENOTCONN, ESHUTDOWN, ESTALE, EREMOTEIO)
+   is a node fault (D-096, `search.resubmit_node_faults`): `search: trial
+   <id> NODE FAULT on <node> (<why>); record set aside as <id>.json.
+   nodefault<k>; queued again with --resume (<r> of <max>)`, within the
+   same `max_resubmits`, then `killed`; any other failure is final,
+   `search: trial <id> failed: not a node fault (...); final`; before any
+   submission a checkpoint whose zip CRCs fail is moved aside (`<name>.
+   corrupt<k>`, D-097) and the trial starts from epoch 0; the elapsed
    clock (D-090) starts at round 0's first submission and no new round
    starts past `max_total_walltime_h`;
 3. `finalists --top-k 1` and `SEARCH_COMPLETE.json` (`ended_by` rounds,
@@ -132,7 +153,8 @@ refused; a `--retry search` after a stop revives the trials recorded
 pass `--accept-config-change`). The best-fit stage reads the finalist from `SEARCH_COMPLETE.json`,
 submits one job per `best_fit.member_seeds` entry on the split of
 `best_fit.split_seed` (a member whose record exists is not re-run; a member
-killed is resubmitted with `--resume` up to `best_fit.max_resubmits` times),
+killed, or failed of a node fault (D-096, `best_fit.resubmit_node_faults`),
+is resubmitted with `--resume` up to `best_fit.max_resubmits` times),
 then computes the ensemble's report-split NLL (`tools/ensemble_nll.py`,
 D-089) and writes `<paths.runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`.
 
@@ -140,7 +162,10 @@ D-089) and writes `<paths.runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`.
 
 `projects/<tag>/<tag>.json` -- every key required, documented in the file by
 the `_<key>` string beside it; the schema is `specs/SPEC.md` sec. 3.1 and
-`config.py`. The Giulia file is config v6 (2026-10-18): v5's values plus the
+`config.py`. The Giulia file is config v7 (2026-10-18): v6's values plus
+`search.resubmit_node_faults` and `best_fit.resubmit_node_faults`, both
+true (D-096); a run started under v6 needs `--accept-config-change` once.
+v6 (2026-10-18): v5's values plus the
 self-healing bank's keys (`bank.verify`: 8 cores, 16gb, 02:00:00;
 `bank.max_rerun_rounds`: 2; D-094). v5 (2026-10-16): v4's values (the
 search's wall budget at 400 h, D-090) plus the queue of the trial and
@@ -196,6 +221,8 @@ cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia
 #    `sim_bank: quarantine task <i> ...`, `sim_bank: rerun round 1 of at most 2: ...`, then the round's lines
 #    again; a dropped gate: `sim_bank: the gate <id> never ran (...)`, then after VERIFY OK the gate alone,
 #    `search: round 0 proposed` / `submitted trial ...`, `search: round r complete (...)`,
+#    a node fault: `search: trial <id> NODE FAULT on <node> (...); ... queued again with --resume (r of 2)`,
+#    a checkpoint moved aside: `search: trial <id> checkpoint ... failed its CRC check (...)`,
 #    `search: SEARCH COMPLETE (...)`, `best_fit: BEST FIT COMPLETE: ...`, `PIPELINE DONE: every stage done or skipped`
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --status; tail -n 5 /davinci-1/home/ldellamea/pipeline/giulia/pipeline.log
 ```
@@ -214,6 +241,7 @@ python3 hpc/pipeline/tests/test_smoke_pipeline.py      # block 1, about 25 s, st
 python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 2 min, needs the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 7 s, the same
 python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
+python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults and checkpoints, block 1's stop and retry guard, about 6 min, the same
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 ```
 
@@ -240,5 +268,5 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
 | 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |
 | 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch` | built 2026-10-15, smoke-tested |
-| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5 | built 2026-10-16, smoke-tested |
+| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) |
 | 8 | end to end on the stand-in (the real bank tools, tuner and runner; 11 jobs; the sequencer stopped and re-run); the davinci lines above | rehearsed 2026-10-16 |

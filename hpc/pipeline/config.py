@@ -24,7 +24,7 @@ import re
 __all__ = ["Config", "ConfigError", "load_config", "unhonoured_keys",
            "SCHEMA", "NEEDS_CODE", "CONFIG_VERSION"]
 
-CONFIG_VERSION = 6
+CONFIG_VERSION = 7
 
 _WALLTIME = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
 _MEM = re.compile(r"^[0-9]+(kb|mb|gb|tb)$")
@@ -122,6 +122,7 @@ SCHEMA = (
     ("search.max_total_walltime_h", "float>0_or_null"),
     ("search.walltime_reading", "elapsed"),
     ("search.resubmit_killed", "bool"),
+    ("search.resubmit_node_faults", "bool"),
     ("best_fit.split_seed", "int>=0"),
     ("best_fit.member_seeds", "list_int_distinct_nonempty"),
     ("best_fit.passes", "float>0"),
@@ -133,6 +134,7 @@ SCHEMA = (
     ("best_fit.walltime", "walltime"),
     ("best_fit.queue", "str"),
     ("best_fit.max_resubmits", "int>=0"),
+    ("best_fit.resubmit_node_faults", "bool"),
     ("loader.buffer_shards", "int>=1"),
 )
 

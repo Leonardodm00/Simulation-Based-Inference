@@ -262,8 +262,8 @@ def test_known_answer():
         assert committed["sim_dir"] == g.data["sim"]["sim_main"]
         assert committed["freeze_path"] == g.data["freeze"]["out"]
         assert committed["plan_out"] == "export_windows/giulia/bank_plan.json"
-        # config v6: the verification job and the rerun budget (D-094)
-        assert g.data["config_version"] == 6
+        # config v6: the verification job and the rerun budget (D-094); v7 since D-096
+        assert g.data["config_version"] == 7
         assert b["verify"] == {"ncpus": 8, "mem": "16gb", "walltime": "02:00:00"}, b["verify"]
         assert b["max_rerun_rounds"] == 2
     finally:
