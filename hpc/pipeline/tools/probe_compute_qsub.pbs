@@ -1,0 +1,77 @@
+#!/bin/bash
+#PBS -N qprobe
+#PBS -l select=1:ncpus=1:mem=1gb
+#PBS -l walltime=00:10:00
+#PBS -j oe
+# =============================================================================
+# probe_compute_qsub.pbs -- can a job on a COMPUTE node drive other jobs?
+#
+# The pipeline's sequencer is to run as a chain of PBS jobs, never as a
+# process on a login node (D-098, 2026-10-18). From a compute node it needs
+# qsub (with -W depend=afterany:<job> and -h), qstat -x -f, qselect -N and
+# qdel. This job checks the four and leaves the answer in its log. It
+# touches nothing of the pipeline: it submits two one-minute jobs of its own
+# (a held one it deletes at once, and a child that runs after it ends).
+#
+# Submit from ANY login node (the -o path is absolute, so the log is found):
+#   qsub -q cpu -o $HOME/probe_compute_qsub.log ~/SBI/hpc/pipeline/tools/probe_compute_qsub.pbs
+# Then, a few minutes later, from any login node:
+#   cat $HOME/probe_compute_qsub.log $HOME/probe_compute_qsub_child.log
+#
+# Pass lines (each must APPEAR): PROBE: QSUB OK, PROBE: QSTAT OK,
+# PROBE: QSELECT OK, PROBE: QDEL OK, PROBE: DONE in the job's log, and
+# CHILD: ran on <node> in the child's log (afterany released the child).
+#
+# Pure ASCII, LF only.
+# =============================================================================
+set -u
+
+Q="${PBS_QUEUE:-cpu}"
+ME="${PBS_JOBID:-}"
+CHILD_SH="$HOME/probe_compute_qsub_child.sh"
+CHILD_LOG="$HOME/probe_compute_qsub_child.log"
+
+echo "PROBE: host $(hostname), job ${ME:-<none>}, queue $Q, $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+for c in qsub qstat qselect qdel; do
+    printf 'PROBE: %-8s %s\n' "$c" "$(command -v "$c" 2>/dev/null || echo MISSING)"
+done
+
+printf '#!/bin/bash\necho "CHILD: ran on $(hostname) at $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ), job ${PBS_JOBID:-}"\n' > "$CHILD_SH"
+rm -f "$CHILD_LOG"
+
+# 1. qsub from this node, chained after this job (afterany)
+if C1=$(qsub -N qprobe_c -q "$Q" -l select=1:ncpus=1:mem=1gb -l walltime=00:05:00 -j oe \
+            -o "$CHILD_LOG" -W depend=afterany:"$ME" "$CHILD_SH" 2>&1); then
+    echo "PROBE: QSUB OK: $C1 (afterany:$ME)"
+else
+    echo "PROBE: QSUB FAILED: $C1"
+fi
+
+# 2. qstat -x -f of this job
+if S=$(qstat -x -f "$ME" 2>&1); then
+    echo "PROBE: QSTAT OK: $(printf '%s\n' "$S" | grep -E 'job_state' | head -1 | tr -s ' ')"
+else
+    echo "PROBE: QSTAT FAILED: $S"
+fi
+
+# 3. qselect by name
+if L=$(qselect -u "${USER:-$(id -un)}" -N qprobe_c 2>&1) && [ -n "$L" ]; then
+    echo "PROBE: QSELECT OK: $(printf '%s' "$L" | tr '\n' ' ')"
+else
+    echo "PROBE: QSELECT FAILED: ${L:-<empty>}"
+fi
+
+# 4. a held job, deleted at once
+if C2=$(qsub -h -N qprobe_h -q "$Q" -l select=1:ncpus=1:mem=1gb -l walltime=00:01:00 -j oe \
+            -o /dev/null "$CHILD_SH" 2>&1); then
+    if D=$(qdel "$C2" 2>&1); then
+        echo "PROBE: QDEL OK: $C2"
+    else
+        echo "PROBE: QDEL FAILED: $D"
+    fi
+else
+    echo "PROBE: QSUB -h FAILED: $C2"
+fi
+
+sleep 20
+echo "PROBE: DONE: this job ends at $(date -u +%Y-%m-%dT%H:%M:%SZ); its child should run after it"

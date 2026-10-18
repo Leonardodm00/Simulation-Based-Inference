@@ -21,7 +21,14 @@ FAKE_PBS_FAIL_ONCE=<i>[,<j>...] makes array element i fail to start the
 first time an array runs it (code -2, PBS's JOB_EXEC_FAIL2, and no log:
 davinci's element 63 of 2026-10-16); later arrays run it (a spool flag).
 
-`qstat -x -f <id>` prints a PBS-like record: job_state (Q, R, B, F),
+`-W depend=afterany:<id>` waits for that job to finish and then runs,
+whatever its exit status (a plain job: the sequencer's driver chain, block 1
+amended 2026-10-18). `-h` submits the job held (state H). `qdel <id>` ends
+a queued or held job unrun (state F, no Exit_status, the comment `Job deleted
+by user`) and kills a running one (Exit_status 271). `qselect [-N name] [-s
+states] [-u user]` prints the ids of the matching jobs, one per line.
+
+`qstat -x -f <id>` prints a PBS-like record: job_state (Q, H, R, B, F),
 Exit_status when finished, resources_used.walltime, array_state_count for
 arrays. An unknown id prints `qstat: Unknown Job Id <id>` and exits 153.
 
@@ -98,6 +105,7 @@ def _walltime(seconds):
 
 def cmd_qsub(argv):
     name, queue, out, vars_, depend, array = "job", "", "", {}, None, None
+    depend_kind, held = "afterok", False
     resources = []
     script = None
     i = 0
@@ -113,6 +121,8 @@ def cmd_qsub(argv):
             array = argv[i + 1]; i += 2
         elif a == "-j":
             i += 2
+        elif a == "-h":
+            held = True; i += 1
         elif a == "-o":
             out = argv[i + 1]; i += 2
         elif a == "-v":
@@ -127,6 +137,8 @@ def cmd_qsub(argv):
             w = argv[i + 1]
             if w.startswith("depend=afterok:"):
                 depend = w[len("depend=afterok:"):]
+            elif w.startswith("depend=afterany:"):
+                depend, depend_kind = w[len("depend=afterany:"):], "afterany"
             i += 2
         elif a.startswith("-"):
             sys.stderr.write("fake qsub: unknown option %s\n" % a)
@@ -149,7 +161,8 @@ def cmd_qsub(argv):
     rec = {"num": num, "id": job_id, "name": name, "queue": queue,
            "resources": resources, "script": os.path.abspath(script),
            "cwd": os.getcwd(), "out": out, "vars": vars_, "depend": depend,
-           "indices": indices, "state": "Q", "exit_status": None,
+           "depend_kind": depend_kind,
+           "indices": indices, "state": "H" if held else "Q", "exit_status": None,
            "started": None, "finished": None, "comment": "",
            "elements": {}}
     _save(rec)
@@ -164,8 +177,16 @@ def cmd_qsub(argv):
 # the detached runner
 # ---------------------------------------------------------------------------
 
-def _wait_dependency(dep):
-    """Block until the dependency finished; True iff it exited 0 -- or, for
+def _deleted(num):
+    try:
+        return _load(num)["state"] == "F"
+    except (OSError, ValueError):
+        return True
+
+
+def _wait_dependency(dep, kind="afterok", self_num=None):
+    """Block until the dependency finished; afterany: True once it finished;
+    afterok: True iff it exited 0 -- or, for
     an array dependency, True once it finished (ordering only, D-006), unless
     one of the two switches of the module docstring says otherwise."""
     num = int(dep.split("[")[0].split(".")[0])
@@ -175,7 +196,11 @@ def _wait_dependency(dep):
             d = _load(num)
         except (OSError, ValueError):
             return False
+        if self_num is not None and _deleted(self_num):
+            return False
         if d["state"] == "F":
+            if kind == "afterany":
+                return True
             if not is_array:
                 return d["exit_status"] == 0
             if DROP_DEPENDENTS:
@@ -239,7 +264,14 @@ def _wait_with_walltime(proc, rec):
 def cmd_run(num):
     rec = _load(num)
     time.sleep(DELAY)
-    if rec["depend"] and not _wait_dependency(rec["depend"]):
+    while _load(num)["state"] == "H":           # held: wait for a release or a qdel
+        time.sleep(0.1)
+    if _deleted(num):
+        return 0
+    rec = _load(num)
+    if rec["depend"] and not _wait_dependency(rec["depend"], rec.get("depend_kind", "afterok"), num):
+        if _deleted(num):
+            return 0
         if "[" in rec["depend"]:
             # ended unrun, as davinci ended the bank's gate (2026-10-16): no exit status, no log
             rec["state"], rec["exit_status"] = "F", None
@@ -252,6 +284,9 @@ def cmd_run(num):
         rec["started"] = rec["finished"] = time.time()
         _save(rec)
         return 0
+    if _deleted(num):
+        return 0
+    rec = _load(num)
     rec["state"] = "B" if rec["indices"] else "R"
     rec["started"] = time.time()
     _save(rec)
@@ -274,10 +309,77 @@ def cmd_run(num):
         # leaves the array's Exit_status at the others' maximum
         rec["exit_status"] = max(codes.values())
     else:
-        rec["exit_status"] = _wait_with_walltime(_run_one(rec, None), rec)
+        proc = _run_one(rec, None)
+        rec["pgid"] = proc.pid
+        _save(rec)
+        rec["exit_status"] = _wait_with_walltime(proc, rec)
+        if _load(num).get("comment", "").startswith("Job deleted by user"):
+            rec["exit_status"], rec["comment"] = 271, "Job deleted by user (running)"
     rec["state"] = "F"
     rec["finished"] = time.time()
     _save(rec)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# qdel, qselect
+# ---------------------------------------------------------------------------
+
+def cmd_qdel(argv):
+    rc = 0
+    for job_id in [a for a in argv if not a.startswith("-")]:
+        try:
+            num = int(job_id.split("[")[0].split(".")[0])
+            rec = _load(num)
+        except (ValueError, OSError):
+            sys.stderr.write("qdel: Unknown Job Id %s\n" % job_id)
+            rc = 153
+            continue
+        if rec["state"] == "F":
+            continue
+        if rec["state"] in ("Q", "H"):
+            rec["state"], rec["exit_status"] = "F", None
+            rec["comment"] = "Job deleted by user"
+            rec["finished"] = time.time()
+            _save(rec)
+            continue
+        rec["comment"] = "Job deleted by user"
+        _save(rec)
+        pgid = rec.get("pgid")
+        if pgid:
+            try:
+                os.killpg(int(pgid), 9)
+            except OSError:
+                pass
+    return rc
+
+
+def cmd_qselect(argv):
+    name, states, i = None, None, 0
+    while i < len(argv):
+        if argv[i] == "-N":
+            name = argv[i + 1]; i += 2
+        elif argv[i] == "-s":
+            states = argv[i + 1]; i += 2
+        elif argv[i] == "-u":
+            i += 2                              # one user in the tests
+        else:
+            i += 1
+    out = []
+    for p in sorted(os.listdir(_spool())):
+        if not p.endswith(".json") or not p[:-5].isdigit():
+            continue
+        try:
+            rec = _load(int(p[:-5]))
+        except (OSError, ValueError):
+            continue
+        if name is not None and rec["name"] != name:
+            continue
+        if states is not None and rec["state"] not in states:
+            continue
+        out.append((rec["num"], rec["id"]))
+    for _, job_id in sorted(out):
+        print(job_id)
     return 0
 
 
@@ -325,7 +427,11 @@ def main(argv):
         return cmd_qsub(argv[1:])
     if argv and argv[0] == "qstat":
         return cmd_qstat(argv[1:])
-    sys.stderr.write("fake_pbs.py: qsub ... | qstat ... | --run N\n")
+    if argv and argv[0] == "qdel":
+        return cmd_qdel(argv[1:])
+    if argv and argv[0] == "qselect":
+        return cmd_qselect(argv[1:])
+    sys.stderr.write("fake_pbs.py: qsub ... | qstat ... | qdel ... | qselect ... | --run N\n")
     return 2
 
 
