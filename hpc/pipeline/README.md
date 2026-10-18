@@ -12,37 +12,66 @@ resources live in its folder `projects/<tag>/` (D-091). The specification is
 
 ```
 bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run    # 1. read it: the stage table, every qsub line, every REFUSE line
-bash hpc/pipeline/run_pipeline.sh --project giulia              # 2. the run: starts the sequencer under nohup and returns
-bash hpc/pipeline/run_pipeline.sh --project giulia --status     # 3. any time: the stages, their jobs, the last events
+bash hpc/pipeline/run_pipeline.sh --project giulia              # 2. the run: submits the sequencer's first PBS job and returns
+bash hpc/pipeline/run_pipeline.sh --project giulia --status     # 3. any time: the stages, their jobs, the sequencer's jobs
 bash hpc/pipeline/run_pipeline.sh --project giulia --stop --wait 180   # the sequencer stops at its next tick; the jobs keep running
 ```
 
+**Nothing runs on a login node (D-098, 2026-10-18).** The user's logins land
+on any login node, so no step may depend on one: the sequencer is a chain of
+PBS jobs on compute nodes, named `pl_<tag>` (the configuration's `driver`
+block: queue, cores, memory, walltime, the seconds between two ticks). Each
+of them submits its successor first (`-W depend=afterany`: it starts when
+this one ends, whatever ended it), ticks until its walltime less a margin,
+and exits; the last one deletes its successor. Every command above, and
+every line below, works from any login node and leaves nothing running
+there: they submit, read, and write files on the shared file system. Never
+start the sequencer in the background on a login node (`nohup`, `&`), and
+never manage it with `ps` or `kill`: use `--status` and `--stop`.
+
 `--project <tag>` names `projects/<tag>/<tag>.json`; `--config <path>` names
-any configuration. The sequencer runs on the login node under the
-configuration's `envs.extract` conda environment and needs only Python's
-standard library. Further options go through to `pipeline.py run`:
+any configuration. The commands and the sequencer's jobs run under the
+configuration's `envs.extract` conda environment and need only Python's
+standard library. Further options go to the first sequencer job:
 `--retry <stage>` (a stage recorded as failed is reset to pending),
 `--accept-config-change` (continue a run under an edited configuration),
-`--break-lock` (a lock left by a sequencer on another host), `--poll-seconds
-N` (default 60).
+`--break-lock` (replace a lock at once instead of proving it stale).
 
 Pass lines, as lines that must appear: the dry run ends WITHOUT a `REFUSE:`
-line and exits 0; the start prints `started : pid <n>`; `--status` shows
-every stage `done` or `skipped` at the end; the log's last line is
-`PIPELINE DONE: every stage done or skipped`. A stop is
-`STOP: stage <name> failed: <reason>` (exit 3): fix the cause, then re-run
-the same command with `--retry <name>`.
+line, prints `the sequencer: PBS jobs named pl_<tag> ...` and exits 0; the
+start prints `SUBMITTED the sequencer: job <id> (pl_<tag>)`; the log then
+shows `driver <id> on <node>: started; its successor <id> waits for it
+(afterany)` and `sequencer started: job <id> on <node>`; `--status` lists
+`sequencer jobs (pl_<tag>): <id> R, <id> H` while it runs; the log's last
+lines at the end are `PIPELINE DONE: every stage done or skipped` and
+`driver <id>: the chain ends (done, exit 0)`. A stop is
+`STOP: stage <name> failed: <reason>` (exit 3): fix the cause, then submit
+again with `--retry <name>`.
 
-To load new code into a running pipeline (since 2026-10-18): `--stop`
-writes `<work_root>/STOP_REQUEST` (a `kill <pid>` of the sequencer does the
-same); the sequencer stops after its polls and the state's save -- never
-between a submission and its record -- logs `stopped on request (...);
-resumable: <n> job(s) still queued or running keep running` and releases
-its lock; `--wait S` waits for that. Pull, then start it again (with
-`--accept-config-change` when the configuration changed): it re-attaches to
-its jobs. `--retry <stage>` is refused while that stage's jobs still run
-(`REFUSE: --retry <stage>: the stage has <n> job(s) still queued or
-running ...`): the reset forgets them and would submit their work again.
+The sequencer's jobs. A job that ends at its budget hands over: `driver
+<id>: time budget reached; the successor <id> continues`. A job killed (its
+node, a qdel, its memory) is followed by its successor, which takes the
+dead job's lock (`stale lock of driver job <id> (finished) replaced`) and
+re-attaches to every recorded job; a job of the same name already queued or
+running is adopted, never submitted twice (`<stage>: adopted ...`). Three
+sequencer jobs in a row that end uncleanly before completing a tick end
+the chain (`unclean end 3 in a row; the chain ends`, or `the last 3
+sequencer jobs ended uncleanly ...`): read their logs in
+`<work_root>/driver/`, fix, submit again (a submission resets the count). A second submission while the
+chain runs is refused (`REFUSE: the sequencer is already queued or
+running`, exit 4).
+
+To load new code into a running pipeline: `--stop --wait 180` writes
+`<work_root>/STOP_REQUEST` and deletes the waiting sequencer job; the
+running one stops after its polls and the state's save -- never between a
+submission and its record -- logs `stopped on request (...); resumable:
+<n> job(s) still queued or running keep running`, deletes its successor
+and releases its lock (`stop: the sequencer has stopped`). Pull, then
+submit again (with `--accept-config-change` when the configuration
+changed): the new chain re-attaches to the jobs. `--retry <stage>` is
+refused while that stage's jobs still run (`REFUSE: --retry <stage>: the
+stage has <n> job(s) still queued or running ...`): the reset forgets them
+and would submit their work again.
 
 ## The stages
 
@@ -73,7 +102,7 @@ whose flags file must be committed first, a root already holding a manifest
 -- stop the run with their text), `sim_reextract/launch_sim_reextract.sh`
 `plan` / `test` / `array` with RESUME=1 (the cohort's `profiles/<tag>.sh`
 must exist in Sbi-extractor: the device geometry lives there), and
-`preflight_label_axes.py` on the login node. S4-S6 drive `export_windows/
+`preflight_label_axes.py` in the sequencer's job. S4-S6 drive `export_windows/
 launch_bank.sh`: the pipeline writes the bank profile `<work_root>/bank_
 profile_<tag>.json` from the configuration's `bank` block and the digests of
 S1-S3's artefacts, then `plan` (pass line `BANK PLAN OK`), the test task
@@ -98,20 +127,21 @@ configuration's `sim` and `bank` blocks; `SBI_HPC_DIR` is passed as
 `<paths.work_root>/state.json` records every stage's status (`pending`,
 `running`, `done`, `failed`, `skipped`), its submitted jobs (id, role, the
 qsub line, the log path, the exit status once finished), its resubmissions
-and its notes; `pipeline.log` is the sequencer's log; `pipeline.lock` holds
-the pid and host of the running sequencer (a second start on the same work
-root exits 4); `pipeline.nohup` catches anything the sequencer prints
-outside its log (a traceback). A re-run reads the state file, re-attaches
-to the recorded jobs through `qstat -x -f`, and goes on. One known window:
-a sequencer killed between `qsub` returning and the state file's write
-loses that job id and would submit it again on resume; the runners refuse
-to overwrite their artefacts, so the duplicate stops with a refusal rather
-than corrupting anything.
+and its notes; `state.json.prev` is the state before the last write (read
+when `state.json` does not parse); `pipeline.log` is the sequencer's log;
+`pipeline.lock` names the sequencer that ticks (`job:<id> <node>`; a second
+sequencer on the same work root exits 4); `driver/driver.<k>.log` is the
+k-th sequencer job's own log (a traceback lands there), `driver/
+driver.<k>.argv` its command line. A new sequencer job reads the state file,
+re-attaches to the recorded jobs through `qstat -x -f`, and goes on. The
+window of a sequencer killed between `qsub` returning and the state file's
+write is closed by adoption: the job, queued or running under its name, is
+recorded instead of submitted again.
 
 ## The search and the best fit (block 7)
 
-The search stage runs on the login node (in `envs.train`, through the
-sequencer) the bank's split hash (`tools/bank_split_hash.py`, the runner's
+The search stage runs in the sequencer's job (in `envs.train`, through the
+sequencer; on the login node before D-098) the bank's split hash (`tools/bank_split_hash.py`, the runner's
 own `grouped_split`), the tuner's `costliest`, `propose` and `finalists`;
 and submits one job per probe and one job per trial (`jobs/run_argv.pbs`,
 which reads the command from an argv file and runs it in `envs.train` with
@@ -162,9 +192,12 @@ D-089) and writes `<paths.runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`.
 
 `projects/<tag>/<tag>.json` -- every key required, documented in the file by
 the `_<key>` string beside it; the schema is `specs/SPEC.md` sec. 3.1 and
-`config.py`. The Giulia file is config v7 (2026-10-18): v6's values plus
+`config.py`. The Giulia file is config v8 (2026-10-18): v7's values plus the
+`driver` block (`cpu`, 4 cores, `16gb`, `24:00:00`, a tick every 60 s;
+D-098, Claude's values, proposed); a run started under v6 or v7 needs
+`--accept-config-change` once. v7 (2026-10-18): v6's values plus
 `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`, both
-true (D-096); a run started under v6 needs `--accept-config-change` once.
+true (D-096).
 v6 (2026-10-18): v5's values plus the
 self-healing bank's keys (`bank.verify`: 8 cores, 16gb, 02:00:00;
 `bank.max_rerun_rounds`: 2; D-094). v5 (2026-10-16): v4's values (the
@@ -175,11 +208,11 @@ under v5 needs `--accept-config-change` once.
 ## Layout
 
 ```
-pipeline.py        the sequencer: run (--dry-run), status, paths
+pipeline.py        the sequencer: submit, drive (its PBS job), run (--dry-run; the loop: tests), status, stop, retire, paths
 config.py          the schema, the loader, the NEEDS-CODE capability table (empty since block 7)
 state.py           the state file
-pbs.py             qsub / qstat -x -f, the only scheduler calls
-envs.py            a command in a conda environment on the login node
+pbs.py             qsub, qstat -x -f, qselect, qdel: the only scheduler calls
+envs.py            a command in a conda environment (in the sequencer's job)
 stages/__init__.py the Stage interface, the graph, the registry
 stages/common.py   what the stages share: the tuner's arguments, the qsub line, the clock
 stages/inputs.py   S1-S3 (block 3)
@@ -187,57 +220,68 @@ stages/bank.py     S4-S6 (block 2)
 stages/search.py   S7 (block 7)
 stages/best_fit.py S8 (block 7)
 jobs/run_argv.pbs  one job = one command line from an argv file
-tools/             bank_split_hash.py, ensemble_nll.py (run in envs.train by the stages)
-run_pipeline.sh    the one command (nohup, conda, --dry-run, --status)
+tools/             bank_split_hash.py, ensemble_nll.py, bank_verify.py (run by the stages); probe_compute_qsub.pbs
+run_pipeline.sh    the one command (conda; submit, --dry-run, --status, --stop, --retire-login-sequencer)
 projects/<tag>/    the project's configuration
 tests/             the smoke tests, the fake PBS, the synthetic graph, the stand-in davinci (standin.py)
 ```
 
-## On davinci (the first run)
+## On davinci
 
-Each line is one line; run them in this order and read each result before
-the next. The pass condition of each is a line that must APPEAR.
+Each line is one line, for ANY login node; run them in this order and read
+each result before the next. The pass condition of each is a line that must
+APPEAR.
 
 ```
 # 1. the code and the cluster-side check (LF, ASCII, syntax, the imports); pass line: PIPELINE CODE OK
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && git fetch origin && git checkout sci/pipeline && git pull --ff-only origin sci/pipeline && git log --oneline -1 && bash -c 'set -e; cd hpc/pipeline; for f in $(find . -name "*.py" -o -name "*.sh" -o -name "*.pbs" -o -name "*.json" | grep -v __pycache__); do if LC_ALL=C grep -q $'"'"'\r'"'"' "$f"; then echo "CR in $f"; exit 1; fi; if LC_ALL=C grep -qP "[^\x00-\x7F]" "$f"; then echo "non-ASCII in $f"; exit 1; fi; done; python3 -m py_compile pipeline.py config.py state.py pbs.py envs.py stages/*.py tools/*.py tests/*.py; python3 -c "import sys; sys.path.insert(0, \".\"); import pipeline, stages; print(sorted(stages.BUILT))"; echo PIPELINE CODE OK'
 
-# 2. the block-1 test under the fake PBS (stdlib; about 25 s); pass line: 6 pass, 0 fail
-cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_pipeline.py 2>&1 | tail -3
+# 2. can a compute node drive jobs? (once; the sequencer's jobs need qsub, qstat, qselect, qdel there).
+#    Pass lines in the first file: PROBE: QSUB OK, PROBE: QSTAT OK, PROBE: QSELECT OK, PROBE: QDEL OK, PROBE: DONE;
+#    in the second: CHILD: ran on <node>. Read them about 2 minutes after the qsub.
+qsub -q cpu -o $HOME/probe_compute_qsub.log ~/SBI/hpc/pipeline/tools/probe_compute_qsub.pbs
+cat $HOME/probe_compute_qsub.log $HOME/probe_compute_qsub_child.log
 
-# 3. the dry run (submits nothing); pass: no REFUSE or STOP line, exit 0, S1-S4 "would be skipped", S5-S6 "would run"
-#    (or "would be skipped" once the banks exist), the gate's and the trials' qsub lines. A stage the state file
+# 3. the block-1 tests under the fake PBS (stdlib); pass lines: 6 pass, 0 fail (about 25 s), then 6 pass, 0 fail (about 3 min)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_pipeline.py 2>&1 | tail -1 && python3 hpc/pipeline/tests/test_smoke_block1b.py 2>&1 | tail -1
+
+# 4. ONCE, 2026-10-18: retire the sequencer started on a login node by the code before D-098 (it ignores --stop).
+#    It works through the shared file system only. Pass lines: RETIRE: OLD SEQUENCER STOPPED, or RETIRE: no lock ...,
+#    or RETIRE: the lock is still there after 300 s ... (it was already gone; the first sequencer job takes its lock
+#    after 600 s without a state write).
+bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --retire-login-sequencer
+
+# 5. the dry run (submits nothing); pass: no REFUSE or STOP line, exit 0, the line "the sequencer: PBS jobs named
+#    pl_giulia ...", S1-S6 "would be skipped", "search: would run" with its node-fault lines. A stage the state file
 #    records as failed prints "<stage>: FAILED in the state file ... add --retry <stage>" and exit 3: add that
-#    --retry to this line and to step 4.
-cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|would|qsub -N|identity|clock|exit" ; echo "exit ${PIPESTATUS[0]}"
+#    --retry to this line and to step 6. --accept-config-change: the run was started under an earlier version.
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --accept-config-change 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|node fault|exit" ; echo "exit ${PIPESTATUS[0]}"
 
-# 4. the run (nohup; returns at once); pass line: started : pid <n>
-cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia
+# 6. the run: submits the sequencer's first job and returns; pass line: SUBMITTED the sequencer: job <id> (pl_giulia)
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --accept-config-change
 
-# 5. any time: the status; the log's lines to watch, in order: `real_bank: REAL BANK OK`,
-#    `sim_bank: test task passed: TASK 0 OK ...`, `sim_bank: wrote .../BANK_RECORD.json ...`, `search: budget gate passed: ...`,
-#    then `sim_bank: verifying the bank, round 0 ...`, `sim_bank: VERIFY OK on <node>: ...` and
-#    `sim_bank: VERIFIED: ...`; when a task is bad: `sim_bank: VERIFY BAD task <i> (...): ...`,
-#    `sim_bank: quarantine task <i> ...`, `sim_bank: rerun round 1 of at most 2: ...`, then the round's lines
-#    again; a dropped gate: `sim_bank: the gate <id> never ran (...)`, then after VERIFY OK the gate alone,
-#    `search: round 0 proposed` / `submitted trial ...`, `search: round r complete (...)`,
-#    a node fault: `search: trial <id> NODE FAULT on <node> (...); ... queued again with --resume (r of 2)`,
-#    a checkpoint moved aside: `search: trial <id> checkpoint ... failed its CRC check (...)`,
-#    `search: SEARCH COMPLETE (...)`, `best_fit: BEST FIT COMPLETE: ...`, `PIPELINE DONE: every stage done or skipped`
-bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --status; tail -n 5 /davinci-1/home/ldellamea/pipeline/giulia/pipeline.log
+# 7. any time, from any login node: the status and the log. Lines to watch: `driver <id> on <node>: started; its
+#    successor <id> waits for it (afterany)`, `sequencer started: job <id> on <node>`, the search's lines
+#    (`search: trial <id> ... was never examined for a node fault; examining it`, `search: trial <id> NODE FAULT on
+#    <node> (...); ... queued again with --resume (r of 2)`, `submitted trial ...`, `search: round r complete (...)`,
+#    `search: SEARCH COMPLETE (...)`), `driver <id>: time budget reached; the successor <id> continues` once a day,
+#    `best_fit: BEST FIT COMPLETE: ...`, `PIPELINE DONE: every stage done or skipped`.
+bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/giulia/pipeline.log
 ```
 
 A `STOP: stage search failed: budget gate: ...` line names the projected
 trial time and memory against `search.trial.walltime` and `mem`: raise them
-(or narrow the space) in `projects/giulia/giulia.json`, then re-run step 4
-with `--retry search --accept-config-change` appended. A sequencer that
-died (the login node rebooted) is resumed by step 4 again; it re-attaches
-to the recorded jobs.
+(or narrow the space) in `projects/giulia/giulia.json`, then submit again
+(step 6) with `--retry search --accept-config-change` appended. A sequencer
+job that died is followed by its successor; a chain that ended (`the chain
+ends (...)` in the log, `none queued or running` in `--status`) is resumed by
+step 6: it re-attaches to the recorded jobs.
 
 ## Tests
 
 ```
 python3 hpc/pipeline/tests/test_smoke_pipeline.py      # block 1, about 25 s, stdlib
+python3 hpc/pipeline/tests/test_smoke_block1b.py       # block 1's sequencer jobs (D-098), about 3 min, stdlib
 python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 2 min, needs the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 7 s, the same
 python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
@@ -262,7 +306,7 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 
 | block | what | status |
 |---|---|---|
-| 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4 | built 2026-10-15, smoke-tested |
+| 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4; the sequencer as a chain of PBS jobs on compute nodes, the lock and the state hardened, adoption, the transition (D-098, config v8) | built 2026-10-15, smoke-tested; amended 2026-10-18 (`test_smoke_block1b.py`) |
 | 2 | the bank stages S4-S6 through `launch_bank.sh` (the profile from the configuration; the chain line BC as phases; a gate that never ran is run alone; the self-healing simulated bank: the verification job, the quarantine, the reruns, the certificate; config v6) | built 2026-10-16, smoke-tested on the stand-in; amended 2026-10-16 (the dropped gate) and 2026-10-18 (D-094, D-095) |
 | 3 | the input stages S1-S3 through `launch_stage_d.sh`, `launch_sim_reextract.sh`, `preflight_label_axes.py` | built 2026-10-16, smoke-tested (S3 on the real tool; S1-S2 on stubs of the launchers) |
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |

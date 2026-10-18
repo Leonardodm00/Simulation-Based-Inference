@@ -219,7 +219,7 @@ Claude's as the log records (D-085..D-090).
 
 | Key | Type | Constraint |
 |---|---|---|
-| `config_version` | int | 7 (v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
+| `config_version` | int | 8 (v8, 2026-10-18: the `driver` block, D-098; v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
 | `dataset` | str | `[a-z0-9_]+`; the `<tag>` of the folder and of the artefact names |
 | `paths.{sbix_dir, sbi_dir, work_root, banks_root, runs_root, tune_root}` | str | absolute paths |
 | `envs.{extract, train}` | str | conda environment names |
@@ -261,6 +261,8 @@ Claude's as the log records (D-085..D-090).
 | `best_fit.queue` | str | the member jobs' queue (v5) |
 | `best_fit.resubmit_node_faults` | bool | a member that failed of a node fault is resubmitted (D-096 applied to the members; v7) |
 | `loader.buffer_shards` | int | >= 1 |
+| `driver.{queue, mem, walltime}` | str | the sequencer's PBS jobs (D-098; v8): queue, PBS memory, `hh:mm:ss` |
+| `driver.{ncpus, poll_seconds}` | int | >= 1: the jobs' cores; seconds between two ticks |
 
 Keys whose code is not built yet (the NEEDS-CODE keys) are refused by
 `pipeline.py run` with the block that builds them named, until that block
@@ -293,13 +295,34 @@ of Q, R, H, B, E, F, X, S, T, W, M; anything else or an unknown job gives
 (`hh:mm:ss`, as seconds), `array_state_count` (when present). Finished means
 `job_state` in {F, X} or `unknown`. The adapter retries a `qstat` that fails
 to run (the server unreachable) three times, 20 s apart, before raising; it
-never retries `qsub`.
+never retries `qsub`. [amended 2026-10-18, D-098] `select(name) ->
+[job_id]`: `qselect -u <user> -N <name>`, the user's jobs of that name that
+have not finished (PBS Pro lists no finished job without `-x`), in
+qselect's order -- the sequencer reads each one's state with `status` and
+drops a finished or unknown one all the same, so a server that lists
+finished jobs cannot block a submission; `delete(job_id) -> bool`: `qdel`, False for a job already
+finished. Both raise `SchedulerError` when the command cannot run.
+`job_seq(id)` is the part before the first dot (`1829506` of `1829506.
+davinci-mgt01`, `1829506[]` of an array), `job_number(id)` its integer (-1
+without one), `same_job(a, b)` compares the sequence parts: qsub, qselect
+and PBS_JOBID may spell the server part differently, so job ids are never
+compared as whole strings. The sequencer's jobs call all four commands from
+compute nodes; `tools/probe_compute_qsub.pbs` checks that davinci allows it
+(qsub with `-W depend=afterany` and `-h`, qstat -x -f, qselect -u -N, qdel).
 
-The fake PBS of `tests/fake_pbs/` provides the same two commands for the
+The fake PBS of `tests/fake_pbs/` provides the same commands for the
 tests: `qsub` records the job and runs its script after `FAKE_PBS_DELAY`
 seconds in a detached process (array elements in parallel, `depend=afterok`
-honoured), `qstat -x -f` prints a PBS-like record. It is a test fixture, not
-part of the pipeline.
+and, for a plain job, `depend=afterany` honoured; `-h` holds it), `qstat -x
+-f` prints a PBS-like record with `Output_Path` (wrapped as davinci's),
+`qselect [-N] [-s] [-u] [-x]` lists (no finished job without `-x`, unless
+`FAKE_PBS_QSELECT_HISTORY=1`; `FAKE_PBS_QSELECT_SUFFIX` appends a server
+suffix to the ids it prints), `qdel` ends a waiting job unrun and kills a
+running one (Exit_status 271). A plain job ends when its script ends: what
+is left of its process group is killed before the job is recorded finished,
+as PBS Pro does. The fake hands its own environment to its jobs (PBS passes
+only `-v`): the tests' switches reach the jobs that way. It is a test
+fixture, not part of the pipeline.
 
 ## 4. Global conventions
 
@@ -313,7 +336,10 @@ part of the pipeline.
   `stages/`; json, os, subprocess, time, hashlib, argparse); syntax
   compatible with Python 3.6 (no f-strings, no walrus, no postponed
   annotations), since the sequencer runs on the login node under the
-  project's `envs.extract` environment; pure ASCII, LF. The tools of
+  project's `envs.extract` environment; pure ASCII, LF. [corrected
+  2026-10-18 by D-098: the sequencer runs under `envs.extract` in its own
+  PBS jobs on compute nodes; only the short commands (`submit`, the dry run,
+  `status`, `stop`, `retire`) run on whichever login node the user is on.] The tools of
   `hpc/pipeline/tools/` are run by the stages inside `envs.train` (numpy,
   scipy, torch) and are not held to the stdlib rule.
 - Binding decisions (their content, so the tester needs no log):
@@ -328,7 +354,21 @@ part of the pipeline.
     donor = one network; the prior is the declared box (the unit box for
     the runner), no mixture correction.
   - D-081: one command, never pausing, stop on a refusal, resumable, a
-    background process on the login node (`nohup`).
+    background process on the login node (`nohup`). [corrected 2026-10-18 by
+    D-098: no process on a login node; the sequencer is a chain of PBS jobs
+    on compute nodes.]
+  - D-094, D-095: the simulated bank verified by a job after every round,
+    bad tasks moved to a quarantine folder and rerun (block 2).
+  - D-096, D-097: a trial (and a member) that dies of a node fault is
+    resubmitted, its record set aside; a checkpoint whose zip CRCs fail is
+    moved aside (block 7).
+  - D-098: nothing in the pipeline or in the lines given to the user may
+    depend on a particular login node -- the user's logins land on any
+    login node: no process left running on a login node, no `ps`, `kill`
+    or `nohup` there, no step that must return to the node it started on.
+    Everything runs as PBS jobs on compute nodes; the user's commands only
+    submit, read and write files on the shared file system, from any login
+    node (block 1, amended 2026-10-18 (c)).
   - D-082: every search and training value from the configuration.
   - D-083: the posteriors and the report are not started by this command.
   - D-084: the runner streams the bank through a buffer of
@@ -446,11 +486,170 @@ part of the pipeline.
   could land inside a poll (the known window above). Tests:
   `tests/test_smoke_block7b.py` `test_edge_cases` (its stop and retry part;
   `stop_and_retry` when run alone).
+- Amended 2026-10-18 (c) (D-098; the user, 16:33: "I always log in from
+  a different node so do not use this approach ... only submissions to
+  compute nodes as usual"): the sequencer runs as a chain of PBS jobs on
+  compute nodes; nothing runs or is managed on a login node, and every
+  command the user is given works from any login node.
+  - `pipeline.py submit --config <file> [--retry S] [--accept-config-change]
+    [--break-lock]` (`run_pipeline.sh --project <tag>`, from any login
+    node): the refusals a run would make, checked here with the run's own
+    code (`_prepare_state`: a configuration change without the flag, a
+    `--retry` naming no stage or a stage whose jobs still run; then the
+    NEEDS-CODE keys and a stage not built: exit 2), then `REFUSE: the
+    sequencer is already queued or running: <ids>` (exit 4) when a job of
+    the project's sequencer (`pl_<tag>`) has not finished, else one `qsub`
+    and `SUBMITTED the sequencer: job <id> (pl_<tag>) ...`, exit 0. The job:
+    `jobs/run_argv.pbs` in `envs.extract` with the resources of `driver`,
+    the argv file `<work_root>/driver/driver.<k>.argv` (`pipeline.py drive
+    --config <file>` and the one-time flags), the log `<work_root>/driver/
+    driver.<k>.log`. A stop request left behind is removed, and the count of
+    unclean ends below is reset.
+  - `pipeline.py drive` (the sequencer's job; refused, exit 2, without
+    PBS_JOBID): (1) one driver at a time -- when another `pl_<tag>` job runs
+    (R, E, B) with a smaller job number, `driver <me> on <host>: another
+    driver <id> is running; this one exits` (exit 0, no successor); the
+    waiting ones are deleted (`deleted the waiting driver`); a younger one
+    that runs exits by the same rule, so of two drivers released together
+    the older stays; (2) a lock left by a finished driver job means that
+    job was killed (`the previous driver <id> ended without releasing the
+    lock ...`): an unclean end; (3) the count of unclean ends in a row
+    (`<work_root>/driver/unclean_ends.json`) at 3 (DRIVER_MAX_UNCLEAN) ends
+    the chain at once (`the last 3 sequencer jobs ended uncleanly before
+    completing a tick ...`, exit 3), so a sequencer that crashes cannot loop;
+    (4) the successor, submitted at once: the same line with `-W
+    depend=afterany:<me>` and without the one-time flags, so a driver that
+    dies anywhere -- its node, its walltime -- is followed; a failed
+    submission is retried at the budget; (5) the loop of `run` with the
+    budget walltime - min(max(900 s, 5 x poll_seconds), walltime / 4); its
+    first tick boundary resets the unclean count; (6) the end: the budget
+    -> `driver <me>: time budget reached; the successor <id> continues`
+    (exit 0); a signal (PBS ending the job: walltime, qdel; honoured at a
+    tick boundary) -> an unclean end, `ended by signal <n> ...; the
+    successor <id> continues` (exit 0); an exception -> its traceback in the
+    job's log, an unclean end, the successor continues below the limit
+    (`unclean end <n> of at most 3 in a row`), else is deleted (exit 1); any
+    other end (PIPELINE DONE, a STOP, a REFUSE, a requested stop, another
+    sequencer's lock) -> the successor deleted, `driver <me>: the chain ends
+    (<why>, exit <n>); its successor <id> was deleted`.
+  - `run` takes the lock FIRST and reads the state after it (a sequencer
+    that wrote the state while this one waited for the lock is not
+    overwritten), then the configuration change and the `--retry` resets.
+  - The lock names its holder: `job:<PBS_JOBID> <host> <utc>`, `pid:<pid>
+    <host> <utc>` (a foreground run: the tests), or `<pid> <host> <utc>`
+    (written by the code before this amendment). Stale: a job holder the
+    scheduler reports finished or unknown; a pid holder on this host not
+    alive (pids 0 and -1 never are); a pid holder on another host that has
+    not written `state.json` for `PIPELINE_HEARTBEAT_QUIET_S` (default 600)
+    seconds, watched by this sequencer's clock (two mtime readings, so the
+    hosts' clocks need not agree) -- else `another sequencer (...) holds` /
+    `is still writing the state` and exit 4. Where there is no lock it is
+    created with O_EXCL; a stale one is replaced and read back 1 s later,
+    so of two sequencers that replaced it at once the later keeps it and
+    the other yields (exit 4). `--break-lock` replaces any lock at once. A
+    sequencer removes only its own lock.
+  - A job about to be submitted is ADOPTED when a job of the same name
+    (`-N`) AND the same output file (`-o`, against qstat's `Output_Path`
+    without its host part) is queued, held or running (`select`, `status`):
+    recorded, not submitted again, `<stage>: adopted <role> -> <id> (a job
+    of that name and output file was queued or running but not recorded)`
+    -- the known window above, for a driver killed between a `qsub` and the
+    state's save. A name alone is not enough: `bank_verify` and `gate_b<k>`
+    are the same in every project, the output files are not. A command line
+    without `-N` or `-o`, or a scheduler that does not answer: submitted as
+    before. `JobStatus.output_path` is that path (None when qstat gives
+    none).
+  - The state file: each write goes to `state.json.<pid>.tmp`, the current
+    file is kept as `state.json.prev` (a hard link, then a rename: no
+    moment without `state.json`), then the temporary file is renamed; a
+    `state.json` that does not parse is read from `state.json.prev` (`the
+    state file ... does not parse ...; the previous state ... is used`);
+    neither -> `ValueError: no state file parses`. A MISSING `state.json` is
+    no state, a fresh start, as before (a save never leaves a moment
+    without it, so only a removal makes it go; `.prev` is then not read).
+    The state records the writer's job (`job`).
+  - `pipeline.py stop [--wait S]` (`--stop`): with no `pl_<tag>` job and no
+    pid lock that may be live (a pid on another host counts as live), `stop:
+    no sequencer is running` (a stop request is removed); else
+    `STOP_REQUEST` is written FIRST, then the waiting `pl_<tag>` jobs are
+    deleted, so a waiting job released at that moment stops too: the
+    running sequencer stops at its next tick boundary and deletes its
+    successor; a driver job does not remove a request at
+    its start. `--wait S` waits for no running driver and no lock (`stop:
+    the sequencer has stopped`, exit 0; else exit 4).
+  - `pipeline.py retire [--wait S]` (`--retire-login-sequencer`; the
+    transition, once): for a lock in the old format (a bare pid), creates
+    the directory `<work_root>/state.json.tmp` -- the old code writes its
+    state through that name after every tick, so its next save raises and
+    it leaves through its `finally`, which removes its lock -- and waits up
+    to S s (default 300) for the lock to go: `RETIRE: OLD SEQUENCER
+    STOPPED`; else `RETIRE: the lock is still there after S s ...` (the old
+    sequencer was already gone, or is in a step longer than S; the first
+    driver takes the lock after the heartbeat's quiet time). The directory
+    stays: this code never uses that name. A temporary FILE of that name
+    still there after 10 s (a crash's leftover) is moved aside to
+    `state.json.tmp.stale-<utc>`, not deleted. A job or `pid:` lock:
+    `nothing to retire; --stop stops it`. No lock: `nothing to retire`.
+    State written during the wait: `RETIRE: UNEXPECTED ...`, exit 3.
+  - `pipeline.py status`: the state's last write (age by this node's clock,
+    writer), the lock, every `pl_<tag>` job not finished with its state,
+    the stage table.
+  - The dry run prints `the sequencer: PBS jobs named pl_<tag> on queue
+    <q> (<n> cores, <mem>, walltime <w>, a tick every <p> s), one at a time,
+    each submitting its successor (afterany); nothing runs on a login node
+    (D-098)`.
+  - Config v8: `driver.{queue, ncpus, mem, walltime, poll_seconds}`;
+    Giulia: `cpu`, 4, `16gb`, `24:00:00`, 60 `[proposed]` (a budget of
+    85,500 s per driver job).
+  - `pipeline.main(argv, graph=None, entry=None)`: `entry` is the command
+    line before the verb in the drivers' argv files (default: the
+    environment's python and this `pipeline.py`); the tests run their
+    synthetic graph's `drive` through it.
+  - Test oracles (`tests/test_smoke_block1b.py`, the fake PBS with
+    `FAKE_PBS_QSELECT_SUFFIX=.cluster` and the walltime enforced, the
+    synthetic graph A -> B -> C): known answer (Giulia v8: the driver block,
+    `pl_giulia`, 85,500 s, the dry run's line); reference (job ids, the
+    budget for four walltimes, the driver's qsub line and argv files, the
+    three lock formats, all hand-written); invariants (the state's own
+    temporary name beside a `state.json.tmp` directory, `.prev`, the
+    fallback; O_EXCL; a live job's lock refused, a finished one replaced; a
+    remote pid lock refused while the state is written, replaced after the
+    quiet time; release never removes another's lock; no `nohup` in the
+    code); contract (the chain hands over by budget, one driver at a time,
+    every stage job once, the last successor deleted unrun, a second
+    submission refused); determinism (a driver killed by qdel: the
+    successor finishes, nothing twice; a queued job of the same name and
+    output file adopted, one of the same name and another output file
+    not); edge cases (drive without PBS_JOBID; stop from any node, then
+    submit again, qselect listing the finished jobs too; `--retry` of a
+    stage whose job runs and a configuration change refused at submit, the
+    flag in the first driver's argv only; a
+    crash loop ends after 3 drivers, a submission resets the count; two
+    drivers released together, the older stays; SIGTERM keeps the chain;
+    retire against a stand-in of the old sequencer, then the takeover of a
+    stale old-format lock). Mutations (each makes its check fail):
+    successor, unclean_limit, lock_check, prev_fallback, heartbeat,
+    tiebreak, retry_at_submit, adopt, adopt_output, finished_filter.
+  - The transition from the old code, rehearsed on the code of `f1a2b7a`
+    itself (not in the repository's tests): see the build handoff.
+  - Confirmed: the direction, yes 2026-10-18 (D-098: "only submissions to
+    compute nodes as usual"); the driver block's values, the limit of 3
+    unclean ends, the 600 s quiet time and the budget's margin rule are
+    Claude's `[proposed]`.
 - Confirmed: yes 2026-10-15 (the user's answers to the build handoff's Q1-Q7
   and the follow-up; D-090..D-093)
 - Status: smoke-tested 2026-10-15 (6 pass, 1 skip: convergence, not a
   discretisation; nothing skipped for want of davinci -- the scheduler is
   the fake PBS, which is what the sandbox can test)
+  [2026-10-18, amendment (c): `test_smoke_block1b.py` 6 pass, 1 skip
+  (convergence); ten mutations each caught; blocks 1, 2, 3, 7, 7b, 8 pass;
+  the transition rehearsed on the code of `f1a2b7a` itself, its sequencer
+  alive and already dead (the SIGBUS trial healed, the running trial
+  re-attached, no other job twice). Skipped for want of davinci: PBS Pro
+  answering qsub, qstat, qselect and qdel from a compute node (the probe
+  `tools/probe_compute_qsub.pbs` is the user's to run first), `Output_Path`
+  as qstat prints it for a job submitted from a compute node, the real
+  dependency hold (H) and kill delay.]
 
 ### Block 2: the bank stages S4-S6 (`stages/bank.py`)
 

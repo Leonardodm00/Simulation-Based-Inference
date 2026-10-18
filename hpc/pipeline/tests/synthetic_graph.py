@@ -14,6 +14,17 @@ can:
 
 The rest of the command line is the sequencer's (`--config`, `--dry-run`,
 `--poll-seconds`, `--retry`, `--accept-config-change`, `--max-ticks`).
+
+    synthetic_graph.py submit|drive|stop|status|retire --config ...
+
+runs the pipeline's own command (pipeline.main) on this graph, the
+sequencer's jobs running this file again (block 1 amended 2026-10-18 (c):
+the driver chain under the fake PBS). There the stages' behaviour comes
+from the environment, which the fake PBS hands to its jobs:
+SYNTH_REFUSE=A,B, SYNTH_SILENT_KILL=..., SYNTH_CRASH_POLL=... (that stage's
+poll raises: a sequencer that crashes), SYNTH_JOB_SLEEP=<s> (each job's
+sleep, default 0.3), MUTATION_PATCH=<python> (exec'd before the command:
+block 1b's mutations).
 Not pipeline code: a fixture. Pure ASCII, LF only; stdlib only.
 """
 
@@ -29,8 +40,12 @@ for _p in (_PIPE, _HERE):
         sys.path.insert(0, _p)
 
 import config as C      # noqa: E402
+import pbs as PBS       # noqa: E402
 import pipeline as P    # noqa: E402
 import stages as S      # noqa: E402
+import state as ST      # noqa: E402
+
+VERBS = ("submit", "drive", "stop", "status", "retire")
 
 
 class SyntheticStage(S.Stage):
@@ -61,10 +76,11 @@ class SyntheticStage(S.Stage):
         elif self.mode == "silent-kill":
             body = "echo 'the job started'\nexit 0\n"
         else:
-            body = ("sleep 0.3\nmkdir -p '%s'\nprintf 'hello %s\\n' > '%s'\n"
+            body = ("sleep %s\nmkdir -p '%s'\nprintf 'hello %s\\n' > '%s'\n"
                     "sha256sum '%s' | cut -d' ' -f1 > '%s.sha256'\n"
                     "echo 'STAGE %s OK'\n"
-                    % (os.path.dirname(art), self.name, art, art, art, self.name))
+                    % (os.environ.get("SYNTH_JOB_SLEEP", "0.3"), os.path.dirname(art),
+                       self.name, art, art, art, self.name))
         with open(p, "w") as fh:
             fh.write("#!/bin/bash\nset -u\n" + body)
         return p
@@ -96,8 +112,38 @@ class SyntheticStage(S.Stage):
     def dry_run(self, cfg, st):
         return [" ".join(self._qsub(cfg))]
 
+    def poll(self, cfg, st, sub):
+        if self.name in _env_list("SYNTH_CRASH_POLL"):
+            raise RuntimeError("synthetic crash in the poll of %s" % self.name)
+        return S.Stage.poll(self, cfg, st, sub)
+
+
+def _env_list(var):
+    return [x for x in os.environ.get(var, "").split(",") if x]
+
+
+def env_graph():
+    """A -> B -> C with each stage's behaviour from the environment."""
+    def mode(name):
+        if name in _env_list("SYNTH_REFUSE"):
+            return "refuse"
+        if name in _env_list("SYNTH_SILENT_KILL"):
+            return "silent-kill"
+        return "ok"
+    return [SyntheticStage("A", (), mode("A")),
+            SyntheticStage("B", ("A",), mode("B")),
+            SyntheticStage("C", ("B",), mode("C"))]
+
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    patch = os.environ.get("MUTATION_PATCH")
+    if patch:
+        exec(patch, {"P": P, "PBS": PBS, "ST": ST, "S": S, "C": C})
+        sys.stderr.write("MUTATION_PATCH applied\n")
+    if argv and argv[0] in VERBS:
+        return P.main(argv, graph=env_graph(),
+                      entry=[sys.executable, os.path.abspath(__file__)])
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--dry-run", action="store_true")

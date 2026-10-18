@@ -24,7 +24,7 @@ import re
 __all__ = ["Config", "ConfigError", "load_config", "unhonoured_keys",
            "SCHEMA", "NEEDS_CODE", "CONFIG_VERSION"]
 
-CONFIG_VERSION = 7
+CONFIG_VERSION = 8
 
 _WALLTIME = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
 _MEM = re.compile(r"^[0-9]+(kb|mb|gb|tb)$")
@@ -136,6 +136,11 @@ SCHEMA = (
     ("best_fit.max_resubmits", "int>=0"),
     ("best_fit.resubmit_node_faults", "bool"),
     ("loader.buffer_shards", "int>=1"),
+    ("driver.queue", "str"),
+    ("driver.ncpus", "int>=1"),
+    ("driver.mem", "mem"),
+    ("driver.walltime", "walltime"),
+    ("driver.poll_seconds", "int>=1"),
 )
 
 # Keys whose values the pipeline can only honour once a later block exists:

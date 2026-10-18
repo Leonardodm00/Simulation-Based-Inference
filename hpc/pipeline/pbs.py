@@ -1,28 +1,36 @@
-"""The scheduler adapter: `qsub` and `qstat -x -f` (specs/SPEC.md sec. 3.3).
+"""The scheduler adapter: `qsub`, `qstat -x -f`, and since 2026-10-18
+`qselect -N` and `qdel` (specs/SPEC.md sec. 3.3; block 1 amended: the
+sequencer runs as a chain of PBS jobs, D-098).
 
-Two calls, kept thin so the fake PBS of tests/fake_pbs/ can stand in for
-davinci's PBS Pro by being first on PATH. Nothing else in the pipeline
-talks to the scheduler.
+Thin calls, so the fake PBS of tests/fake_pbs/ can stand in for davinci's
+PBS Pro by being first on PATH. Nothing else in the pipeline talks to the
+scheduler.
 
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
+import getpass
 import os
 import re
 import subprocess
 import time
 
-__all__ = ["JobStatus", "SubmitError", "SchedulerError", "submit", "status",
-           "parse_qstat", "walltime_to_seconds", "seconds_to_walltime",
-           "FINISHED_STATES", "QSUB", "QSTAT"]
+__all__ = ["JobStatus", "SubmitError", "SchedulerError", "submit", "status", "select",
+           "delete", "job_seq", "job_number", "same_job", "parse_qstat",
+           "walltime_to_seconds", "seconds_to_walltime", "FINISHED_STATES",
+           "RUNNING_STATES", "QSUB", "QSTAT", "QSELECT", "QDEL"]
 
 # Overridable for a test that wants to name the executables explicitly;
 # otherwise PATH decides (the fake PBS is put first on PATH by the tests).
 QSUB = os.environ.get("PIPELINE_QSUB", "qsub")
 QSTAT = os.environ.get("PIPELINE_QSTAT", "qstat")
+QSELECT = os.environ.get("PIPELINE_QSELECT", "qselect")
+QDEL = os.environ.get("PIPELINE_QDEL", "qdel")
 
 # PBS Pro job_state letters. F = finished, X = expired subjob (finished).
 FINISHED_STATES = ("F", "X")
+# the states of a job that runs (B: an array with an element running)
+RUNNING_STATES = ("R", "E", "B")
 _KNOWN_STATES = ("Q", "R", "H", "B", "E", "F", "X", "S", "T", "W", "M")
 
 _QSTAT_RETRIES = 3
@@ -34,20 +42,22 @@ class SubmitError(RuntimeError):
 
 
 class SchedulerError(RuntimeError):
-    """qstat could not be run after the retries."""
+    """The scheduler did not answer: qstat after its retries, or qselect /
+    qdel that could not run."""
 
 
 class JobStatus(object):
     """One job's record as the sequencer reads it."""
 
     def __init__(self, job_id, state, exit_status=None, walltime_s=None,
-                 array_counts=None, raw=""):
+                 array_counts=None, raw="", output_path=None):
         self.job_id = job_id
         self.state = state                  # a letter of _KNOWN_STATES or "unknown"
         self.exit_status = exit_status      # int or None
         self.walltime_s = walltime_s        # float seconds or None
         self.array_counts = array_counts or {}
         self.raw = raw
+        self.output_path = output_path      # Output_Path without its "host:" prefix, or None
 
     @property
     def finished(self):
@@ -122,7 +132,13 @@ def parse_qstat(job_id, text):
                     counts[name] = int(n)
                 except ValueError:
                     pass
-    return JobStatus(job_id, state, exit_status, walltime_s, counts, raw=text)
+    output_path = None
+    if "Output_Path" in fields:
+        # "<submission host>:<path>"; the host is the qsub's, so only the path compares
+        v = fields["Output_Path"]
+        output_path = v.split(":", 1)[1] if ":" in v else v
+    return JobStatus(job_id, state, exit_status, walltime_s, counts, raw=text,
+                     output_path=output_path)
 
 
 def status(job_id, retries=_QSTAT_RETRIES, retry_wait_s=_QSTAT_RETRY_WAIT_S):
@@ -146,3 +162,51 @@ def status(job_id, retries=_QSTAT_RETRIES, retry_wait_s=_QSTAT_RETRY_WAIT_S):
         if attempt + 1 < retries:
             time.sleep(float(retry_wait_s))
     raise SchedulerError("qstat failed %d times for %s: %s" % (retries, job_id, last))
+
+
+def job_seq(job_id):
+    """The sequence part of a job id, before the first dot: `1829506` of
+    `1829506.davinci-mgt01`, `1829506[]` of an array. Two spellings of one
+    job (qsub's, qselect's, PBS_JOBID's may name the server differently)
+    have the same sequence part on one server."""
+    return str(job_id).strip().split(".", 1)[0]
+
+
+def job_number(job_id):
+    """The integer of the sequence part (-1 when there is none): the
+    server numbers its jobs in submission order."""
+    m = re.match(r"[0-9]+", job_seq(job_id))
+    return int(m.group(0)) if m else -1
+
+
+def same_job(a, b):
+    return bool(a) and bool(b) and job_seq(a) == job_seq(b)
+
+
+def select(name, user=None):
+    """The ids of this user's jobs named `name` that have not finished
+    (`qselect -u <user> -N <name>`: without -x PBS Pro lists no finished
+    job), in the order qselect prints them; [] when there is none. The
+    states are read with status() where they matter."""
+    user = user or getpass.getuser()
+    try:
+        proc = subprocess.run([QSELECT, "-u", user, "-N", str(name)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              universal_newlines=True)
+    except OSError as exc:
+        raise SchedulerError("cannot run %s: %s" % (QSELECT, exc))
+    if proc.returncode != 0:
+        raise SchedulerError("qselect exited %d: %s" % (proc.returncode,
+                                                         (proc.stderr or proc.stdout).strip()))
+    return [tok for tok in proc.stdout.split() if tok]
+
+
+def delete(job_id):
+    """`qdel <job_id>`; True when the scheduler accepted it (a job already
+    finished gives False, which is not an error here)."""
+    try:
+        proc = subprocess.run([QDEL, str(job_id)], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True)
+    except OSError as exc:
+        raise SchedulerError("cannot run %s: %s" % (QDEL, exc))
+    return proc.returncode == 0

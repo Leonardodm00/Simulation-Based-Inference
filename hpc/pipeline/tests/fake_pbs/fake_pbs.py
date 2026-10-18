@@ -26,7 +26,13 @@ whatever its exit status (a plain job: the sequencer's driver chain, block 1
 amended 2026-10-18). `-h` submits the job held (state H). `qdel <id>` ends
 a queued or held job unrun (state F, no Exit_status, the comment `Job deleted
 by user`) and kills a running one (Exit_status 271). `qselect [-N name] [-s
-states] [-u user]` prints the ids of the matching jobs, one per line.
+states] [-u user] [-x]` prints the ids of the matching jobs, one per line;
+as PBS Pro, without -x no finished job. FAKE_PBS_QSELECT_SUFFIX=<text>
+appends <text> to every id qselect prints (`1.fake.cluster`): a server that
+spells its ids differently in qselect than in qsub and PBS_JOBID, which the
+sequencer must still recognise as one job. FAKE_PBS_QSELECT_HISTORY=1
+lists the finished jobs too, as if -x were given: a server whose qselect
+does, which the sequencer must not mistake for live jobs.
 
 `qstat -x -f <id>` prints a PBS-like record: job_state (Q, H, R, B, F),
 Exit_status when finished, resources_used.walltime, array_state_count for
@@ -35,7 +41,10 @@ arrays. An unknown id prints `qstat: Unknown Job Id <id>` and exits 153.
 With FAKE_PBS_ENFORCE_WALLTIME=1 a non-array job whose `-l walltime=` has
 elapsed is killed (its process group, SIGKILL) and finishes with
 Exit_status 271, as PBS Pro reports a job killed at its walltime (block 7's
-tests: a trial killed and resubmitted).
+tests: a trial killed and resubmitted). As PBS Pro, a plain job ends when its
+script ends: whatever of its process group is still alive then is killed
+(SIGKILL) before the job is recorded finished, so a job that depends on it
+never starts beside a leftover of it.
 
 Pure ASCII, LF only; stdlib only.
 """
@@ -54,6 +63,8 @@ DROP_DEPENDENTS = os.environ.get("FAKE_PBS_DROP_DEPENDENTS", "0") == "1"
 FAIL_ONCE = set(x.strip() for x in os.environ.get("FAKE_PBS_FAIL_ONCE", "").split(",")
                 if x.strip())
 SERVER = "fake"
+QSELECT_SUFFIX = os.environ.get("FAKE_PBS_QSELECT_SUFFIX", "")
+QSELECT_HISTORY = os.environ.get("FAKE_PBS_QSELECT_HISTORY", "0") == "1"
 
 
 def _spool():
@@ -261,6 +272,20 @@ def _wait_with_walltime(proc, rec):
         return 271
 
 
+def _end_group(pgid):
+    """Kill what is left of a job's process group, and wait until it is gone."""
+    try:
+        os.killpg(pgid, 9)
+    except OSError:
+        return
+    for _ in range(200):
+        try:
+            os.killpg(pgid, 0)
+        except OSError:
+            return
+        time.sleep(0.05)
+
+
 def cmd_run(num):
     rec = _load(num)
     time.sleep(DELAY)
@@ -313,6 +338,7 @@ def cmd_run(num):
         rec["pgid"] = proc.pid
         _save(rec)
         rec["exit_status"] = _wait_with_walltime(proc, rec)
+        _end_group(proc.pid)
         if _load(num).get("comment", "").startswith("Job deleted by user"):
             rec["exit_status"], rec["comment"] = 271, "Job deleted by user (running)"
     rec["state"] = "F"
@@ -355,7 +381,7 @@ def cmd_qdel(argv):
 
 
 def cmd_qselect(argv):
-    name, states, i = None, None, 0
+    name, states, history, i = None, None, False, 0
     while i < len(argv):
         if argv[i] == "-N":
             name = argv[i + 1]; i += 2
@@ -363,6 +389,8 @@ def cmd_qselect(argv):
             states = argv[i + 1]; i += 2
         elif argv[i] == "-u":
             i += 2                              # one user in the tests
+        elif argv[i] == "-x":
+            history = True; i += 1
         else:
             i += 1
     out = []
@@ -377,9 +405,11 @@ def cmd_qselect(argv):
             continue
         if states is not None and rec["state"] not in states:
             continue
+        if not (history or QSELECT_HISTORY) and rec["state"] in ("F", "X"):
+            continue
         out.append((rec["num"], rec["id"]))
     for _, job_id in sorted(out):
-        print(job_id)
+        print(job_id + QSELECT_SUFFIX)
     return 0
 
 
@@ -416,6 +446,11 @@ def cmd_qstat(argv):
                      % (0 if rec["state"] != "Q" else n, running, fin))
     if rec["comment"]:
         lines.append("    comment = %s" % rec["comment"])
+    if rec["out"]:
+        # as PBS Pro: "<submission host>:<path>", wrapped (newline + tab) like davinci's
+        v = "fakehost:" + rec["out"]
+        parts = [v[i:i + 54] for i in range(0, len(v), 54)]
+        lines.append("    Output_Path = " + "\n\t".join(parts))
     print("\n".join(lines))
     return 0
 

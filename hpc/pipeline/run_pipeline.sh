@@ -3,34 +3,35 @@
 # run_pipeline.sh -- the one command per data set (D-081): from the spike
 # trains to the search and the best fit, never pausing, resumable.
 #
-#   bash run_pipeline.sh --project <tag> --dry-run      # the stage table and every qsub line; submits nothing
-#   bash run_pipeline.sh --project <tag>                # starts the sequencer under nohup and returns
-#   bash run_pipeline.sh --project <tag> --status       # the stages, their jobs, the last events
-#   bash run_pipeline.sh --project <tag> --stop [--wait S]  # the sequencer stops at its next tick; its jobs keep running
-#   bash run_pipeline.sh --project <tag> --foreground   # the sequencer in this shell (tests, debugging)
+# Every mode works from ANY login node and leaves nothing running there
+# (D-098, 2026-10-18): the sequencer runs as a chain of PBS jobs on compute
+# nodes (pl_<tag>, the configuration's `driver` block), each submitting its
+# successor before it starts ticking.
 #
-# --stop writes <work_root>/STOP_REQUEST (SIGTERM does the same): the sequencer
-# stops after its polls and the state's save, never between a submission and
-# its record; a re-run re-attaches to the jobs (2026-10-18).
+#   bash run_pipeline.sh --project <tag> --dry-run        # the stage table and every qsub line; submits nothing
+#   bash run_pipeline.sh --project <tag>                  # submits the sequencer's first job and returns
+#   bash run_pipeline.sh --project <tag> --status         # the stages, their jobs, the sequencer's jobs
+#   bash run_pipeline.sh --project <tag> --stop [--wait S]  # the sequencer stops at its next tick; the jobs keep running
+#   bash run_pipeline.sh --project <tag> --retire-login-sequencer [--wait S]
+#        # once, 2026-10-18: stops a sequencer started on a login node by the code before D-098
+#   bash run_pipeline.sh --project <tag> --foreground     # the sequencer in this shell: the tests only, never on a cluster
 #
 # --project <tag> names hpc/pipeline/projects/<tag>/<tag>.json; --config <path>
-# names any configuration file. Anything else on the line goes to
-# `pipeline.py run` (--retry STAGE, --accept-config-change, --break-lock,
-# --poll-seconds N).
+# names any configuration file. Anything else on the line goes to the
+# submission (--retry STAGE, --accept-config-change, --break-lock: they reach
+# the first sequencer job only).
 #
-# The sequencer runs on the login node under the project's extraction
-# environment (the configuration's envs.extract); it needs only the standard
-# library. SKIP_CONDA=1 skips the activation (the tests; a shell that is
-# already in the right environment) and is passed on as PIPELINE_SKIP_CONDA
-# to the stages' login-node tools and jobs (block 7), which otherwise
-# activate the configuration's envs.train themselves.
+# The short commands run under the project's extraction environment (the
+# configuration's envs.extract) and need only Python's standard library.
+# SKIP_CONDA=1 skips the activation (the tests; a shell already in the right
+# environment) and is passed on as PIPELINE_SKIP_CONDA to the jobs.
 #
 # ORDER on a cluster: --dry-run first and read it; then the plain call; then
 # --status whenever you like. The pass lines: the dry run ends without a
-# REFUSE line; the plain call prints the pid, the log and the state file; the
+# REFUSE line; the plain call prints `SUBMITTED the sequencer: job <id>`; the
 # log's last line at the end is `PIPELINE DONE: every stage done or skipped`,
-# or `STOP: stage <name> failed: <reason>` -- fix, then re-run the same
-# command (with --retry <name> when the stage is recorded as failed).
+# or `STOP: stage <name> failed: <reason>` -- fix, then submit again (with
+# --retry <name> when the stage is recorded as failed).
 #
 # HPC note (hpc-python-compat): pure ASCII, LF only.
 # =============================================================================
@@ -47,8 +48,9 @@ while [ $# -gt 0 ]; do
         --dry-run)    MODE="dry-run" ;;
         --status)     MODE="status" ;;
         --stop)       MODE="stop" ;;
+        --retire-login-sequencer) MODE="retire" ;;
         --foreground) MODE="foreground" ;;
-        -h|--help)    sed -n '2,34p' "$HERE/run_pipeline.sh"; exit 0 ;;
+        -h|--help)    sed -n '2,36p' "$HERE/run_pipeline.sh"; exit 0 ;;
         *)            PASS+=("$1") ;;
     esac
     shift || true
@@ -84,21 +86,11 @@ case "$MODE" in
         exec python3 "$HERE/pipeline.py" status --config "$CONFIG" ;;
     stop)
         exec python3 "$HERE/pipeline.py" stop --config "$CONFIG" ${PASS[@]+"${PASS[@]}"} ;;
+    retire)
+        exec python3 "$HERE/pipeline.py" retire --config "$CONFIG" ${PASS[@]+"${PASS[@]}"} ;;
     foreground)
         exec python3 "$HERE/pipeline.py" run --config "$CONFIG" ${PASS[@]+"${PASS[@]}"} ;;
     start)
-        mkdir -p "$WORK_ROOT" || { echo "ABORT: cannot create $WORK_ROOT"; exit 2; }
-        nohup python3 "$HERE/pipeline.py" run --config "$CONFIG" ${PASS[@]+"${PASS[@]}"} >> "$WORK_ROOT/pipeline.nohup" 2>&1 &
-        PID=$!
-        sleep 2
-        if kill -0 "$PID" 2>/dev/null; then
-            echo "[pipeline] started : pid $PID (nohup; survives this shell)"
-        else
-            echo "[pipeline] the sequencer exited at once; its last lines:"
-            tail -n 20 "$WORK_ROOT/pipeline.nohup"
-        fi
-        echo "[pipeline] log     : $LOG"
-        echo "[pipeline] state   : $STATE"
-        echo "[pipeline] watch   : tail -n 5 $LOG     then:  bash $HERE/run_pipeline.sh --config $CONFIG --status"
-        ;;
+        # D-098: submit the sequencer's first job; nothing stays on this node
+        exec python3 "$HERE/pipeline.py" submit --config "$CONFIG" ${PASS[@]+"${PASS[@]}"} ;;
 esac
