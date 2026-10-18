@@ -517,7 +517,19 @@ part of the pipeline.
   `qstat -x -f` -- and the stage stopped with "the gate refused (...): no
   log". D-006's probe (an element exiting 1; the dependent ran) does not
   cover whatever ended this gate unrun (the diagnosis on davinci is
-  pending). Rule since [amended 2026-10-16]: (a) the gate's log is THIS
+  pending). [diagnosed 2026-10-18 from the user's read-only check of the
+  PBS records, the task logs and the markers: 66 elements exited 0; three
+  failed, all on `dvnode012` within about seven minutes -- elements 45
+  and 46 exited 135 (a SIGBUS, `Bus error (core dumped)`, after `[Errno
+  5] Input/output error` reading the simulation tree, and a DSN tree
+  reported missing), element 63 never started (Exit_status -2,
+  `resources_used.walltime` 00:00:00, its log only `Could not chdir to
+  home directory`): the node lost the home file system. The array's
+  record reads Exit_status 0 with the comment `Job Array Began ... and
+  failed`; the gate's has no start time and no Exit_status. Reading, not
+  verified in the server's log: an element exiting with a code (1 in the
+  probe, 135 here) leaves the dependent to run; the element that failed
+  to start (-2) is what ended it unrun.] Rule since [amended 2026-10-16]: (a) the gate's log is THIS
   gate's only when it is fresh: absent at the gate's submission and
   present now, or present then with a (size, mtime) that has changed since
   (the stat is taken before the launcher call and kept in the stage's
@@ -1043,7 +1055,12 @@ stated in the README.
   the davinci diagnosis decides whether D-006's Statement needs a
   qualifier (for instance: ordering only when the elements exit with a
   code of their own; an element the scheduler kills ends the dependent
-  unrun). Two options for the user, neither taken: (1) the launcher's
+  unrun). [answered 2026-10-18: an element that never started (Exit_status
+  -2, its node `dvnode012` without the home file system) -- not a kill;
+  block 2's defect entry has the records. The qualifier: afterok on an
+  array is ordering only for elements that run and exit with a code; an
+  element PBS fails to start ends the dependent unrun (a reading of the
+  records, not of the server's log).] Two options for the user, neither taken: (1) the launcher's
   gate dependency `afterok` -> `afterany` (Sbi-extractor, a laptop push
   by D-062; `afterany:<array>[]` was accepted by davinci in the D-006
   sweep, and is ordering by definition); (2) the stage resubmits failed
