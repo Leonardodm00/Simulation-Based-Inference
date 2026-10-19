@@ -29,7 +29,10 @@ Checks (specs/SPEC.md block 1, amended 2026-10-18 (c))
                         submit; a crash loop ends after 3 drivers; two
                         drivers at once (the older stays); a signal keeps
                         the chain; retire (the transition) against an
-                        old-style sequencer
+                        old-style sequencer; a configuration change
+                        accepted at submission and a first driver that
+                        raises in its first tick: the successor goes on
+                        (amendment (e) of 2026-10-19, davinci's 15:31)
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block1b.py
@@ -39,7 +42,7 @@ Run
         Re-runs the checks with one piece of the code disabled; the check
         named in _PATCHES must then FAIL: successor, unclean_limit,
         lock_check, prev_fallback, heartbeat, tiebreak, retry_at_submit,
-        adopt, adopt_output, finished_filter.
+        adopt, adopt_output, finished_filter, early_save.
 
 Everything runs under the fake PBS (tests/fake_pbs/, first on PATH) in a
 temporary folder, on the synthetic graph A -> B -> C of synthetic_graph.py;
@@ -128,6 +131,9 @@ _PATCHES = {
                         "    return [(j, pbs_module.status(j).state)\n"
                         "            for j in pbs_module.select(P.driver_name(cfg))]\n"
                         "P._drivers = _d\n"),
+    # test_edge_cases (accept, then a crash): the accepted change would be
+    # lost with the first tick, and the successor would refuse
+    "early_save": "P._keep_prepared = lambda state: None\n",
 }
 if MUTATION:
     if MUTATION not in _PATCHES:
@@ -175,8 +181,8 @@ def _env(root, sleep="0.3", **extra):
     env["PIPELINE_PYTHON"] = PYTHON
     env["PYTHONPATH"] = _HERE + os.pathsep + env.get("PYTHONPATH", "")
     env["SYNTH_JOB_SLEEP"] = sleep
-    for k in ("SYNTH_REFUSE", "SYNTH_SILENT_KILL", "SYNTH_CRASH_POLL", "MUTATION_PATCH",
-              "PBS_JOBID"):
+    for k in ("SYNTH_REFUSE", "SYNTH_SILENT_KILL", "SYNTH_CRASH_POLL", "SYNTH_CRASH_ONCE",
+              "MUTATION_PATCH", "PBS_JOBID"):
         env.pop(k, None)
     if MUTATION:
         env["MUTATION_PATCH"] = _PATCHES[MUTATION]
@@ -751,6 +757,50 @@ def _edge_crash_loop():
         shutil.rmtree(root)
 
 
+def _edge_accept_then_crash():
+    """davinci 2026-10-19 15:31: a configuration change accepted at the
+    submission, and the first driver raising in its first tick. The flag
+    reaches the first driver only, so its successor goes on only if the
+    acceptance was saved before that tick (block 1, amendment (e))."""
+    root = _tmp()
+    path, cfg = _project(root, walltime="00:01:00")
+    env = _env(root, sleep="6")
+    wr = cfg["paths"]["work_root"]
+    try:
+        rc, out = _pl(root, env, "submit")
+        assert rc == 0, out
+        _wait_for(cfg, "A: running")
+        rc, out = _pl(root, env, "stop", "--wait", "60")
+        assert rc == 0 and "the sequencer has stopped" in out, out
+        _wait_quiet(root, timeout=60)
+        d = json.loads(json.dumps(cfg))
+        d["search"]["gp_rounds"] = 22
+        with open(path, "w") as fh:
+            json.dump(d, fh, indent=1, sort_keys=True)
+        new_sha = C.load_config(path).sha256
+        old_sha = json.load(open(os.path.join(wr, "state.json")))["config_sha256"]
+        assert new_sha != old_sha
+        n0 = len(_read(_plog(cfg)))
+        env2 = _env(root, sleep="0.3", SYNTH_CRASH_ONCE=os.path.join(root, "crashed_once"))
+        rc, out = _pl(root, env2, "submit", "--accept-config-change")
+        assert rc == 0 and "SUBMITTED the sequencer" in out, out
+        end = time.time() + 120
+        while time.time() < end and "the chain ends" not in _read(_plog(cfg))[n0:]:
+            time.sleep(0.25)
+        time.sleep(2.0)
+        after = _read(_plog(cfg))[n0:]
+        assert os.path.isfile(os.path.join(root, "crashed_once")), "the first driver never polled"
+        assert after.count("the sequencer raised RuntimeError") == 1, \
+            "want exactly one driver that raised:\n" + after[-3000:]
+        assert "REFUSE: the configuration changed" not in after, \
+            "the successor refused the change its predecessor accepted:\n" + after[-3000:]
+        assert "PIPELINE DONE" in after, "the chain did not finish:\n" + after[-3000:]
+        assert json.load(open(os.path.join(wr, "state.json")))["config_sha256"] == new_sha
+    finally:
+        _sweep(root, env)
+        shutil.rmtree(root)
+
+
 def _edge_two_drivers():
     root = _tmp()
     path, cfg = _project(root)
@@ -893,7 +943,8 @@ def _edge_retire():
 def test_edge_cases():
     failures = []
     for part in (_edge_drive_without_jobid, _edge_stop_then_submit, _edge_retry_and_config_change,
-                 _edge_crash_loop, _edge_two_drivers, _edge_signal, _edge_retire):
+                 _edge_crash_loop, _edge_two_drivers, _edge_signal, _edge_retire,
+                 _edge_accept_then_crash):
         if os.environ.get("ONLY") and os.environ["ONLY"] not in part.__name__:
             continue
         try:

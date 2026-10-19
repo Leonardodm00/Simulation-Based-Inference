@@ -3,7 +3,9 @@ the runner and the tools are, the tuner's common arguments from the
 configuration, the qsub line of a one-command job, the argv files, the
 JSON helpers and the clock; since 2026-10-18 the node-fault signature
 (D-096) and the checkpoint check (D-097) that the trials and the members
-share.
+share; since 2026-10-19 the reading of a record a node fault may have
+left without its bytes (`try_read_json`, `unreadable_record`) and durable
+writes (`write_json` fsyncs before its rename).
 
 Nothing here names a project (D-091): every path and value comes from the
 configuration.
@@ -26,10 +28,10 @@ import envs as E
 import pbs as PBS
 
 __all__ = ["paths_of", "tuner_common_args", "shard_globs", "run_tuner", "qsub_line",
-           "write_argv_file", "read_argv_file", "read_json", "write_json", "utc_now",
-           "utc_to_epoch", "elapsed_hours", "mem_to_gb", "job_name", "ToolError",
-           "node_fault", "read_log_tail", "host_of_log", "checkpoint_problem",
-           "set_aside_bad_checkpoints", "LOG_GRACE_S"]
+           "write_argv_file", "read_argv_file", "read_json", "try_read_json", "write_json",
+           "set_aside", "utc_now", "utc_to_epoch", "elapsed_hours", "mem_to_gb", "job_name",
+           "ToolError", "node_fault", "read_log_tail", "host_of_log", "checkpoint_problem",
+           "set_aside_bad_checkpoints", "unreadable_record", "LOG_GRACE_S", "RECORD_GRACE_S"]
 
 
 class ToolError(RuntimeError):
@@ -220,7 +222,31 @@ def read_json(path):
         return json.loads(fh.read().decode("ascii", "replace"))
 
 
+def try_read_json(path):
+    """(object, None) when `path` holds a JSON object, else (None, problem);
+    never raises. `problem` names the error and the file's size, `<Exc>:
+    <message> (<n> bytes[, all NUL])`, or `not a JSON object (<type>; <n>
+    bytes)`; a file that cannot be opened gives `<OSError>: ...` (SPEC
+    block 7, an unreadable record, amended 2026-10-19)."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError as exc:
+        return None, "%s: %s" % (type(exc).__name__, exc)
+    try:
+        obj = json.loads(raw.decode("ascii", "replace"))
+    except ValueError as exc:
+        nul = ", all NUL" if raw and raw.count(b"\0") == len(raw) else ""
+        return None, "%s: %s (%d bytes%s)" % (type(exc).__name__, exc, len(raw), nul)
+    if not isinstance(obj, dict):
+        return None, "not a JSON object (%s; %d bytes)" % (type(obj).__name__, len(raw))
+    return obj, None
+
+
 def write_json(path, obj):
+    """Atomic and durable: a temporary file, flushed and fsynced, then
+    renamed -- a node that goes down after the rename leaves the file with
+    its bytes (amended 2026-10-19)."""
     d = os.path.dirname(path)
     if d and not os.path.isdir(d):
         os.makedirs(d)
@@ -228,8 +254,22 @@ def write_json(path, obj):
     blob = json.dumps(obj, indent=1, sort_keys=True, ensure_ascii=True)
     with open(tmp, "w") as fh:
         fh.write(blob + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
     os.replace(tmp, path)
     return path
+
+
+def set_aside(path, suffix):
+    """Move `path` to `<path>.<suffix><k>`, the first k >= 1 not taken (a
+    move aside is not a deletion, D-095; an earlier one is never
+    overwritten); return the new path."""
+    k = 1
+    while os.path.lexists("%s.%s%d" % (path, suffix, k)):
+        k += 1
+    aside = "%s.%s%d" % (path, suffix, k)
+    os.replace(path, aside)
+    return aside
 
 
 def utc_now():
@@ -267,6 +307,50 @@ def walltime_seconds(text):
 # A failed trial's job log is awaited this long after the failure is seen,
 # for the scheduler's copy of the log to land (as the bank stage's grace).
 LOG_GRACE_S = 300.0
+
+# A record that exists but cannot be read is read again this long from the
+# first failed read, then set aside (SPEC block 7, an unreadable record,
+# amended 2026-10-19); the tests shorten it through the environment.
+RECORD_GRACE_S = float(os.environ.get("PIPELINE_RECORD_GRACE_S", "300"))
+
+
+def unreadable_record(holder, path, problem, log, who, what="record", grace=True,
+                      host=None, then="the job is taken as one that ended without a record"):
+    """A record that exists and cannot be read (empty, zeros, cut short:
+    what a node that goes down after the rename leaves). Returns True while
+    it is read again -- the first failed read is logged and its time kept
+    in `holder["record_unreadable_since"]` (`holder` is the trial's or the
+    member's state) -- and False once it has been moved to
+    `<path>.unreadable<k>` (kept, out of every record glob; listed in
+    `holder["unreadable_records"]`): the caller then goes on by `then`.
+    `grace` False (no job of the stage runs: a fresh state, a stage's
+    start): moved aside at once. A move that fails is logged and tried
+    again at the next poll (True), never raised."""
+    now = time.time()
+    if grace:
+        since = holder.get("record_unreadable_since")
+        if since is None:
+            holder["record_unreadable_since"] = now
+            log("%s: its %s %s cannot be read (%s); read again for up to %d s"
+                % (who, what, path, problem, int(RECORD_GRACE_S)))
+            return True
+        if now - float(since) < RECORD_GRACE_S:
+            return True
+    try:
+        aside = set_aside(path, "unreadable")
+    except OSError as exc:
+        log("%s: its %s %s cannot be read (%s) and could not be set aside (%s); tried again "
+            "at the next poll" % (who, what, path, problem, exc))
+        holder.setdefault("record_unreadable_since", now)
+        return True
+    holder.pop("record_unreadable_since", None)
+    holder.setdefault("unreadable_records", []).append(
+        {"record": os.path.basename(aside), "problem": problem, "host": host,
+         "utc": utc_now()})
+    log("%s: its %s could not be read%s (%s); set aside as %s%s; %s"
+        % (who, what, (" for %d s" % int(RECORD_GRACE_S)) if grace else "", problem,
+           os.path.basename(aside), (" (last job on %s)" % host) if host else "", then))
+    return False
 
 _SIGBUS = int(getattr(signal, "SIGBUS", 7))
 # SIGBUS seen through an exit code: bash's 128 + n for a direct child (a
@@ -371,9 +455,7 @@ def set_aside_bad_checkpoints(run_dir, log, stage, who):
             log("%s: %s checkpoint %s could not be checked (%s); left in place"
                 % (stage, who, os.path.basename(p), why))
             continue
-        k = len(glob.glob(glob.escape(p) + ".corrupt*")) + 1
-        dst = "%s.corrupt%d" % (p, k)
-        os.replace(p, dst)
+        dst = set_aside(p, "corrupt")
         log("%s: %s checkpoint %s failed its CRC check (%s); moved aside as %s; it restarts "
             "from epoch 0" % (stage, who, os.path.basename(p), why, os.path.basename(dst)))
         moved.append(dst)

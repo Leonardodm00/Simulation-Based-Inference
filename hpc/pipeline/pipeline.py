@@ -696,6 +696,14 @@ def _dry_run(cfg, graph, state, log):
     return EXIT_OK
 
 
+def _keep_prepared(state):
+    """The state as `_prepare_state` left it -- an accepted configuration
+    change, the --retry resets -- saved before the first tick, so a first
+    tick that raises does not lose them: the next driver carries neither
+    flag (block 1, amended 2026-10-19 (e))."""
+    state.save()
+
+
 def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
         accept_config_change=False, break_lock=False, pbs_module=PBS,
         max_ticks=None, log=None, until=None, on_tick=None):
@@ -751,6 +759,7 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                 log(line)
             _END["why"] = "refused"
             return EXIT_CONFIG
+        _keep_prepared(state)
         log("sequencer started: %s on %s, %d stage(s), poll %.1f s%s"
             % (_holder_token().replace(":", " "), socket.gethostname(), len(graph), poll_seconds,
                (", until %s" % time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(until)))

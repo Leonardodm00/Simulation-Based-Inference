@@ -20,7 +20,12 @@ SIGBUS); eio, eshutdown (an uncaught OSError [Errno 5] / BrokenPipeError
 [Errno 108], as davinci printed them on 2026-10-18); value (an uncaught
 ValueError: not a node fault); stop1_flip / stop1_trunc (the real runner
 with --stop-after-epoch 1, then the checkpoint corrupted: one byte flipped
-inside a member, or the file cut in half); sleep<N>_ok (sleep N s, then ok).
+inside a member, or the file cut in half); sleep<N>_ok (sleep N s, then ok);
+empty_record / nul_record (davinci, 2026-10-19: a node that goes down after
+a record's rename and before its bytes reach the disk): the record the job
+would have left -- a trial's ledger record `<campaign>/trials/<id>.json`, a
+member's own `<out_dir>/lost_seed<k>.json` -- written empty, or as NUL
+bytes, then the tuner (a trial's) and this process killed with SIGKILL.
 
 Pure ASCII, LF only; stdlib only.
 """
@@ -115,6 +120,29 @@ def _corrupt(out_dir, how):
     print("fault_runner: checkpoint %s corrupted (%s)" % (p, how), flush=True)
 
 
+def _lost_record(out_dir, nul):
+    """Leave the record of a job whose node went down (the action's doc)."""
+    d = os.path.normpath(out_dir)
+    name = os.path.basename(d)
+    if name.startswith("member_seed"):
+        path = os.path.join(d, "lost_seed%s.json" % name[len("member_seed"):])
+        tuner = False
+    else:
+        path = os.path.join(os.path.dirname(os.path.dirname(d)), "trials", name + ".json")
+        tuner = True
+    if not os.path.isdir(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
+    with open(path, "wb") as fh:
+        fh.write(b"\0" * 1187 if nul else b"")
+    print("fault_runner: %s: record %s left %s; the node goes down" % (
+        name, path, "as NUL bytes" if nul else "empty"), flush=True)
+    if tuner:
+        os.kill(os.getppid(), signal.SIGKILL)
+    os.kill(os.getpid(), signal.SIGKILL)
+    time.sleep(30)
+    return 97
+
+
 def main():
     argv = sys.argv[1:]
     if "--probe-steps" in argv:
@@ -139,6 +167,8 @@ def main():
     if action == "value":
         raise ValueError("Expected parameter loc (Tensor of shape (16, 23)) to satisfy the "
                          "constraint Real(), but found invalid values")
+    if action in ("empty_record", "nul_record"):
+        return _lost_record(out_dir, action == "nul_record")
     if action in ("stop1_flip", "stop1_trunc"):
         rc = _run_real(["--stop-after-epoch", "1"])
         if rc != 0:

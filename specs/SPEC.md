@@ -695,6 +695,20 @@ fixture, not part of the pipeline.
     <b>; in flight per the state file: <n> in <k> job(s)` (and the unknown
     ones).
   - Tests: `tests/test_smoke_block1c.py`.
+- Amended 2026-10-19 (e) (found on davinci 2026-10-19 15:31; Claude's fix,
+  `[proposed]`): `run` saves the state once its refusals are checked and
+  before its first tick (`_keep_prepared`), so an accepted configuration
+  change and the `--retry` resets reach the state file even when the first
+  tick raises; a refused run writes nothing. Before, the first save came
+  with the first stage's poll: driver 1852795 accepted v9 and raised in its
+  first tick (block 7, an unreadable record); its successor, without the
+  one-time flag, read the old digest and refused (`REFUSE: the configuration
+  changed ...`), and the chain ended. Test oracle (`test_smoke_block1b.py`,
+  edge cases): a configuration change accepted at submission and a first
+  driver that raises in its first tick (the synthetic graph's
+  `SYNTH_CRASH_ONCE`): one `raised`, no `REFUSE`, `PIPELINE DONE`, the
+  state's digest the file's; mutation `early_save` (the save removed) -> the
+  check FAILS.
 - Confirmed: yes 2026-10-15 (the user's answers to the build handoff's Q1-Q7
   and the follow-up; D-090..D-093)
 - Status: smoke-tested 2026-10-15 (6 pass, 1 skip: convergence, not a
@@ -742,6 +756,11 @@ fixture, not part of the pipeline.
   `OTHER_HOST = gethostname() + "-elsewhere"`, which is never the running
   host; 6 pass, 1 skip under both names, the `heartbeat` and `lock_check`
   mutations still caught under both. The code was right.]
+  [2026-10-19, amendment (e): `test_smoke_block1b.py` 6 pass, 1 skip with
+  `_edge_accept_then_crash` in `test_edge_cases`; under the mutation
+  `early_save` it FAILS with davinci's three lines of 15:31-15:32 (`the
+  sequencer raised RuntimeError ... the successor ... continues`, `REFUSE:
+  the configuration changed ...`, `the chain ends (refused, exit 2)`).]
 
 ### Block 2: the bank stages S4-S6 (`stages/bank.py`)
 
@@ -1606,6 +1625,121 @@ fixture, not part of the pipeline.
   two 1-core jobs, `max_concurrent_trials` 3: the gate's 3 probes and the
   trials never more than two at once, the members of 2 cores one at a
   time, nothing over the cap in the fake PBS's records).
+- An unreadable record [amended 2026-10-19; D-096 applied to a record that
+  a node fault left without its bytes: Claude's reading, `[proposed]`].
+  Found on davinci 2026-10-19 (the read-only check of 15:48): the first
+  driver job (1852795 on dvnode002, `--accept-config-change`) marked four
+  trials ok and then raised `json.decoder.JSONDecodeError: Expecting
+  value: line 1 column 1 (char 0)` in `_finish_trial_job`, reading the
+  ledger record of a trial whose job had ended: the file existed and held
+  no JSON (empty, or zeros) -- what a write through a temporary file and a
+  rename WITHOUT an fsync leaves when the node goes down after the rename
+  and before the data reach the disk `[reasoning]`. The login-node
+  sequencer of `f1a2b7a`, which read the record the same way, last wrote
+  the state at 05:52Z; it most likely raised on the same file
+  `[reasoning; not confirmed]`.
+  - `common.try_read_json(path) -> (dict, None) | (None, problem)`: never
+    raises; `problem` names the error and the size, `<Exc>: <message> (<n>
+    bytes[, all NUL])`; a JSON value that is not an object is a problem
+    (`not a JSON object (<type>)`); a file that cannot be opened is
+    `OSError: ...`.
+  - `common.RECORD_GRACE_S`: `PIPELINE_RECORD_GRACE_S` from the
+    environment, default 300 (as `LOG_GRACE_S`; the tests set 2).
+    `common.set_aside(path, suffix) -> new path`: `<path>.<suffix><k>`, the
+    first k >= 1 not taken (an earlier one is never overwritten); the
+    node-fault, killed and corrupt-checkpoint moves use it too (the same
+    names as before when the numbering has no gap).
+  - The search: a trial whose last job ended and whose ledger record
+    exists but cannot be read stays `running` (its slot held), read again
+    at every poll; the first failed read logs `search: trial <id12>: its
+    ledger record <path> cannot be read (<problem>); read again for up to
+    <g> s`. A read that succeeds in the meantime decides, as any record.
+    After RECORD_GRACE_S from the first failed read the record is moved to
+    `trials/<id>.json.unreadable<k>` (k = 1, 2, ...; kept, out of the
+    ledger's `*.json`; D-095), the move recorded in the trial's
+    `unreadable_records` with its host (the last job log's), and logged
+    `search: trial <id12>: its ledger record could not be read for <g> s
+    (<problem>); set aside as <name> (last job on <host>); the trial is
+    taken as a job that ended without a record` -- then the rule of such a
+    job: resubmitted
+    with `--resume` (at once when it fits, else `waiting`) within
+    `trial.max_resubmits`, else the pipeline's `killed` record. The same
+    in `_examine` (a failed trial whose record cannot be read when it is
+    examined: the grace from the examination's start, then the record set
+    aside and the same rule); in `_refresh_from_ledger` (a fresh state, a
+    `--retry search`: no job of the stage runs, so no grace -- the record
+    set aside at once, the trial left `waiting`, or recorded `killed` when
+    no pending spec is left); `_revive_killed` and the killed record's
+    configuration read an unreadable file as absent; the budget gate reads
+    an unreadable probe file as a failed probe (`probe b<k>: <path> cannot
+    be read (<problem>)`).
+  - A trial that ended without a record and has no pending spec cannot be
+    resubmitted (the tuner reads its configuration there): the pipeline's
+    `killed` record at once, `search: trial <id12> ended without a record
+    and has no pending spec to resubmit from (job <id> exit <e>); recorded
+    killed` (before: resubmitted up to `max_resubmits` times, each job
+    failing at its start). An ok record whose bytes were lost leaves no
+    pending spec (the tuner removes it after the write), so such a trial is
+    recorded killed: its configuration is nowhere else.
+  - The best fit: a member's record (`*_seed<k>.json`, the runner's) that
+    cannot be read keeps the member `running` for RECORD_GRACE_S, then is
+    moved to `<name>.unreadable<k>` (out of the record's glob) and the
+    member follows the rule of a job that ended without a record (a node
+    fault in its log, a refusal, else `--resume` within
+    `best_fit.max_resubmits`); at the stage's start (no member job runs)
+    at once, the member then `waiting`.
+  - The writers: `common.write_json` and the tuner's `write_record` flush
+    and fsync the temporary file before the rename, so a record that names
+    an ended job holds its bytes on the file system. The runner's own
+    record is not changed (block 6; the member rule covers it). The trial
+    jobs that run on davinci keep the tuner they started with.
+  - `tools/search_report.py --config <file>` (read-only; stdlib; writes
+    nothing): per trial the state's status, round, jobs and resubmissions,
+    the last job's exit and log (host, `RUN_ARGV EXIT`, the last error
+    line), the ledger record (status, nll, error) or why it cannot be
+    read, the set-aside records, the pending spec, the run folder's
+    checkpoint and runner record, and what the next poll does with it by
+    the stage's own rules (`common.node_fault`, `try_read_json`): ok, final
+    failure, a node fault healed, an unreadable record set aside and
+    resubmitted or killed; then the counts, the failures' errors grouped,
+    and `SEARCH REPORT OK: <n> trial(s) read; nothing was written`.
+  - Test oracles: `test_smoke_block7b.py` (the fault wrapper's
+    `empty_record` and `nul_record`: a zero-byte, or NUL-filled, ledger
+    record written by the runner's wrapper, which then kills the tuner and
+    itself with SIGKILL -- a node that went down after the rename; for a
+    member, its own record): `unreadable_record` -- trial 1 `empty_record`
+    then ok, trial 2 `nul_record` then ok, two trials ok, member seed 1
+    `empty_record` then ok: no traceback, `PIPELINE DONE`, the records set
+    aside as `.unreadable1` (0 bytes; NUL bytes), the second argv of trials
+    1 and 2 with `--resume`, 4 records ok, 6 trial and 3 member
+    submissions; `unreadable_units` (no scheduler) -- try_read_json's known
+    answers; the grace then the move; an unreadable record and no pending
+    spec: killed at once with the reason; a failed record never examined
+    that cannot be read: set aside, queued again; a fresh state's refresh:
+    set aside at once, no crash; write_json fsyncs; mutation `unreadable`
+    (the read that raises restored) -> `unreadable_record` FAILS.
+    `tests/test_smoke_report.py` (stdlib; runs on davinci): a hand-made
+    campaign folder and state (ok, a SIGBUS failure, a ValueError failure,
+    an empty record with its pending spec, a NUL record without, a running
+    trial): the report's rows and counts, its predictions, the pass line,
+    and every file's bytes and mtime unchanged; mutation `classify` -> its
+    check FAILS.
+  - Status: smoke-tested 2026-10-19 (`test_smoke_block7b.py` 6 pass, 1 skip,
+    about 4 minutes -- `unreadable_units` and `unreadable_record` run in
+    `test_edge_cases`; the mutation `unreadable` makes `unreadable_record`
+    FAIL: the sequencer raises, as on davinci; `test_smoke_report.py` 5
+    pass, 1 skip, the mutation `classify` caught; the regression: blocks 1 6
+    pass, 1b 6 pass, 1c 7 pass, 2 12 pass, 3 7 pass, 7 7 pass, 8 1 pass).
+    Rehearsed with the code of `f1a2b7a` itself (not in the repository's
+    tests): its login-node sequencer read a trial's empty ledger record,
+    raised `JSONDecodeError` and left no lock -- what davinci showed at
+    10:28 -- and the new chain, submitted with `--accept-config-change`,
+    read the record again for the grace, set it aside, ran the trial again
+    with `--resume` and finished (PIPELINE DONE, no driver raised); the
+    report, run on the state the old code left, said so before the
+    submission. Not in the sandbox: davinci's file system (whether its lost
+    writes leave zero bytes or zeros: both are tested), the cost of an fsync
+    there.
 
 ### Block 8: end to end on the stand-in and the delivery
 

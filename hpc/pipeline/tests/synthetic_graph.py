@@ -22,7 +22,9 @@ sequencer's jobs running this file again (block 1 amended 2026-10-18 (c):
 the driver chain under the fake PBS). There the stages' behaviour comes
 from the environment, which the fake PBS hands to its jobs:
 SYNTH_REFUSE=A,B, SYNTH_SILENT_KILL=..., SYNTH_CRASH_POLL=... (that stage's
-poll raises: a sequencer that crashes), SYNTH_JOB_SLEEP=<s> (each job's
+poll raises: a sequencer that crashes), SYNTH_CRASH_ONCE=<path> (the first
+poll of any stage raises once, the file <path> marking that it has: a
+first driver that crashes in its first tick), SYNTH_JOB_SLEEP=<s> (each job's
 sleep, default 0.3), MUTATION_PATCH=<python> (exec'd before the command:
 block 1b's mutations). For the core cap (D-099, block 1c's test), in every
 mode: SYNTH_PARALLEL=1 makes A and B independent (C after both),
@@ -125,6 +127,10 @@ class SyntheticStage(S.Stage):
     def poll(self, cfg, st, sub):
         if self.name in _env_list("SYNTH_CRASH_POLL"):
             raise RuntimeError("synthetic crash in the poll of %s" % self.name)
+        once = os.environ.get("SYNTH_CRASH_ONCE")
+        if once and not os.path.exists(once):
+            open(once, "w").close()
+            raise RuntimeError("synthetic crash, once, in the poll of %s" % self.name)
         if os.environ.get("SYNTH_POLL_ASK"):
             sub.fits(int(os.environ["SYNTH_POLL_ASK"]))
         return S.Stage.poll(self, cfg, st, sub)

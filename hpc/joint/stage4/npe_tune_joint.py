@@ -360,6 +360,10 @@ def write_record(root: str, campaign_name: str, record: Dict[str, Any]) -> str:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="ascii") as fh:
         json.dump(record, fh, indent=2, sort_keys=True)
+        # [2026-10-19] durable before the rename: a node that goes down after
+        # it no longer leaves an empty record (the pipeline's SPEC, block 7)
+        fh.flush()
+        os.fsync(fh.fileno())
     os.replace(tmp, path)          # atomic: a killed job leaves no half file
     return path
 

@@ -33,6 +33,12 @@ another search refused:
                file-system error in its log -- sets the record aside
                (`<id>.json.nodefault<k>`) and queues the trial again with
                --resume, within the same `max_resubmits`, else `killed`;
+               a ledger record that exists but cannot be read (empty or
+               zeros: a node that went down after the rename) is read
+               again for `RECORD_GRACE_S`, then set aside
+               (`<id>.json.unreadable<k>`) and taken as no record; a trial
+               with no pending spec left is recorded `killed` (amended
+               2026-10-19);
                before any submission a checkpoint whose zip CRCs fail is
                moved aside (`.corrupt<k>`, D-097); a round is complete when
                every trial of it is ok, failed or killed; the clock (D-090, elapsed) starts
@@ -118,7 +124,7 @@ class SearchStage(Stage):
         sub["identity"] = ident
         return ident
 
-    def _rounds_file(self, cfg, st):
+    def _rounds_file(self, cfg, st, log=None):
         """Create or check `pipeline_rounds.json`: a results folder that
         holds a search of another identity (another bank, split, space
         or campaign) is refused rather than mixed (block 7's proposal 2)."""
@@ -150,7 +156,7 @@ class SearchStage(Stage):
                         sub["trials"][tid] = {"round": r["round"], "jobs": [], "resubmits": 0,
                                               "status": "waiting"}
                 sub["round"] = len(sub["rounds"]) - 1
-                self._refresh_from_ledger(cfg, st)
+                self._refresh_from_ledger(cfg, st, log)
                 self._revive_killed(cfg, st)
             return rf
         rf = {"schema": "pipeline_rounds/1", "identity": ident, "config_sha256": cfg.sha256,
@@ -260,7 +266,10 @@ class SearchStage(Stage):
             if pj is None:
                 return {"ok": False, "reason": "probe b%s wrote no *_probe.json in %s (its job "
                                                "failed; see its log)" % (b, pdir), "probes": rows}
-            rec = CM.read_json(pj)
+            rec, problem = CM.try_read_json(pj)
+            if rec is None:
+                return {"ok": False, "probes": rows,
+                        "reason": "probe b%s: %s cannot be read (%s)" % (b, pj, problem)}
             proj = rec.get("projected_trial_seconds")
             rows[b] = {"t_step_s": rec.get("step_seconds"),
                        "t_val_row_s": rec.get("val_row_seconds"),
@@ -380,15 +389,44 @@ class SearchStage(Stage):
     def _record_path(self, cfg, tid):
         return os.path.join(self._dirs(cfg)["ledger"], tid + ".json")
 
-    def _refresh_from_ledger(self, cfg, st):
+    def _refresh_from_ledger(self, cfg, st, log=None):
         """Trials whose ledger record exists are terminal whatever their
-        jobs say (a fresh state after --retry)."""
-        for tid, tr in st["sub"]["trials"].items():
+        jobs say (a fresh state after --retry). A record that cannot be
+        read is set aside at once (no job of the stage runs here) and the
+        trial left as it is, or recorded killed when no pending spec is
+        left to run it from (amended 2026-10-19)."""
+        log = log or (lambda text: None)
+        for tid, tr in sorted(st["sub"]["trials"].items()):
             rp = self._record_path(cfg, tid)
-            if os.path.isfile(rp):
-                rec = CM.read_json(rp)
-                tr["status"] = str(rec.get("status", "ok"))
-                tr["nll"] = rec.get("nll")
+            if not os.path.isfile(rp):
+                continue
+            rec, problem = CM.try_read_json(rp)
+            if rec is None:
+                pend = os.path.join(self._dirs(cfg)["pending"], tid + ".json")
+                if self._record_unreadable(cfg, st, tid, rp, problem, log, grace=False,
+                                           then=("the trial is left %s" % tr["status"])
+                                           if os.path.isfile(pend) else
+                                           "no pending spec is left to run it from"):
+                    continue
+                if not os.path.isfile(pend):
+                    self._write_killed_record(cfg, st, tid, "killed: its ledger record could not "
+                                                            "be read and no pending spec is left "
+                                                            "to run it from")
+                    tr["status"] = "killed"
+                    log("search: trial %s recorded killed (no record to read, no pending spec)"
+                        % tid[:12])
+                continue
+            tr["status"] = str(rec.get("status", "ok"))
+            tr["nll"] = rec.get("nll")
+
+    def _record_unreadable(self, cfg, st, tid, rp, problem, log, grace=True,
+                           then="the trial is taken as a job that ended without a record"):
+        """common.unreadable_record for a trial's ledger record, with the
+        host of its last job log (amended 2026-10-19)."""
+        _, text = self._latest_log(cfg, tid)
+        return CM.unreadable_record(st["sub"]["trials"][tid], rp, problem, log,
+                                    "search: trial %s" % tid[:12], what="ledger record",
+                                    grace=grace, host=CM.host_of_log(text), then=then)
 
     def _revive_killed(self, cfg, st):
         """A fresh state (a --retry) gives every trial the pipeline recorded
@@ -403,11 +441,11 @@ class SearchStage(Stage):
             if tr["status"] != "killed":
                 continue
             rp = self._record_path(cfg, tid)
-            rec = CM.read_json(rp) if os.path.isfile(rp) else {}
+            rec = (CM.try_read_json(rp)[0] or {}) if os.path.isfile(rp) else {}
             if rec.get("recorded_by") != "pipeline" or not rec.get("config"):
                 continue
-            n = len(glob.glob(rp + ".killed*")) + 1
-            os.replace(rp, "%s.killed%d" % (rp, n))
+            aside = CM.set_aside(rp, "killed")
+            n = int(aside[len(rp) + len(".killed"):])
             pend = os.path.join(dirs["pending"], tid + ".json")
             if not os.path.isfile(pend):
                 CM.write_json(pend, {"trial_id": tid, "campaign": rec.get("campaign"),
@@ -427,7 +465,8 @@ class SearchStage(Stage):
         id); the pending file is removed."""
         dirs = self._dirs(cfg)
         pend = os.path.join(dirs["pending"], tid + ".json")
-        cfg_json = CM.read_json(pend).get("config") if os.path.isfile(pend) else None
+        cfg_json = ((CM.try_read_json(pend)[0] or {}).get("config") if os.path.isfile(pend)
+                    else None)
         rec = {"trial_id": tid, "campaign": cfg.data["search"]["campaign"], "config": cfg_json,
                "status": "killed", "error": why, "tag": "",
                "split_hash": st["sub"]["identity"]["split_hash"],
@@ -440,12 +479,20 @@ class SearchStage(Stage):
 
     def _finish_trial_job(self, cfg, st, pbs, tid, job, log):
         """The trial's last job ended: ok / failed from its record, or a
-        kill: resubmit with --resume, or record it killed."""
+        kill: resubmit with --resume, or record it killed. A record that
+        cannot be read is read again for RECORD_GRACE_S, then set aside and
+        taken as no record; a trial with no pending spec left cannot be
+        resubmitted and is recorded killed (amended 2026-10-19)."""
         s = cfg.data["search"]
         tr = st["sub"]["trials"][tid]
         rp = self._record_path(cfg, tid)
+        rec = None
         if os.path.isfile(rp):
-            rec = CM.read_json(rp)
+            rec, problem = CM.try_read_json(rp)
+            if rec is None and self._record_unreadable(cfg, st, tid, rp, problem, log):
+                return                   # read again at the next poll
+            tr.pop("record_unreadable_since", None)
+        if rec is not None:
             if str(rec.get("status", "ok")) == "failed" and s["resubmit_node_faults"]:
                 # D-096: not final until its evidence says it was not the node's fault
                 tr["status"] = "examining"
@@ -462,6 +509,16 @@ class SearchStage(Stage):
             log("search: trial %s %s%s" % (tid[:12], tr["status"],
                                            (" nll %.6f" % tr["nll"]) if tr.get("nll") is not None
                                            else ""))
+            return
+        if not os.path.isfile(os.path.join(self._dirs(cfg)["pending"], tid + ".json")):
+            # the tuner reads the configuration there: a resubmission would fail at its start
+            self._write_killed_record(cfg, st, tid, "killed: the job ended without a record and no "
+                                                    "pending spec is left to resubmit from (last "
+                                                    "job %s exit %s)" % (job["id"],
+                                                                         job.get("exit_status")))
+            tr["status"] = "killed"
+            log("search: trial %s ended without a record and has no pending spec to resubmit from "
+                "(job %s exit %s); recorded killed" % (tid[:12], job["id"], job.get("exit_status")))
             return
         if s["resubmit_killed"] and tr["resubmits"] < int(s["trial"]["max_resubmits"]):
             tr["resubmits"] += 1
@@ -512,7 +569,17 @@ class SearchStage(Stage):
             log("search: trial %s has no ledger record any more; %s" % (
                 tid[:12], "queued again" if tr["status"] == "waiting" else "left failed (no pending spec)"))
             return
-        rec = CM.read_json(rp)
+        rec, problem = CM.try_read_json(rp)
+        if rec is None:
+            # amended 2026-10-19: read again for RECORD_GRACE_S, then set aside
+            if self._record_unreadable(cfg, st, tid, rp, problem, log,
+                                       then="the trial is taken as one with no record"):
+                return
+            tr["fault_checked"] = True
+            tr.pop("examining_since", None)
+            self._requeue_or_kill(cfg, st, tid, "had no readable ledger record", log)
+            return
+        tr.pop("record_unreadable_since", None)
         if str(rec.get("status", "ok")) != "failed":
             # the record was replaced meanwhile: it decides, as any record
             tr["fault_checked"] = True
@@ -555,9 +622,7 @@ class SearchStage(Stage):
                 return
             CM.write_json(pend, {"trial_id": tid, "campaign": rec.get("campaign"),
                                  "config": rec["config"]})
-        k = len(glob.glob(glob.escape(rp) + ".nodefault*")) + 1
-        aside = "%s.nodefault%d" % (rp, k)
-        os.replace(rp, aside)
+        aside = CM.set_aside(rp, "nodefault")
         tr.setdefault("node_faults", []).append({"host": host, "why": why,
                                                  "record": os.path.basename(aside),
                                                  "jobs": list(tr["jobs"]), "utc": CM.utc_now()})
@@ -580,6 +645,30 @@ class SearchStage(Stage):
         log("search: trial %s NODE FAULT on %s (%s); record set aside as %s; no resubmission "
             "left: recorded killed; %d node fault(s) on %s so far"
             % (tid[:12], host, why, os.path.basename(aside), n_host, host))
+
+    def _requeue_or_kill(self, cfg, st, tid, what, log):
+        """A trial left with no usable record away from its job's end (`what`
+        says why; amended 2026-10-19): `waiting`, with --resume next, within
+        trial.max_resubmits when its pending spec is there; else the
+        pipeline's `killed` record (revivable by --retry search when it has
+        a configuration)."""
+        s = cfg.data["search"]
+        tr = st["sub"]["trials"][tid]
+        pend = os.path.join(self._dirs(cfg)["pending"], tid + ".json")
+        mx = int(s["trial"]["max_resubmits"])
+        tr.pop("nll", None)
+        if os.path.isfile(pend) and tr["resubmits"] < mx:
+            tr["resubmits"] += 1
+            tr["status"] = "waiting"
+            tr["resume_next"] = True
+            log("search: trial %s %s; queued again with --resume (%d of %d)"
+                % (tid[:12], what, tr["resubmits"], mx))
+            return
+        why = ("no pending spec is left to resubmit from" if not os.path.isfile(pend)
+               else "no resubmission left after %d" % tr["resubmits"])
+        self._write_killed_record(cfg, st, tid, "killed: %s; %s" % (what, why))
+        tr["status"] = "killed"
+        log("search: trial %s %s; %s: recorded killed" % (tid[:12], what, why))
 
     def _sweep_failed(self, cfg, st, log):
         """Every poll: the trials still being examined, and those recorded
@@ -657,8 +746,8 @@ class SearchStage(Stage):
         sub = st["sub"]
         log_path = self._log_path(cfg)
         self._identity(cfg, st, log_path)
-        self._rounds_file(cfg, st)
-        self._refresh_from_ledger(cfg, st)
+        self._rounds_file(cfg, st, pbs.log)
+        self._refresh_from_ledger(cfg, st, pbs.log)
         if sub.get("ended_by"):
             # the folder says the search ended; only the finish is missing
             sub["phase"] = "finishing"

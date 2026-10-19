@@ -3,7 +3,10 @@
 1's (the --retry guard, the requested stop) in specs/SPEC.md: trials and
 members that fail of a node fault are healed; checkpoints whose zip CRCs
 fail are moved aside; a running sequencer stops on request; --retry is
-refused while the stage's jobs run.
+refused while the stage's jobs run; and block 7's amendment of 2026-10-19
+(an unreadable record, davinci's driver 1852795): a ledger or member record
+left empty or as zeros by a node that went down is read again, set aside
+and taken as no record, never a crash of the sequencer.
 
 The trial jobs run the real tuner and, behind `fault_runner.py`, the real
 runner, in a copy of hpc/ (the copy's `stage3/run_joint_arms.py` is the
@@ -12,7 +15,9 @@ wrapper), under the fake PBS on the blocks 4-6 bank fixture.
 Checks (SPEC block 7, "Node faults and corrupt checkpoints", Test oracles)
     test_known_answer   node_fault on the davinci lines of 2026-10-18 and on
                         lines that are not node faults; checkpoint_problem on
-                        a good, a flipped, a truncated and an unreadable file
+                        a good, a flipped, a truncated and an unreadable file;
+                        try_read_json on an object, an empty file, NUL bytes,
+                        a list, a missing file
     test_reference      the committed Giulia configuration (v7) has both
                         keys on, and its dry run names the rule
     test_convergence    not a discretisation: skipped
@@ -25,17 +30,24 @@ Checks (SPEC block 7, "Node faults and corrupt checkpoints", Test oracles)
                         healing off is healed after a requested stop and a
                         restart with it on; no job twice
     test_edge_cases     the checkpoint guard (a flipped byte, a truncated
-                        file) and the stop / --retry guard
+                        file), the stop / --retry guard, and the unreadable
+                        records: unreadable_units (the stage's methods on a
+                        hand-made folder, no scheduler) and unreadable_record
+                        (end to end: trials `empty_record` and `nul_record`,
+                        member seed 1 `empty_record`, each then ok)
     MUTATION=<name>     (environment) re-runs one check against a disabled
                         piece of the code, which must then FAIL: signature,
-                        sweep, guard, retry_guard
+                        sweep, guard, retry_guard, unreadable (the read that
+                        raises restored: unreadable_record)
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block7b.py
         About 5 minutes at one thread. Needs torch, sbi, zuko, scikit-
         optimize (the training environment). Nothing touches davinci.
     python3 hpc/pipeline/tests/test_smoke_block7b.py test_contract
-        One check (any check names on the line).
+        One check (any check names on the line; the parts of
+        test_edge_cases by their own names: checkpoint_guard,
+        stop_and_retry, unreadable_units, unreadable_record).
 
 Pure ASCII, LF only.
 """
@@ -156,6 +168,8 @@ _PATCHES = {
     "sweep": "SS.SearchStage._sweep_failed = lambda self, *a, **k: None",
     "guard": "CM.set_aside_bad_checkpoints = lambda *a, **k: []",
     "retry_guard": "P._unfinished_jobs = lambda st, pbs_module: []",
+    # unreadable_record: the read of 2026-10-19 morning, which raised on an empty record
+    "unreadable": "CM.try_read_json = lambda p: (CM.read_json(p), None)",
 }
 
 
@@ -183,8 +197,44 @@ def _env(spool, **kw):
 
 # ---------------------------------------------------------------- checks ---
 
+def _known_answer_records():
+    """try_read_json: an object, an empty file, NUL bytes, a list, a missing
+    file -- the problems by hand (amended 2026-10-19)."""
+    import stages.common as CM
+    root = tempfile.mkdtemp(prefix="b7b_rec_")
+    try:
+        def put(name, raw):
+            p = os.path.join(root, name)
+            with open(p, "wb") as fh:
+                fh.write(raw)
+            return p
+        assert CM.try_read_json(put("ok.json", b'{"status": "ok", "nll": 1.5}\n')) == \
+            ({"status": "ok", "nll": 1.5}, None)
+        assert CM.try_read_json(put("empty.json", b"")) == \
+            (None, "JSONDecodeError: Expecting value: line 1 column 1 (char 0) (0 bytes)")
+        assert CM.try_read_json(put("nul.json", b"\0" * 5)) == \
+            (None, "JSONDecodeError: Expecting value: line 1 column 1 (char 0) (5 bytes, all NUL)")
+        assert CM.try_read_json(put("cut.json", b'{"status": "o')) == \
+            (None, "JSONDecodeError: Unterminated string starting at: line 1 column 12 (char 11) "
+                   "(13 bytes)"), CM.try_read_json(os.path.join(root, "cut.json"))
+        assert CM.try_read_json(put("list.json", b"[1, 2]")) == \
+            (None, "not a JSON object (list; 6 bytes)")
+        obj, problem = CM.try_read_json(os.path.join(root, "absent.json"))
+        assert obj is None and problem.startswith("FileNotFoundError: [Errno 2] "), problem
+        # set_aside never overwrites: a gap in the numbering is filled, nothing replaced
+        p = put("r.json", b"a")
+        put("r.json.unreadable2", b"kept")
+        assert os.path.basename(CM.set_aside(p, "unreadable")) == "r.json.unreadable1"
+        p = put("r.json", b"b")
+        assert os.path.basename(CM.set_aside(p, "unreadable")) == "r.json.unreadable3"
+        assert open(os.path.join(root, "r.json.unreadable2"), "rb").read() == b"kept"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_known_answer():
     import stages.common as CM
+    _known_answer_records()
     # the davinci lines of 2026-10-18 (trial logs 16641a4d79ce, 4006d8ff495f), verbatim
     fault_lines = [
         "BrokenPipeError: [Errno 108] Cannot send after transport endpoint shutdown: "
@@ -486,9 +536,232 @@ def _test_stop_and_retry():
         shutil.rmtree(root, ignore_errors=True)
 
 
+class _NoRoom(object):
+    """The Submitter as the stages see it, with no cores free: nothing is
+    submitted, a resubmission waits (`waiting`, --resume next)."""
+
+    def __init__(self):
+        self.lines = []
+
+    def log(self, text):
+        self.lines.append(text)
+
+    def fits(self, n):
+        return False
+
+
+class _Cfg(object):
+    def __init__(self, root):
+        self.sha256 = "0" * 64
+        self.data = {"dataset": "synth",
+                     "paths": {"tune_root": root, "runs_root": root},
+                     "search": {"campaign": "S-A1", "train_seed": 0, "resubmit_killed": True,
+                                "resubmit_node_faults": True,
+                                "trial": {"max_resubmits": 2, "ncpus": 1}},
+                     "best_fit": {"resubmit_node_faults": True, "max_resubmits": 1, "ncpus": 1,
+                                  "member_seeds": [1, 2]}}
+
+
+def _test_unreadable_units():
+    """The stage's methods on a hand-made folder (no scheduler): the grace,
+    then the move; no pending spec; a failed record never examined; a fresh
+    state's refresh; a member's record; an unreadable probe file; the fsync
+    of write_json."""
+    import stages.common as CM
+    import stages.search as SS
+    import stages.best_fit as BF
+    root = tempfile.mkdtemp(prefix="b7b_unr_")
+    grace0 = CM.RECORD_GRACE_S
+    try:
+        cfg = _Cfg(root)
+        stage = SS.SearchStage()
+        dirs = stage._dirs(cfg)
+        for k in ("pending", "ledger", "jobs", "runs"):
+            os.makedirs(dirs[k])
+
+        def trial(tid, status, record=None, pending=True, jobs=("1.fake",)):
+            tr = {"round": 0, "jobs": list(jobs), "resubmits": 0, "status": status}
+            if record is not None:
+                with open(os.path.join(dirs["ledger"], tid + ".json"), "wb") as fh:
+                    fh.write(record)
+            if pending:
+                CM.write_json(os.path.join(dirs["pending"], tid + ".json"),
+                              {"trial_id": tid, "campaign": "S-A1", "config": {"lr": 0.001}})
+            with open(os.path.join(dirs["jobs"], tid + ".0.log"), "w") as fh:
+                fh.write("RUN_ARGV: host dvnode042, job 1.fake, ncpus 1, env x\n"
+                         "fault_runner: the node goes down\nRUN_ARGV EXIT: 137\n")
+            return tr
+
+        ids = ["a" * 64, "b" * 64, "c" * 64, "d" * 64]
+        st = {"sub": {"identity": {"split_hash": "s", "contract_digest": "c"}, "trials": {
+            ids[0]: trial(ids[0], "running", b""),
+            ids[1]: trial(ids[1], "running", b"\0" * 9, pending=False),
+            ids[2]: trial(ids[2], "failed", b"\0" * 3),
+        }}, "jobs": []}
+        job = {"id": "1.fake", "finished": True, "exit_status": 137}
+        pbs = _NoRoom()
+        CM.RECORD_GRACE_S = 0.6
+        # (a) the first failed read: logged, read again; the trial holds its slot
+        stage._finish_trial_job(cfg, st, pbs, ids[0], job, pbs.log)
+        tr0 = st["sub"]["trials"][ids[0]]
+        assert tr0["status"] == "running" and "record_unreadable_since" in tr0, tr0
+        want = ("search: trial %s: its ledger record %s cannot be read (JSONDecodeError: "
+                "Expecting value: line 1 column 1 (char 0) (0 bytes)); read again for up to 0 s"
+                % (ids[0][:12], stage._record_path(cfg, ids[0])))
+        assert len(pbs.lines) == 1 and pbs.lines[0] == want, pbs.lines
+        stage._finish_trial_job(cfg, st, pbs, ids[0], job, pbs.log)
+        assert len(pbs.lines) == 1 and tr0["status"] == "running", "within the grace: silent"
+        time.sleep(0.7)
+        # (b) after the grace: set aside (kept, 0 bytes), then a job that ended without a record
+        stage._finish_trial_job(cfg, st, pbs, ids[0], job, pbs.log)
+        aside = stage._record_path(cfg, ids[0]) + ".unreadable1"
+        assert os.path.isfile(aside) and os.path.getsize(aside) == 0
+        assert not os.path.exists(stage._record_path(cfg, ids[0]))
+        assert tr0["status"] == "waiting" and tr0["resume_next"] and tr0["resubmits"] == 1, tr0
+        assert tr0["unreadable_records"][0]["record"] == os.path.basename(aside) and \
+            tr0["unreadable_records"][0]["host"] == "dvnode042", tr0
+        assert "record_unreadable_since" not in tr0
+        assert ("set aside as %s (last job on dvnode042); the trial is taken as a job that ended "
+                "without a record" % os.path.basename(aside)) in pbs.lines[1], pbs.lines
+        assert "ended without a record (job 1.fake exit 137); queued again with --resume (1 of 2)" \
+            in pbs.lines[2], pbs.lines
+        # (c) an unreadable record and no pending spec: killed at once after the grace
+        stage._finish_trial_job(cfg, st, pbs, ids[1], job, pbs.log)
+        time.sleep(0.7)
+        stage._finish_trial_job(cfg, st, pbs, ids[1], job, pbs.log)
+        tr1 = st["sub"]["trials"][ids[1]]
+        assert tr1["status"] == "killed", tr1
+        rec1 = json.load(open(stage._record_path(cfg, ids[1])))
+        assert rec1["status"] == "killed" and "no pending spec is left to resubmit from" in \
+            rec1["error"] and rec1["recorded_by"] == "pipeline", rec1
+        assert open(stage._record_path(cfg, ids[1]) + ".unreadable1", "rb").read() == b"\0" * 9
+        # (d) a failed record never examined that cannot be read: the grace, then queued again
+        CM.RECORD_GRACE_S = 0.0
+        stage._sweep_failed(cfg, st, pbs.log)
+        tr2 = st["sub"]["trials"][ids[2]]
+        assert tr2["status"] == "examining", tr2
+        stage._sweep_failed(cfg, st, pbs.log)
+        assert tr2["status"] == "waiting" and tr2["resume_next"] and tr2["resubmits"] == 1, tr2
+        assert tr2["fault_checked"] and \
+            os.path.isfile(stage._record_path(cfg, ids[2]) + ".unreadable1")
+        assert any("search: trial %s had no readable ledger record; queued again with --resume "
+                   "(1 of 2)" % ids[2][:12] in ln for ln in pbs.lines), pbs.lines
+        # (e) a fresh state's refresh: set aside at once, never raised; no pending spec -> killed
+        fresh = {"sub": {"identity": {"split_hash": "s", "contract_digest": "c"}, "trials": {
+            ids[3]: trial(ids[3], "waiting", b"", jobs=()),
+            ids[0]: {"round": 0, "jobs": [], "resubmits": 0, "status": "waiting"}}}, "jobs": []}
+        with open(stage._record_path(cfg, ids[0]), "wb") as fh:
+            fh.write(b"")
+        os.remove(os.path.join(dirs["pending"], ids[0] + ".json"))
+        CM.RECORD_GRACE_S = 300.0                   # no grace here whatever its value
+        lines = []
+        stage._refresh_from_ledger(cfg, fresh, lines.append)
+        assert fresh["sub"]["trials"][ids[3]]["status"] == "waiting"
+        assert os.path.isfile(stage._record_path(cfg, ids[3]) + ".unreadable1")
+        assert not os.path.exists(stage._record_path(cfg, ids[3]))
+        assert fresh["sub"]["trials"][ids[0]]["status"] == "killed"
+        assert os.path.isfile(stage._record_path(cfg, ids[0]) + ".unreadable2"), \
+            os.listdir(dirs["ledger"])
+        assert any("the trial is left waiting" in ln for ln in lines) and \
+            any("recorded killed (no record to read, no pending spec)" in ln for ln in lines), lines
+        # (f) a member's record: the grace, the move, then the rule of no record
+        bf = BF.BestFitStage()
+        mdir = bf._member_dir(cfg, 1)
+        os.makedirs(mdir)
+        os.makedirs(bf._dirs(cfg)["jobs"])
+        mlog = os.path.join(bf._dirs(cfg)["jobs"], "member_seed1.0.log")
+        with open(mlog, "w") as fh:
+            fh.write("RUN_ARGV: host dvnode043, job 7.fake\nRUN_ARGV EXIT: 137\n")
+        with open(os.path.join(mdir, "lost_seed1.json"), "wb") as fh:
+            fh.write(b"")
+        mst = {"sub": {"members": {"1": {"jobs": ["7.fake"], "resubmits": 0, "status": "running"}}},
+               "jobs": []}
+        mjob = {"id": "7.fake", "finished": True, "exit_status": 137, "log": mlog}
+        CM.RECORD_GRACE_S = 0.3
+        bf._finish_member_job(cfg, mst, pbs, 1, mjob, pbs.log)
+        assert mst["sub"]["members"]["1"]["status"] == "running"
+        time.sleep(0.4)
+        bf._finish_member_job(cfg, mst, pbs, 1, mjob, pbs.log)
+        m1 = mst["sub"]["members"]["1"]
+        assert m1["status"] == "waiting" and m1["resume_next"] and m1["resubmits"] == 1, m1
+        assert os.path.isfile(os.path.join(mdir, "lost_seed1.json.unreadable1"))
+        assert any("best_fit: member seed 1: its record could not be read for 0 s" in ln and
+                   "(last job on dvnode043)" in ln for ln in pbs.lines), pbs.lines
+        # (g) the budget gate reads an unreadable probe file as a failed probe
+        pdir = os.path.join(dirs["gate"], "b16")
+        os.makedirs(pdir)
+        with open(os.path.join(pdir, "A1_seed0_probe.json"), "wb") as fh:
+            fh.write(b"")
+        cfg.data["search"]["trial"].update({"walltime": "00:10:00", "mem": "4gb"})
+        cfg.data["search"]["budget_gate"] = {"safety_factor": 1.5}
+        gst = {"sub": {"gate": {"probes": {"16": {"probe_json": os.path.join(pdir, "*_probe.json")}}}}}
+        v = stage._gate_verdict(cfg, gst)
+        assert v["ok"] is False and v["reason"].startswith("probe b16: ") and \
+            "cannot be read (JSONDecodeError: Expecting value" in v["reason"], v
+        # (h) write_json fsyncs before its rename
+        calls = []
+        real = os.fsync
+        os.fsync = lambda fd: (calls.append(fd), real(fd))[1]
+        try:
+            CM.write_json(os.path.join(root, "w.json"), {"a": 1})
+        finally:
+            os.fsync = real
+        assert len(calls) == 1 and json.load(open(os.path.join(root, "w.json"))) == {"a": 1}
+    finally:
+        CM.RECORD_GRACE_S = grace0
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _test_unreadable_record():
+    """davinci 2026-10-19: records left empty or as zeros by a node that went
+    down, end to end -- no traceback, each set aside, each trial and member
+    run again with --resume and finished."""
+    root = B7._tmp()
+    try:
+        plan = {"trials": [["empty_record", "ok"], ["nul_record", "ok"], ["ok"], ["ok"]],
+                "members": {"member_seed1": ["empty_record", "ok"], "member_seed2": ["ok"]}}
+        path, c = _fault_project(root, plan, search={"max_concurrent_trials": 1})
+        camp = _seed_probes(c)
+        spool = os.path.join(root, "spool")
+        env = _env(spool)
+        env["PIPELINE_RECORD_GRACE_S"] = "2"
+        rc, out = _run(root, path, [], env, timeout=1500)
+        assert rc == 0 and "PIPELINE DONE" in out and "Traceback" not in out, out[-6000:]
+        t0, t1 = _order(c)[:2]
+        tr = os.path.join(camp, "trials")
+        a0, a1 = (os.path.join(tr, t + ".json.unreadable1") for t in (t0, t1))
+        assert os.path.getsize(a0) == 0, os.listdir(tr)
+        assert open(a1, "rb").read() == b"\0" * 1187
+        for t, size, nul in ((t0, 0, ""), (t1, 1187, ", all NUL")):
+            assert ("search: trial %s: its ledger record %s cannot be read (JSONDecodeError: "
+                    "Expecting value: line 1 column 1 (char 0) (%d bytes%s)); read again for up to "
+                    "2 s" % (t[:12], os.path.join(tr, t + ".json"), size, nul)) in out, out[-6000:]
+            assert "set aside as %s.json.unreadable1 (last job on " % t in out
+            assert "search: trial %s ended without a record (job " % t[:12] in out
+            a_0 = open(os.path.join(camp, "jobs", t + ".0.argv")).read().split("\n")
+            a_1 = open(os.path.join(camp, "jobs", t + ".1.argv")).read().split("\n")
+            assert "--resume" not in a_0 and "--resume" in a_1, t
+        recs = _records(camp)
+        assert len(recs) == 4 and all(r["status"] == "ok" for r in recs.values()), recs
+        best = os.path.join(c["paths"]["runs_root"], "synth_best")
+        assert os.path.getsize(os.path.join(best, "member_seed1",
+                                            "lost_seed1.json.unreadable1")) == 0
+        assert "best_fit: member seed 1: its record " in out and \
+            "best_fit: member seed 1 ended without a record (job " in out and \
+            "resubmitted with --resume (1 of 1)" in out, out[-4000:]
+        bf = json.load(open(os.path.join(best, "BEST_FIT_COMPLETE.json")))
+        assert sorted(m["seed"] for m in bf["members"]) == [1, 2]
+        # submissions: trials 2 + 2 + 1 + 1, members 2 + 1
+        assert B7._n_submitted(spool) == 9, B7._n_submitted(spool)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_edge_cases():
     _test_checkpoint_guard()
     _test_stop_and_retry()
+    _test_unreadable_units()
+    _test_unreadable_record()
 
 
 # ------------------------------------------------------------------ main ---
@@ -497,7 +770,9 @@ CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_refe
           ("test_convergence", test_convergence), ("test_invariants", test_invariants),
           ("test_contract", test_contract), ("test_determinism", test_determinism),
           ("test_edge_cases", test_edge_cases),
-          ("checkpoint_guard", _test_checkpoint_guard), ("stop_and_retry", _test_stop_and_retry)]
+          ("checkpoint_guard", _test_checkpoint_guard), ("stop_and_retry", _test_stop_and_retry),
+          ("unreadable_units", _test_unreadable_units),
+          ("unreadable_record", _test_unreadable_record)]
 
 
 def main():
@@ -509,8 +784,8 @@ def main():
         print("SKIP: the training environment is needed (%s)" % exc)
         return 0
     wanted = [a for a in sys.argv[1:] if not a.startswith("-")]
-    checks = [(n, f) for n, f in CHECKS if (n in wanted if wanted else not n.startswith(("checkpoint",
-                                                                                          "stop_")))]
+    checks = [(n, f) for n, f in CHECKS if (n in wanted if wanted else not n.startswith(
+        ("checkpoint", "stop_", "unreadable")))]
     if MUTATION:
         print("MUTATION=%s: the named piece is disabled; the checks run must FAIL" % MUTATION)
     rows, bad = [], 0

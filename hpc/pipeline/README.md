@@ -200,7 +200,15 @@ the resources of `search.trial`). Its phases, logged as `search: ...` lines:
    <id> NODE FAULT on <node> (<why>); record set aside as <id>.json.
    nodefault<k>; queued again with --resume (<r> of <max>)`, within the
    same `max_resubmits`, then `killed`; any other failure is final,
-   `search: trial <id> failed: not a node fault (...); final`; before any
+   `search: trial <id> failed: not a node fault (...); final`; a ledger
+   record that exists but cannot be read (empty, or zeros: what a node
+   that goes down after the record's rename leaves; davinci, 2026-10-19)
+   is read again for 300 s (`PIPELINE_RECORD_GRACE_S`) -- `search: trial
+   <id>: its ledger record ... cannot be read (...); read again for up to
+   300 s` -- then set aside as `<id>.json.unreadable<k>` (kept) and the
+   trial is taken as a job that ended without a record; a trial with no
+   pending spec left (the tuner reads its configuration there) is recorded
+   `killed` at once; before any
    submission a checkpoint whose zip CRCs fail is moved aside (`<name>.
    corrupt<k>`, D-097) and the trial starts from epoch 0; the elapsed
    clock (D-090) starts at round 0's first submission and no new round
@@ -219,9 +227,20 @@ pass `--accept-config-change`). The best-fit stage reads the finalist from `SEAR
 submits one job per `best_fit.member_seeds` entry on the split of
 `best_fit.split_seed` (a member whose record exists is not re-run; a member
 killed, or failed of a node fault (D-096, `best_fit.resubmit_node_faults`),
-is resubmitted with `--resume` up to `best_fit.max_resubmits` times),
+is resubmitted with `--resume` up to `best_fit.max_resubmits` times; a
+member record that cannot be read is set aside as `<name>.unreadable<k>`
+after the same 300 s and the member taken as killed),
 then computes the ensemble's report-split NLL (`tools/ensemble_nll.py`,
 D-089) and writes `<paths.runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`.
+The pipeline's own JSON files and the tuner's ledger records are fsynced
+before their rename (2026-10-19).
+
+`tools/search_report.py --config <file> [--qstat] [--trial <id>]` reads
+(never writes) the state, the ledger, the pending specs, the run folders and
+the job logs and prints, per trial, what the stage's next poll does with it
+by the stage's own rules (`next: ...`), the failures grouped by cause and
+the unreadable records; its last line is `SEARCH REPORT OK: <n> trial(s)
+read; nothing was written`.
 
 ## The project folder
 
@@ -284,27 +303,35 @@ the probe again first (its header names the queue).
 #    (`module load proxy`: git reaches GitHub through the cluster's proxy; skipped where there is no such module)
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git fetch origin && git checkout sci/pipeline && git pull --ff-only origin sci/pipeline && git log --oneline -1 && bash -c 'set -e; cd hpc/pipeline; for f in $(find . -name "*.py" -o -name "*.sh" -o -name "*.pbs" -o -name "*.json" | grep -v __pycache__); do if LC_ALL=C grep -q $'"'"'\r'"'"' "$f"; then echo "CR in $f"; exit 1; fi; if LC_ALL=C grep -qP "[^\x00-\x7F]" "$f"; then echo "non-ASCII in $f"; exit 1; fi; done; python3 -m py_compile pipeline.py config.py state.py pbs.py envs.py stages/*.py tools/*.py tests/*.py; python3 -c "import sys; sys.path.insert(0, \".\"); import pipeline, stages; print(sorted(stages.BUILT))"; echo PIPELINE CODE OK'
 
-# 2. the block-1 tests under the fake PBS (stdlib, about 6 min in all); pass lines, one per test:
+# 2. the block-1 tests and the report's under the fake PBS (stdlib, about 7 min in all); pass lines, one per test:
 #    -- 6 pass, 0 fail, 0 error, 0 todo, 1 skip      (the sequencer, about 25 s)
-#    -- 6 pass, 0 fail, 0 error, 0 todo, 1 skip      (the sequencer's jobs, D-098, about 3 min)
+#    -- 6 pass, 0 fail, 0 error, 0 todo, 1 skip      (the sequencer's jobs, D-098, about 4 min)
 #    -- 7 pass, 0 fail, 0 error, 0 todo, 1 skip      (the core cap, D-099, about 2 min; the launchers' cores from this checkout)
-cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_pipeline.py 2>&1 | tail -1 && python3 hpc/pipeline/tests/test_smoke_block1b.py 2>&1 | tail -1 && SBIX_CLONE=/davinci-1/home/ldellamea/repos/Sbi-extractor python3 hpc/pipeline/tests/test_smoke_block1c.py 2>&1 | tail -1
+#    -- 5 pass, 0 fail, 0 error, 1 skip              (the search report, a few seconds)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_pipeline.py 2>&1 | tail -1 && python3 hpc/pipeline/tests/test_smoke_block1b.py 2>&1 | tail -1 && SBIX_CLONE=/davinci-1/home/ldellamea/repos/Sbi-extractor python3 hpc/pipeline/tests/test_smoke_block1c.py 2>&1 | tail -1 && python3 hpc/pipeline/tests/test_smoke_report.py 2>&1 | tail -1
 
-# 3. the dry run (submits nothing); pass: no REFUSE or STOP line, exit 0, the line "the sequencer: PBS jobs named
+# 3. the search's trials, read-only (writes nothing; qstat is only asked); pass line: SEARCH REPORT OK: <n> trial(s)
+#    read; nothing was written. Per trial `next:` says what the sequencer's next poll does with it; then the
+#    failures grouped by cause and the unreadable records. Paste it whole.
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/search_report.py --config hpc/pipeline/projects/giulia/giulia.json --qstat 2>&1 | tee ~/search_report_giulia.txt
+
+# 4. the dry run (submits nothing); pass: no REFUSE or STOP line, exit 0, the line "the sequencer: PBS jobs named
 #    pl_giulia ...", the line "cores: at most 200 at once ... in flight per the state file: <n> in <k> job(s)" (the
 #    jobs the state file records as queued or running), S1-S6 "would be skipped", "search: would run" with its
 #    node-fault lines and "cores (D-099): at most 4 trial(s) at once ...". A stage the state file records as failed
 #    prints "<stage>: FAILED in the state file ... add --retry <stage>" and exit 3: add that --retry to this line
-#    and to step 4. --accept-config-change: the run was started under an earlier configuration version.
+#    and to step 5. --accept-config-change: the run was started under an earlier configuration version.
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --accept-config-change 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|node fault|cores|exit" ; echo "exit ${PIPESTATUS[0]}"
 
-# 4. the run: submits the sequencer's first job and returns; pass line: SUBMITTED the sequencer: job <id> (pl_giulia)
+# 5. the run: submits the sequencer's first job and returns; pass line: SUBMITTED the sequencer: job <id> (pl_giulia)
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --accept-config-change
 
-# 5. any time, from any login node: the status and the log. Lines to watch: `driver <id> on <node>: started; its
+# 6. any time, from any login node: the status and the log. Lines to watch: `driver <id> on <node>: started; its
 #    successor <id> waits for it (afterany)`, `sequencer started: job <id> on <node>`, the search's lines
 #    (`search: trial <id> ... was never examined for a node fault; examining it`, `search: trial <id> NODE FAULT on
-#    <node> (...); ... queued again with --resume (r of 2)`, `submitted trial ...`, `search: round r complete (...)`,
+#    <node> (...); ... queued again with --resume (r of 2)`, `search: trial <id>: its ledger record ... cannot be
+#    read (...); read again for up to 300 s` and, 300 s later, `... set aside as <id>.json.unreadable1 ...`,
+#    `submitted trial ...`, `search: round r complete (...)`,
 #    `search: SEARCH COMPLETE (...)`), `driver <id>: time budget reached; the successor <id> continues` once a day,
 #    `best_fit: BEST FIT COMPLETE: ...`, `PIPELINE DONE: every stage done or skipped`; in --status, the `cores:`
 #    line (at most 200 in flight). The first sequencer job waits in the queue while the trials submitted before
@@ -315,10 +342,12 @@ bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --status; tail -n 12 /d
 A `STOP: stage search failed: budget gate: ...` line names the projected
 trial time and memory against `search.trial.walltime` and `mem`: raise them
 (or narrow the space) in `projects/giulia/giulia.json`, then submit again
-(step 4) with `--retry search --accept-config-change` appended. A sequencer
+(step 5) with `--retry search --accept-config-change` appended. A sequencer
 job that died is followed by its successor; a chain that ended (`the chain
 ends (...)` in the log, `none queued or running` in `--status`) is resumed by
-step 4: it re-attaches to the recorded jobs.
+step 5: it re-attaches to the recorded jobs. An accepted configuration change
+(and a `--retry`) is saved before the first driver's first tick, so a first
+tick that raises no longer leaves its successor refusing (2026-10-19).
 
 ## Tests
 
@@ -329,7 +358,8 @@ python3 hpc/pipeline/tests/test_smoke_block1c.py       # block 1's core cap (D-0
 python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 2 min, needs the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 7 s, the same
 python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
-python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults and checkpoints, block 1's stop and retry guard, about 6 min, the same
+python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults, checkpoints and unreadable records, block 1's stop and retry guard, about 9 min, the same
+python3 hpc/pipeline/tests/test_smoke_report.py        # tools/search_report.py, a few seconds, stdlib
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 ```
 
@@ -350,11 +380,11 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 
 | block | what | status |
 |---|---|---|
-| 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4; the sequencer as a chain of PBS jobs on compute nodes, the lock and the state hardened, adoption, the transition (D-098, config v8); the core cap (D-099, config v9) | built 2026-10-15, smoke-tested; amended 2026-10-18 (`test_smoke_block1b.py`) and 2026-10-19 (`test_smoke_block1c.py`); on davinci 2026-10-19: the probe passed (a compute node drives jobs), the three block-1 tests pass |
+| 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4; the sequencer as a chain of PBS jobs on compute nodes, the lock and the state hardened, adoption, the transition (D-098, config v8); the core cap (D-099, config v9); the prepared state saved before the first tick (2026-10-19 (e)) | built 2026-10-15, smoke-tested; amended 2026-10-18 (`test_smoke_block1b.py`) and 2026-10-19 (`test_smoke_block1c.py`; (e) in `test_smoke_block1b.py`); on davinci 2026-10-19: the probe passed (a compute node drives jobs), the three block-1 tests pass |
 | 2 | the bank stages S4-S6 through `launch_bank.sh` (the profile from the configuration; the chain line BC as phases; a gate that never ran is run alone; the self-healing simulated bank: the verification job, the quarantine, the reruns, the certificate; config v6) | built 2026-10-16, smoke-tested on the stand-in; amended 2026-10-16 (the dropped gate), 2026-10-18 (D-094, D-095) and 2026-10-19 (D-099: the cap, the launcher's NCPUS passed; `test_cores`) |
 | 3 | the input stages S1-S3 through `launch_stage_d.sh`, `launch_sim_reextract.sh`, `preflight_label_axes.py` | built 2026-10-16, smoke-tested (S3 on the real tool; S1-S2 on stubs of the launchers); amended 2026-10-19 (D-099: the cap; `test_cores`) |
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
 | 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |
 | 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch` | built 2026-10-15, smoke-tested |
-| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`) |
+| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py` | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`) |
 | 8 | end to end on the stand-in (the real bank tools, tuner and runner; 11 jobs; the sequencer stopped and re-run); the davinci lines above | rehearsed 2026-10-16 |

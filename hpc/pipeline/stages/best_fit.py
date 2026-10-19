@@ -15,7 +15,11 @@ NLL (block 7; D-089; specs/SPEC.md sec. 2.3).
               failing as a refusal (D-096, `best_fit.resubmit_node_faults`);
               a checkpoint whose zip CRCs fail is moved aside before a
               submission (D-097); a member whose record exists when the
-              stage starts is not re-run (resumable)
+              stage starts is not re-run (resumable); a member record that
+              exists but cannot be read is read again for RECORD_GRACE_S
+              (at the stage's start: at once), then set aside as
+              `<name>.unreadable<k>` and taken as no record (amended
+              2026-10-19)
     ensemble  `tools/ensemble_nll.py` over the members' per-row files:
               L_bar = -(1/n) sum_i [logsumexp_m(-l_{m,i}) - log M]
     artefact  `<runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`
@@ -144,16 +148,31 @@ class BestFitStage(Stage):
         m["argv_file"] = argv_file
         return job_id
 
+    def _member_unreadable(self, cfg, st, seed, rec, problem, log, job=None, grace=True,
+                           then="the member is taken as a job that ended without a record"):
+        """common.unreadable_record for a member's record, with the host of
+        its last job's log (amended 2026-10-19)."""
+        text = CM.read_log_tail(job.get("log")) if job else None
+        return CM.unreadable_record(st["sub"]["members"][str(seed)], rec, problem, log,
+                                    "best_fit: member seed %d" % int(seed), what="record",
+                                    grace=grace, host=CM.host_of_log(text), then=then)
+
     def _finish_member_job(self, cfg, st, pbs, seed, job, log):
         b = cfg.data["best_fit"]
         m = st["sub"]["members"][str(seed)]
         rec = self._member_record(cfg, seed)
         if rec is not None:
-            m["status"] = "ok"
-            m["record"] = rec
-            m["L"] = CM.read_json(rec).get("L")
-            log("best_fit: member seed %d done: L %s (%s)" % (int(seed), m["L"], rec))
-            return
+            obj, problem = CM.try_read_json(rec)
+            if obj is not None:
+                m.pop("record_unreadable_since", None)
+                m["status"] = "ok"
+                m["record"] = rec
+                m["L"] = obj.get("L")
+                log("best_fit: member seed %d done: L %s (%s)" % (int(seed), m["L"], rec))
+                return
+            # amended 2026-10-19: read again for RECORD_GRACE_S, then set aside
+            if self._member_unreadable(cfg, st, seed, rec, problem, log, job=job):
+                return
         if b["resubmit_node_faults"]:
             # D-096 applied to the members: a node fault is not a refusal
             text = CM.read_log_tail(job.get("log"))
@@ -281,10 +300,17 @@ class BestFitStage(Stage):
             m = sub["members"].setdefault(str(seed), {"jobs": [], "resubmits": 0,
                                                        "status": "waiting"})
             rec = self._member_record(cfg, seed)
+            obj = None
             if rec is not None:
+                obj, problem = CM.try_read_json(rec)
+                if obj is None:
+                    # no member job runs at the stage's start: set aside at once
+                    self._member_unreadable(cfg, st, seed, rec, problem, pbs.log, grace=False,
+                                            then="the member runs again")
+            if obj is not None:
                 m["status"] = "ok"
                 m["record"] = rec
-                m["L"] = CM.read_json(rec).get("L")
+                m["L"] = obj.get("L")
                 pbs.log("best_fit: member seed %d already has a record: %s" % (int(seed), rec))
             elif m["status"] == "failed":
                 m["status"] = "waiting"                # a --retry: the member again
