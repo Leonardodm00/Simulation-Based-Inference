@@ -1701,8 +1701,15 @@ fixture, not part of the pipeline.
     checkpoint and runner record, and what the next poll does with it by
     the stage's own rules (`common.node_fault`, `try_read_json`): ok, final
     failure, a node fault healed, an unreadable record set aside and
-    resubmitted or killed; then the counts, the failures' errors grouped,
-    and `SEARCH REPORT OK: <n> trial(s) read; nothing was written`.
+    resubmitted or killed; with `--qstat`, one `qstat -x -f` of every
+    trial's last job (its state, node, exit, walltime, memory used and
+    asked); then why the failed records failed -- per cause (a heuristic
+    label: a node fault by `node_fault`, SIGKILL, another signal, a
+    walltime, the log's last exception) one trial's traceback tail -- and
+    the knobs of the failed records against the ok ones and the open
+    trials (their pending specs); the counts, the failures' errors grouped,
+    and `SEARCH REPORT OK: <n> trial(s) read; nothing was written`
+    [extended 2026-10-19 17:00, the user's "Why did they fail?"].
   - Test oracles: `test_smoke_block7b.py` (the fault wrapper's
     `empty_record` and `nul_record`: a zero-byte, or NUL-filled, ledger
     record written by the runner's wrapper, which then kills the tuner and

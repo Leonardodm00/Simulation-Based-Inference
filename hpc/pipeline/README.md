@@ -238,9 +238,12 @@ before their rename (2026-10-19).
 `tools/search_report.py --config <file> [--qstat] [--trial <id>]` reads
 (never writes) the state, the ledger, the pending specs, the run folders and
 the job logs and prints, per trial, what the stage's next poll does with it
-by the stage's own rules (`next: ...`), the failures grouped by cause and
-the unreadable records; its last line is `SEARCH REPORT OK: <n> trial(s)
-read; nothing was written`.
+by the stage's own rules (`next: ...`), why the failed records failed (per
+cause, one trial's traceback tail; with `--qstat` each job's node, exit,
+walltime and memory), the knobs of the failed records against the ok ones
+and the open trials, the failures grouped by cause and the unreadable
+records; its last line is `SEARCH REPORT OK: <n> trial(s) read; nothing was
+written`.
 
 ## The project folder
 

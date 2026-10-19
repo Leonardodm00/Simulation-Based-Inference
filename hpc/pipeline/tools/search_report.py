@@ -7,10 +7,11 @@ what the stage's next poll does with it by the stage's own rules.
     python3 hpc/pipeline/tools/search_report.py --config <project>.json
         [--qstat] [--trial <id prefix>]
 
-    --qstat    ask the scheduler (qstat, a query) for the jobs the state
-               file does not know to have ended; without it a job counts as
-               ended when the state says so or its log has its `RUN_ARGV
-               EXIT:` line
+    --qstat    ask the scheduler (one `qstat -x -f` of every trial's last
+               job, a query) for its state, node, exit, walltime and
+               memory; a job the state file does not know to have ended is
+               judged by it; without it a job counts as ended when the
+               state says so or its log has its `RUN_ARGV EXIT:` line
     --trial    one trial in full: its facts, its job logs, the last 60
                lines of the latest
 
@@ -20,8 +21,10 @@ set aside; the pending spec; the run folder's checkpoint and runner record;
 the last job log (host, `RUN_ARGV EXIT`, its last error line); the failure's
 cause (a heuristic label; the stage's own rule is `common.node_fault`); and
 `next:` -- what the next poll does, by `_finish_trial_job`, `_examine` and
-`_sweep_failed`. Then the counts, the failures grouped by cause, the
-unreadable records, and the last line
+`_sweep_failed`. Then why the failed records failed -- per cause, one
+trial's traceback tail -- and the knobs of the failed records against the
+ok ones and the trials still open; the counts, the failures grouped by
+cause, the unreadable records, and the last line
 
     SEARCH REPORT OK: <n> trial(s) read; nothing was written
 
@@ -36,6 +39,8 @@ import argparse
 import glob
 import os
 import re
+import statistics
+import subprocess
 import sys
 import time
 
@@ -96,8 +101,20 @@ def last_error_line(text):
     return None
 
 
+def traceback_tail(text, n=12):
+    """The last n lines of a log's last traceback (its deepest frames and the
+    exception), without the tuner's and the job script's own lines; the
+    last 8 lines of the log when it has no traceback."""
+    lines = (text or "").splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.startswith("Traceback (most recent call last)")]
+    keep = [ln for ln in (lines[starts[-1]:] if starts else lines)
+            if ln.strip() and not ln.startswith(("[evaluate]", "RUN_ARGV"))]
+    return keep[-n:] if starts else keep[-8:]
+
+
 def trial_facts(cfg, stage, tid, tr, jobs, qstat=None):
-    """Everything on disk (and, with qstat, in the scheduler) about one trial."""
+    """Everything on disk (and, with qstat -- {job id: its record} -- in the
+    scheduler) about one trial."""
     dirs = stage._dirs(cfg)
     f = {"tid": tid, "status": str(tr.get("status", "?")), "round": tr.get("round"),
          "jobs": list(tr.get("jobs", [])), "resubmits": int(tr.get("resubmits", 0) or 0),
@@ -112,9 +129,14 @@ def trial_facts(cfg, stage, tid, tr, jobs, qstat=None):
     f["job_finished"] = bool(j and j.get("finished"))
     f["job_exit"] = j.get("exit_status") if j else None
     f["job_walltime_s"] = j.get("walltime_s") if j else None
+    f["q"] = None
+    if qstat is not None and last:
+        f["q"] = qstat.get(last) or qstat.get(last.split(".")[0])
+    # the scheduler's word counts only for a job the state does not know to have ended
     f["qstat"] = None
     if qstat is not None and last and not f["job_finished"]:
-        f["qstat"] = qstat(last)
+        f["qstat"] = ((f["q"]["state"], f["q"]["exit"]) if f["q"] is not None
+                      else ("?", "not in qstat's answer"))
     rp = stage._record_path(cfg, tid)
     f["record_path"] = rp
     f["record_exists"] = os.path.isfile(rp)
@@ -132,18 +154,63 @@ def trial_facts(cfg, stage, tid, tr, jobs, qstat=None):
     m = _RUN_ARGV_EXIT.findall(text or "")
     f["log_exit"] = int(m[-1]) if m else None
     f["last_error"] = last_error_line(text)
+    f["tail"] = traceback_tail(text)
     f["node_fault"] = CM.node_fault((f["record"] or {}).get("error"), text)
     f["cause"] = failure_cause((f["record"] or {}).get("error"), text, f["node_fault"])
     return f
 
 
-def qstat_of(job_id):
-    """The scheduler's state of a job: (letter, exit status) or ("?", why)."""
+def _gb(value):
+    """A PBS size (`78400000kb`) in GB, as text; the value itself otherwise."""
+    m = re.match(r"^([0-9]+)(b|kb|mb|gb|tb)?$", str(value or "").strip().lower())
+    if not m:
+        return value or "-"
+    mult = {"b": 1, "kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3,
+            "tb": 1024 ** 4}[m.group(2) or "b"]
+    return "%.1fGB" % (int(m.group(1)) * mult / 1024.0 ** 3)
+
+
+def qstat_many(job_ids, timeout=300):
+    """({job id: record}, problem): one `qstat -x -f` of the jobs (a query);
+    a record holds the state letter, exit, node(s), walltime, cput, memory
+    used and asked, and the scheduler's comment. A job the scheduler no
+    longer knows is absent."""
+    ids = sorted(set(j for j in job_ids if j))
+    if not ids:
+        return {}, None
     try:
-        js = PBS.status(job_id)
-    except PBS.SchedulerError as exc:
-        return ("?", str(exc)[:80])
-    return (js.state, js.exit_status)
+        proc = subprocess.run([PBS.QSTAT, "-x", "-f"] + ids, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {}, "qstat could not be asked: %s" % exc
+    blocks, cur = [], None
+    for line in proc.stdout.splitlines():
+        if line.startswith("Job Id:"):
+            cur = [line]
+            blocks.append(cur)
+        elif cur is not None:
+            cur.append(line)
+    out = {}
+    for b in blocks:
+        jid = b[0].split(":", 1)[1].strip()
+        text = "\n".join(b)
+        js = PBS.parse_qstat(jid, text)
+        fields = {}
+        for line in text.replace("\n\t", "").splitlines():
+            if " = " in line:
+                k, v = line.split(" = ", 1)
+                fields[k.strip()] = v.strip()
+        rec = {"state": js.state, "exit": js.exit_status,
+               "host": ",".join(sorted(set(re.findall(r"([^/+]+)/", fields.get("exec_host", "")))))
+               or "-", "walltime": fields.get("resources_used.walltime", "-"),
+               "cput": fields.get("resources_used.cput", "-"),
+               "mem": _gb(fields.get("resources_used.mem")),
+               "mem_asked": fields.get("Resource_List.mem", "-"),
+               "comment": fields.get("comment", "")}
+        out[jid] = rec
+        out[jid.split(".")[0]] = rec
+    problem = proc.stderr.strip().replace("\n", " | ")[:300] or None
+    return out, problem
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +348,11 @@ def trial_line(cfg, f):
             job += " exit %s" % f["job_exit"]
         if f["job_walltime_s"]:
             job += " %.1f h" % (float(f["job_walltime_s"]) / 3600.0)
-        if f["qstat"] is not None:
+        if f["q"] is not None:
+            job += " qstat %s on %s exit %s, %s, mem %s of %s" % (
+                f["q"]["state"], f["q"]["host"], f["q"]["exit"], f["q"]["walltime"],
+                f["q"]["mem"], f["q"]["mem_asked"])
+        elif f["qstat"] is not None:
             job += " qstat %s" % (f["qstat"][0],)
     parts = ["trial %s r%s %-9s jobs %d (%s) resub %d/%d"
              % (f["tid"][:12], f["round"], f["status"], len(f["jobs"]), job, f["resubmits"], mx),
@@ -350,6 +421,76 @@ def summary_lines(cfg, facts, state):
     return out
 
 
+def _fmt(v):
+    return ("%.4g" % v) if isinstance(v, float) else str(v)
+
+
+def _summary(values):
+    nums = [v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    if values and len(nums) == len(values):
+        s = sorted(nums)
+        return "min %s median %s max %s (%d)" % (_fmt(s[0]), _fmt(statistics.median(s)),
+                                                _fmt(s[-1]), len(s))
+    counts = {}
+    for v in values:
+        counts[_fmt(v)] = counts.get(_fmt(v), 0) + 1
+    return ", ".join("%s x%d" % kv for kv in sorted(counts.items())) or "-"
+
+
+def why_lines(cfg, stage, facts):
+    """Why the failed records failed: per cause, one trial's traceback tail;
+    then the knobs of the failed records against the ok ones and the open
+    trials (their pending specs)."""
+    failed = [f for f in facts if (f["record"] or {}).get("status") == "failed"]
+    if not failed:
+        return []
+    out = ["why the failed records failed -- per cause, one trial's log (--trial <id> shows any "
+           "one in full):"]
+    groups = {}
+    for f in failed:
+        groups.setdefault(cause_key(f["cause"]), []).append(f)
+    for _key, fs in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        f = fs[0]
+        q = f["q"] or {}
+        out.append("  -- %d x %s; e.g. trial %s on %s (record %r; job exit %s, %s, mem %s)"
+                   % (len(fs), f["cause"], f["tid"][:12], f["host"] or q.get("host") or "?",
+                      (f["record"] or {}).get("error"), q.get("exit", f["job_exit"]),
+                      q.get("walltime", "-"), q.get("mem", "-")))
+        for line in f["tail"]:
+            out.append("  | " + line[:220])
+    dirs = stage._dirs(cfg)
+    cfgs = {"failed": [], "ok": [], "open": []}
+    for f in facts:
+        rec = f["record"]
+        if rec is not None and isinstance(rec.get("config"), dict):
+            k = str(rec.get("status", "ok"))
+            if k in ("failed", "ok"):
+                cfgs[k].append(rec["config"])
+            continue
+        if rec is None and f["pending"]:
+            spec, _ = CM.try_read_json(os.path.join(dirs["pending"], f["tid"] + ".json"))
+            if spec is not None and isinstance(spec.get("config"), dict):
+                cfgs["open"].append(spec["config"])
+    out.append("the knobs: %d failed record(s) against %d ok and %d open (pending specs)"
+               % (len(cfgs["failed"]), len(cfgs["ok"]), len(cfgs["open"])))
+    keys = sorted(set(k for g in cfgs.values() for c in g for k in c))
+    same = []
+    for k in keys:
+        vals = dict((g, [c[k] for c in cs if k in c]) for g, cs in cfgs.items())
+        every = vals["failed"] + vals["ok"] + vals["open"]
+        if len(set(repr(v) for v in every)) == 1:
+            same.append("%s=%s" % (k, _fmt(every[0])))
+            continue
+        fv = vals["failed"]
+        nums = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in fv)
+        shown = ", ".join(_fmt(v) for v in (sorted(fv) if nums else fv))
+        out.append("  %-18s failed %s | ok %s | open %s" % (k, shown, _summary(vals["ok"]),
+                                                           _summary(vals["open"])))
+    if same:
+        out.append("  the same in all: %s" % ", ".join(same))
+    return out
+
+
 def _order_key(status):
     return STATUS_ORDER.index(status) if status in STATUS_ORDER else len(STATUS_ORDER)
 
@@ -398,7 +539,14 @@ def main(argv=None):
                  (rec.get("sub") or {}).get("phase"), (rec.get("sub") or {}).get("round")))
     if not trials:
         trials = ledger_only_trials(stage, cfg)
-    qstat = qstat_of if args.qstat else None
+    qstat = None
+    if args.qstat:
+        lasts = [tr.get("jobs", [])[-1] for tid, tr in trials.items()
+                 if tr.get("jobs") and (not args.trial or tid.startswith(args.trial))]
+        qstat, problem = qstat_many(lasts)
+        print("qstat: %d of %d last job(s) known to the scheduler%s"
+              % (len(set(id(r) for r in qstat.values())), len(set(lasts)),
+                 ("; it said: " + problem) if problem else ""))
     facts = []
     for tid, tr in sorted(trials.items()):
         if args.trial and not tid.startswith(args.trial):
@@ -412,6 +560,8 @@ def main(argv=None):
     else:
         for f in facts:
             print(trial_line(cfg, f))
+        for line in why_lines(cfg, stage, facts):
+            print(line)
     for line in summary_lines(cfg, facts, state):
         print(line)
     print("SEARCH REPORT OK: %d trial(s) read; nothing was written" % len(facts))

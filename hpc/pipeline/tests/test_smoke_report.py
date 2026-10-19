@@ -27,8 +27,11 @@ Checks
     test_invariants     the CLI writes nothing: every file's bytes and
                         mtime unchanged, no file added
     test_contract       --trial prints one trial with its log's last lines;
-                        --qstat asks the scheduler (a fake qstat) and a job
-                        it reports running is not taken as ended
+                        --qstat asks the scheduler once for every last job
+                        (a fake qstat): a job it reports running is not taken
+                        as ended, a failed job's node and memory are shown;
+                        why the failed records failed (a traceback tail per
+                        cause) and the knobs, failed against ok and open
     test_edge_cases     no state file: the ledger's trials, status `?`; a
                         configuration that does not load: exit 2
     MUTATION=classify   (environment) failure_cause disabled: the known
@@ -84,6 +87,40 @@ VALUE_LOG = ("Traceback (most recent call last):\n"
              "RUN_ARGV EXIT: 1\n")
 
 
+# each trial's configuration: the failed ones at a high learning rate, the
+# others low; block_family the same in all
+CONF = dict((n, {"lr": lr, "block_family": 1}) for n, lr in (
+    ("ok", 0.0005), ("sigbus", 0.003), ("value1", 0.004), ("value2", 0.005), ("oom", 0.006),
+    ("empty", 0.0007), ("nulnopend", 0.002), ("run", 0.0008), ("wait", 0.0009)))
+
+FAKE_QSTAT = """#!/bin/sh
+# qstat -x -f <id> ...: the run trial's job runs; the oom trial's ended near its memory
+shift 2
+for id in "$@"; do
+  echo "Job Id: $id"
+  case "$id" in
+    1851307.pbsserver01)
+      echo "    job_state = R"
+      echo "    exec_host = dvnode007/0*48";;
+    1851304.pbsserver01)
+      echo "    job_state = F"
+      echo "    Exit_status = 1"
+      echo "    exec_host = dvnode004/0*48"
+      echo "    resources_used.mem = 167000000kb"
+      echo "    resources_used.walltime = 05:10:00"
+      echo "    Resource_List.mem = 160gb";;
+    *)
+      echo "    job_state = F"
+      echo "    Exit_status = 0"
+      echo "    exec_host = dvnode001/0*48"
+      echo "    resources_used.mem = 78400000kb"
+      echo "    resources_used.walltime = 02:00:00"
+      echo "    Resource_List.mem = 160gb";;
+  esac
+done
+"""
+
+
 def _tid(name):
     return hashlib.sha256(name.encode("ascii")).hexdigest()
 
@@ -122,13 +159,13 @@ def _campaign(root, with_state=True):
             fh.write(raw)
 
     def obj(name, **kw):
-        r = {"trial_id": ids[name], "config": {"lr": 0.001}, "status": "ok", "error": ""}
+        r = {"trial_id": ids[name], "config": CONF[name], "status": "ok", "error": ""}
         r.update(kw)
         rec(name, json.dumps(r).encode("ascii"))
 
     def pend(name):
         with open(os.path.join(d["pending"], ids[name] + ".json"), "w") as fh:
-            json.dump({"trial_id": ids[name], "config": {"lr": 0.001}}, fh)
+            json.dump({"trial_id": ids[name], "config": CONF[name]}, fh)
 
     def log(name, host, body, n=0):
         with open(os.path.join(d["jobs"], "%s.%d.log" % (ids[name], n)), "w") as fh:
@@ -343,7 +380,7 @@ def test_invariants():
         time.sleep(0.05)
         env = dict(os.environ)
         env["PIPELINE_QSTAT"] = os.path.join(root, "no-such-qstat")
-        for extra in ([], ["--trial", ids["empty"][:8]]):
+        for extra in ([], ["--trial", ids["empty"][:8]], ["--qstat"]):
             proc = subprocess.run([sys.executable, TOOL, "--config", path] + extra, env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   universal_newlines=True, timeout=120)
@@ -368,10 +405,7 @@ def test_contract():
         # --qstat: a fake qstat says the running trial's job runs, the NUL trial's has ended
         fake = os.path.join(root, "qstat")
         with open(fake, "w") as fh:
-            fh.write("#!/bin/sh\nid=\"$3\"\ncase \"$id\" in\n"
-                     "  1851307.pbsserver01) echo \"Job Id: $id\"; echo \"    job_state = R\";;\n"
-                     "  *) echo \"Job Id: $id\"; echo \"    job_state = F\"; "
-                     "echo \"    Exit_status = 0\";;\nesac\n")
+            fh.write(FAKE_QSTAT)
         os.chmod(fake, 0o755)
         old = SR.PBS.QSTAT
         SR.PBS.QSTAT = fake
@@ -384,6 +418,31 @@ def test_contract():
             _line(out, ids["run"]), _line(out, ids["run"])
         assert "qstat F" in _line(out, ids["nulnopend"]) and \
             "then recorded killed (no pending spec" in _line(out, ids["nulnopend"])
+        assert "qstat: 8 of 8 last job(s) known to the scheduler" in out, out
+        assert "qstat F on dvnode004 exit 1, 05:10:00, mem 159.3GB of 160gb" in \
+            _line(out, ids["oom"]), _line(out, ids["oom"])
+        assert "qstat F on dvnode001 exit 0, 02:00:00, mem 74.8GB of 160gb" in \
+            _line(out, ids["value1"]), _line(out, ids["value1"])
+        # why: one traceback tail per cause, the largest group first
+        lines = out.splitlines()
+        i = lines.index("why the failed records failed -- per cause, one trial's log (--trial "
+                        "<id> shows any one in full):")
+        assert lines[i + 1].startswith("  -- 2 x ValueError: Expected parameter loc (Tensor of "
+                                       "shape ("), lines[i + 1]
+        assert "(record 'runner exited 1'; job exit 0, 02:00:00, mem 74.8GB)" in lines[i + 1]
+        assert lines[i + 2] == "  | Traceback (most recent call last):", lines[i + 2]
+        assert "  | tensor([[nan, nan]])" in lines[i + 2:i + 7], lines[i:i + 8]
+        oom = [ln for ln in lines if ln.startswith("  -- 1 x SIGKILL: memory")]
+        assert len(oom) == 1 and "on dvnode004 (record 'runner exited -9'; job exit 1, 05:10:00, " \
+            "mem 159.3GB)" in oom[0], oom
+        assert lines[lines.index(oom[0]) + 1] == "  | Killed", lines[lines.index(oom[0]):][:3]
+        # the knobs: the failed records against the ok ones and the open trials
+        assert "the knobs: 4 failed record(s) against 1 ok and 3 open (pending specs)" in out, out
+        lr = [ln for ln in lines if ln.startswith("  lr ")]
+        assert lr == ["  lr                 failed 0.003, 0.004, 0.005, 0.006 | ok min 0.0005 "
+                      "median 0.0005 max 0.0005 (1) | open min 0.0007 median 0.0008 max 0.0009 "
+                      "(3)"], lr
+        assert "  the same in all: block_family=1" in lines, out
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
