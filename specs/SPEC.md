@@ -219,7 +219,7 @@ Claude's as the log records (D-085..D-090).
 
 | Key | Type | Constraint |
 |---|---|---|
-| `config_version` | int | 9 (v9, 2026-10-19: `resources.max_cores`, D-099; v8, 2026-10-18: the `driver` block, D-098; v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
+| `config_version` | int | 10 (v10, 2026-10-19 17:44, D-101: values only -- `search.gp_seed` 1, `resources.max_cores` 400; v9, 2026-10-19: `resources.max_cores`, D-099; v8, 2026-10-18: the `driver` block, D-098; v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
 | `dataset` | str | `[a-z0-9_]+`; the `<tag>` of the folder and of the artefact names |
 | `paths.{sbix_dir, sbi_dir, work_root, banks_root, runs_root, tune_root}` | str | absolute paths |
 | `envs.{extract, train}` | str | conda environment names |
@@ -1763,6 +1763,14 @@ fixture, not part of the pipeline.
     mid round 0, reset with the CODE (3 jobs deleted, round 0 set aside, the
     gate kept), submitted again with the two flags: no probe job, the same
     round-0 ids, 5 ok records, `PIPELINE DONE` `[SANDBOX 2026-10-19]`.
+    Config v10 [2026-10-19 17:44, D-101, the user: "Do it" (a new design)
+    and "Increase to 400 the number of cores available"]: values only,
+    `search.gp_seed` 1 (the restarted search draws 50 new configurations,
+    none of the first run's) and `resources.max_cores` 400 (396 for the
+    stages: 8 trials, 8 members or 8 re-detection tasks of 48 cores at
+    once; `CONFIG_VERSION` 10 in `config.py`). The known answers of
+    `test_smoke_block1c.py` and the `config_version` checks of blocks 1,
+    1b, 2, 7, 7b follow.
     `tests/test_smoke_report.py` (stdlib; runs on davinci): a hand-made
     campaign folder and state (ok, a SIGBUS failure, a ValueError failure,
     an empty record with its pending spec, a NUL record without, a running

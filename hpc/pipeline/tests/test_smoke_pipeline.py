@@ -117,7 +117,7 @@ def _n_submitted(spool):
 def test_known_answer():
     cfg = C.load_config(GIULIA)
     assert cfg.tag == "giulia"
-    assert cfg.data["config_version"] == 9
+    assert cfg.data["config_version"] == 10
     assert cfg.data["search"]["resubmit_node_faults"] is True, "D-096"
     assert cfg.data["best_fit"]["resubmit_node_faults"] is True
     assert cfg.data["search"]["max_total_walltime_h"] == 400, "D-090"
@@ -231,7 +231,7 @@ def test_invariants():
         def version(d):
             d["config_version"] = 3
         p = problems(version)
-        assert len(p) == 1 and "config_version must be 9" in p[0], p
+        assert len(p) == 1 and "config_version must be 10" in p[0], p
 
         # documentation keys are ignored, and the file's digest is recorded
         with open(path, "rb") as fh:

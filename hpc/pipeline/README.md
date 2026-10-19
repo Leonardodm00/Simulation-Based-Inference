@@ -91,13 +91,13 @@ submitted is ever deleted for the cap: jobs submitted before it keep
 running, and no new one starts until the pipeline is under it. A job that
 can never fit (more than `max_cores` less `driver.ncpus`) stops its stage:
 `<stage>: a job of <n> cores can never start ...; raise resources.max_cores`.
-With Giulia's 200: 196 cores for the stages, so 4 trials (or members, or
-re-detection tasks) of 48 cores at once.
+With Giulia's 400 (config v10, D-101; 200 under v9): 396 cores for the
+stages, so 8 trials (or members, or re-detection tasks) of 48 cores at once.
 
 The dry run and `--status` print `cores: at most <cap> at once
 (resources.max_cores, D-099): the sequencer's job <d>, the stages' jobs <b>;
 in flight per the state file: <n> in <k> job(s)`; each stage's dry-run
-lines say what the cap leaves it (`cores (D-099): at most 4 trial(s) at
+lines say what the cap leaves it (`cores (D-099): at most 8 trial(s) at
 once -- ...`). A stage that waits says so once: `<stage>: waits for cores:
 ...`, or its phase's line (`sim_bank: the array (its gate after it) waits
 for cores (...)`).
@@ -321,7 +321,7 @@ cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && pyth
 # 4. the dry run (submits nothing); pass: no REFUSE or STOP line, exit 0, the line "the sequencer: PBS jobs named
 #    pl_giulia ...", the line "cores: at most 200 at once ... in flight per the state file: <n> in <k> job(s)" (the
 #    jobs the state file records as queued or running), S1-S6 "would be skipped", "search: would run" with its
-#    node-fault lines and "cores (D-099): at most 4 trial(s) at once ...". A stage the state file records as failed
+#    node-fault lines and "cores (D-099): at most 8 trial(s) at once ...". A stage the state file records as failed
 #    prints "<stage>: FAILED in the state file ... add --retry <stage>" and exit 3: add that --retry to this line
 #    and to step 5. --accept-config-change: the run was started under an earlier configuration version.
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --accept-config-change 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|node fault|cores|exit" ; echo "exit ${PIPESTATUS[0]}"
@@ -353,10 +353,11 @@ with `--confirm <CODE>` it does it (pass line `SEARCH RESET DONE: ...`),
 refused when a sequencer job is queued or running or the CODE no longer
 matches. The state file is not touched: the submission that follows carries
 `--retry search --accept-config-change`, and the search starts again at the
-gate (reused) and round 0. With `search.gp_seed` unchanged, round 0 draws the
-same configurations as before (verified: two proposals with seed 0 give the
-same 50 ids and configurations, seed 1 gives 50 others). The lines, from any
-login node, after step 1 of the run sheet:
+gate (reused) and round 0. Round 0's design follows `search.gp_seed`: the
+same seed redraws the same configurations (verified: two proposals with seed
+0 give the same 50 ids and configurations, seed 1 gives 50 others), which is
+why config v10 (D-101) moved Giulia to seed 1 for the restart of 2026-10-19.
+The lines, from any login node, after step 1 of the run sheet:
 
 ```
 # R1. the listing (nothing done); pass line: CODE <8 hex> -- run again with --confirm <CODE> ...
@@ -365,7 +366,7 @@ cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && pyth
 # R2. the reset, with the CODE of R1; pass line: SEARCH RESET DONE: <n> job(s) deleted, round(s) set aside as ...
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/search_reset.py --config hpc/pipeline/projects/giulia/giulia.json --confirm <CODE>
 
-# R3. the dry run; pass: exit 0, no REFUSE, "search reset to pending (--retry)", "search: would run"
+# R3. the dry run; pass: exit 0, no REFUSE, "search reset to pending (--retry)", "search: would run", "at most 8 trial(s) at once"
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --retry search --accept-config-change 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|reset|would|sequencer|cores|exit" ; echo "exit ${PIPESTATUS[0]}"
 
 # R4. the submission; pass line: SUBMITTED the sequencer: job <id> (pl_giulia)

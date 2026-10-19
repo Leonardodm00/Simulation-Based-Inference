@@ -286,7 +286,7 @@ def test_known_answer():
         assert got == want, got
         # (d) no NEEDS-CODE key left
         assert C.unhonoured_keys(cfg) == [], C.unhonoured_keys(cfg)
-        assert cfg.data["config_version"] == 9
+        assert cfg.data["config_version"] == 10
         assert cfg.data["search"]["trial"]["queue"] == "cpu" and cfg.data["best_fit"]["queue"] == "cpu"
     finally:
         shutil.rmtree(root, ignore_errors=True)

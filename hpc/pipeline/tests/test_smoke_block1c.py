@@ -4,7 +4,7 @@ pipeline under resources.max_cores, the sequencer's own job included.
 
 Checks (specs/SPEC.md block 1, amended 2026-10-19 (d))
     test_known_answer   the committed Giulia configuration: v9, max_cores
-                        200, the stages' share 196, the room of each sized
+                        400, the stages' share 396, the room of each sized
                         job (4 trials, 4 members, 4 re-detection tasks, 20
                         bank tasks), the dry run's cores lines (on a copy
                         whose paths lie in a temporary folder: on davinci
@@ -374,17 +374,18 @@ def _job(jid, ncpus=None, cmd=None, after=None, finished=False):
 def test_known_answer():
     cfg = C.load_config(GIULIA)
     d = cfg.data
-    assert d["config_version"] == 9 and d["resources"] == {"max_cores": 200}, d.get("resources")
+    assert d["config_version"] == 10 and d["resources"] == {"max_cores": 400}, d.get("resources")
     assert d["driver"]["ncpus"] == 4
-    assert P.stage_budget(cfg) == 196, "200 - 4, by hand"
-    # the room of each sized job: floor(196 / 48) = 4 (4 x 48 = 192 <= 196 < 240)
+    assert P.stage_budget(cfg) == 396, "400 - 4, by hand (v10, D-101; 196 under v9)"
+    # the room of each sized job: floor(396 / 48) = 8 (8 x 48 = 384 <= 396 < 432)
     assert d["search"]["trial"]["ncpus"] == 48 and d["search"]["max_concurrent_trials"] == 25
-    assert CM.cap_room(cfg, 48, 25) == 4, "trials: min(25, 4)"
-    assert d["best_fit"]["ncpus"] == 48 and CM.cap_room(cfg, 48) == 4, "members"
+    assert CM.cap_room(cfg, 48, 25) == 8, "trials: min(25, 8)"
+    assert d["best_fit"]["ncpus"] == 48 and CM.cap_room(cfg, 48) == 8, "members"
     assert d["sim"]["ncpus"] == 48 and d["sim"]["concurrency"] == 20
-    assert CM.cap_room(cfg, 48, 20) == 4, "re-detection tasks: min(20, 4)"
+    assert CM.cap_room(cfg, 48, 20) == 8, "re-detection tasks: min(20, 8)"
     assert d["bank"]["concurrency"] == 20 and CM.cap_room(cfg, 1, 20) == 20, "bank tasks of 1 core"
-    assert d["bank"]["verify"]["ncpus"] == 8 and CM.cap_room(cfg, 8) == 24
+    assert d["bank"]["verify"]["ncpus"] == 8 and CM.cap_room(cfg, 8) == 49
+    assert d["search"]["gp_seed"] == 1, "v10, D-101: a new design for the restarted search"
     root = _tmp()
     try:
         r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config",
@@ -392,14 +393,14 @@ def test_known_answer():
                            stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
     finally:
         shutil.rmtree(root)
-    for want in ("cores: at most 200 at once (resources.max_cores, D-099): the sequencer's job 4, "
-                 "the stages' jobs 196; in flight per the state file: 0 in 0 job(s)",
-                 "cores (D-099): at most 4 trial(s) at once -- max_concurrent_trials 25, and the cap "
-                 "leaves room for 4 of 48 cores each; the gate's probes likewise",
-                 "cores (D-099): at most 4 member(s) at once -- the cap leaves room for 4 of 48 "
+    for want in ("cores: at most 400 at once (resources.max_cores, D-099): the sequencer's job 4, "
+                 "the stages' jobs 396; in flight per the state file: 0 in 0 job(s)",
+                 "cores (D-099): at most 8 trial(s) at once -- max_concurrent_trials 25, and the cap "
+                 "leaves room for 8 of 48 cores each; the gate's probes likewise",
+                 "cores (D-099): at most 8 member(s) at once -- the cap leaves room for 8 of 48 "
                  "cores each",
-                 "cores (D-099): the test task 48; the array at CONCURRENCY 4 = min(sim.concurrency "
-                 "20, the cap's room 4) of 48 cores each"):
+                 "cores (D-099): the test task 48; the array at CONCURRENCY 8 = min(sim.concurrency "
+                 "20, the cap's room 8) of 48 cores each"):
         assert want in r.stdout, "%r not in the dry run:\n%s" % (want, r.stdout[-4000:])
 
 
@@ -692,12 +693,12 @@ def _edge_switch_to_cap():
         trials = [_job("%d.pbsserver01" % (1851700 + i), cmd=_trial_line(48)) for i in range(13)]
         st = _state(root, {"search": ("running", trials)})
         sub = P.Submitter(_NoPBS(), st, "search", _Lines(), cfg)
-        assert (sub.in_flight(), sub.free()) == (624, 196 - 624)
+        assert (sub.in_flight(), sub.free()) == (624, 396 - 624)
         assert not sub.fits(48) and not sub.fits(1)
         for j in st.stage("search")["jobs"][:10]:
             j["finished"] = True
-        assert (sub.in_flight(), sub.free()) == (144, 52)
-        assert sub.fits(48) and not sub.fits(53)
+        assert (sub.in_flight(), sub.free()) == (144, 252)
+        assert sub.fits(48) and sub.fits(252) and not sub.fits(253)
     finally:
         shutil.rmtree(root)
 
@@ -706,7 +707,7 @@ def _edge_config():
     with open(GIULIA, "rb") as fh:
         base = C._strip_docs(json.loads(fh.read().decode("ascii")))
     cases = (("v8", lambda x: x.update(config_version=8),
-              "config_version: config_version must be 9, got 8"),
+              "config_version: config_version must be 10, got 8"),
              ("missing", lambda x: x.pop("resources"),
               "resources.max_cores: missing (every key is required)"),
              ("51", lambda x: x["resources"].update(max_cores=51),
