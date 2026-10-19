@@ -262,6 +262,21 @@ def test_known_answer():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _giulia_fresh_state(root):
+    """The committed Giulia file with its work root under `root`: the dry run
+    reads no state (a work root holding a run's state, as on davinci, would
+    be read and, after a configuration change, refused); every other path is
+    the committed one, which the checks read in the dry run's lines."""
+    with open(GIULIA, "rb") as fh:
+        raw = json.loads(fh.read().decode("ascii"))
+    cfg = C._strip_docs(raw)
+    cfg["paths"]["work_root"] = os.path.join(root, "work_root")
+    path = os.path.join(root, "giulia.json")
+    with open(path, "w") as fh:
+        json.dump(cfg, fh, indent=1, sort_keys=True)
+    return path
+
+
 def test_reference():
     cfg = C.load_config(GIULIA)
     assert cfg.data["config_version"] == 9
@@ -269,7 +284,8 @@ def test_reference():
     assert cfg.data["best_fit"]["resubmit_node_faults"] is True
     root = tempfile.mkdtemp(prefix="b7b_ref_")
     try:
-        rc, out = _run(root, GIULIA, ["--dry-run"], _env(os.path.join(root, "spool")), timeout=120)
+        rc, out = _run(root, _giulia_fresh_state(root), ["--dry-run"], _env(os.path.join(root, "spool")),
+                       timeout=120)
         assert "node faults (D-096): a trial failed of SIGBUS or a file-system error is queued " \
                "again with --resume" in out, out
         assert "node faults (D-096): a member failed of SIGBUS or a file-system error is " \

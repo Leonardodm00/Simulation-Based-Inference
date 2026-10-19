@@ -6,7 +6,9 @@ Checks (specs/SPEC.md block 1, amended 2026-10-19 (d))
     test_known_answer   the committed Giulia configuration: v9, max_cores
                         200, the stages' share 196, the room of each sized
                         job (4 trials, 4 members, 4 re-detection tasks, 20
-                        bank tasks), the dry run's cores lines
+                        bank tasks), the dry run's cores lines (on a copy
+                        whose paths lie in a temporary folder: on davinci
+                        the committed work root holds the run's state)
     test_reference      cores_of_select, cores_of_argv, job_cores and
                         cores_in_flight against hand-counted values; the
                         Submitter's budget, free and fits, its guard, its
@@ -169,6 +171,27 @@ def _project(root, max_cores=4, walltime="00:01:00", poll=1):
     with open(path, "w") as fh:
         json.dump(cfg, fh, indent=1, sort_keys=True)
     return path, cfg
+
+
+def _giulia_here(root):
+    """The committed Giulia configuration with every path under `root`: its
+    dry run then reads no state of the cluster's (on davinci the committed
+    file's work root holds the run's state, which a dry run would read and,
+    after a configuration change, refuse) and prints the same lines in the
+    sandbox and on davinci."""
+    with open(GIULIA, "rb") as fh:
+        raw = json.loads(fh.read().decode("ascii"))
+    cfg = C._strip_docs(raw)
+    for k in list(cfg["paths"]):
+        cfg["paths"][k] = os.path.join(root, k)
+    cfg["real"]["cohort_config"] = os.path.join(root, "cohort.json")
+    cfg["real"]["extract_root"] = os.path.join(root, "extracted")
+    for k in ("sim_main", "out_root", "tools"):
+        cfg["sim"][k] = os.path.join(root, k)
+    path = os.path.join(root, "giulia.json")
+    with open(path, "w") as fh:
+        json.dump(cfg, fh, indent=1, sort_keys=True)
+    return path
 
 
 def _env(root, sleep="3", **extra):
@@ -362,9 +385,13 @@ def test_known_answer():
     assert CM.cap_room(cfg, 48, 20) == 4, "re-detection tasks: min(20, 4)"
     assert d["bank"]["concurrency"] == 20 and CM.cap_room(cfg, 1, 20) == 20, "bank tasks of 1 core"
     assert d["bank"]["verify"]["ncpus"] == 8 and CM.cap_room(cfg, 8) == 24
-    r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config", GIULIA,
-                        "--dry-run"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       universal_newlines=True, timeout=300)
+    root = _tmp()
+    try:
+        r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config",
+                            _giulia_here(root), "--dry-run"], stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
+    finally:
+        shutil.rmtree(root)
     for want in ("cores: at most 200 at once (resources.max_cores, D-099): the sequencer's job 4, "
                  "the stages' jobs 196; in flight per the state file: 0 in 0 job(s)",
                  "cores (D-099): at most 4 trial(s) at once -- max_concurrent_trials 25, and the cap "

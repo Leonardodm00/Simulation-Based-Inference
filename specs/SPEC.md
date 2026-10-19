@@ -719,7 +719,14 @@ fixture, not part of the pipeline.
   2, 3, 7, 7b, 8 pass. Skipped for want of davinci: how the cluster
   accounts the 200 cores (whether PBS enforces them, whether the user's
   jobs outside the pipeline count) and the launchers of the davinci
-  checkout (step 3's `test_launchers` reads them there).]
+  checkout (step 3's `test_launchers` reads them there). The known-answer
+  dry runs of `test_smoke_block1b.py` and `test_smoke_block1c.py` run on
+  a copy of the Giulia file with its paths under a temporary folder, the
+  reference dry runs of blocks 2, 3, 7 and 7b on a copy with its work root
+  there: on davinci the committed file's work root holds the run's state,
+  which a dry run reads and, after the v9 change, refuses -- rehearsed
+  with such a state in place: the six checks of `e449fb5` FAIL there, the
+  corrected ones pass, and step 3's three tests pass (6, 6 and 7 pass).]
 
 ### Block 2: the bank stages S4-S6 (`stages/bank.py`)
 

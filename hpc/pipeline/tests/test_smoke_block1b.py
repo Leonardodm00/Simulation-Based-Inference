@@ -4,9 +4,11 @@ sequencer as a chain of PBS jobs on compute nodes, never a process on a
 login node.
 
 Checks (specs/SPEC.md block 1, amended 2026-10-18 (c))
-    test_known_answer   the committed Giulia configuration: v8, the driver
+    test_known_answer   the committed Giulia configuration: v9, the driver
                         block, the job name pl_giulia, the 85,500 s budget,
-                        the dry run's sequencer line
+                        the dry run's sequencer line (the dry run on a copy
+                        whose paths lie in a temporary folder: on davinci
+                        the committed work root holds the run's state)
     test_reference      job ids (sequence part, number), the budget formula
                         and the driver's qsub line against hand-written
                         values; the three lock formats
@@ -257,6 +259,27 @@ def _qsub(env, argv):
     return proc.stdout.split()[0]
 
 
+def _giulia_here(root):
+    """The committed Giulia configuration with every path under `root`: its
+    dry run then reads no state of the cluster's (on davinci the committed
+    file's work root holds the run's state, which a dry run would read and,
+    after a configuration change, refuse) and prints the same lines in the
+    sandbox and on davinci."""
+    with open(GIULIA, "rb") as fh:
+        raw = json.loads(fh.read().decode("ascii"))
+    cfg = C._strip_docs(raw)
+    for k in list(cfg["paths"]):
+        cfg["paths"][k] = os.path.join(root, k)
+    cfg["real"]["cohort_config"] = os.path.join(root, "cohort.json")
+    cfg["real"]["extract_root"] = os.path.join(root, "extracted")
+    for k in ("sim_main", "out_root", "tools"):
+        cfg["sim"][k] = os.path.join(root, k)
+    path = os.path.join(root, "giulia.json")
+    with open(path, "w") as fh:
+        json.dump(cfg, fh, indent=1, sort_keys=True)
+    return path
+
+
 def _no_overlap(drivers):
     """No two sequencer jobs ran at the same time (started / finished times)."""
     ran = sorted([(j["started"], j["finished"] or time.time(), j["id"]) for j in drivers
@@ -297,9 +320,13 @@ def test_known_answer():
     assert P.driver_name(cfg) == "pl_giulia"
     # 24 h less min(max(900, 5 x 60), 24 h / 4) = 86400 - 900, by hand
     assert P._driver_budget_s(cfg) == 85500.0
-    r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config", GIULIA,
-                        "--dry-run"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       universal_newlines=True, timeout=120)
+    root = _tmp()
+    try:
+        r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config",
+                            _giulia_here(root), "--dry-run"], stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, universal_newlines=True, timeout=120)
+    finally:
+        shutil.rmtree(root)
     want = ("the sequencer: PBS jobs named pl_giulia on queue cpu (4 cores, 16gb, walltime "
             "24:00:00, a tick every 60 s), one at a time, each submitting its successor "
             "(afterany); nothing runs on a login node (D-098)")

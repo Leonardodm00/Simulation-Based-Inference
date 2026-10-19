@@ -184,13 +184,28 @@ def test_known_answer():
         s.close()
 
 
+def _giulia_fresh_state(root):
+    """The committed Giulia file with its work root under `root`: the dry run
+    reads no state (a work root holding a run's state, as on davinci, would
+    be read and, after a configuration change, refused); every other path is
+    the committed one, which the checks read in the dry run's lines."""
+    with open(GIULIA, "rb") as fh:
+        raw = json.loads(fh.read().decode("ascii"))
+    cfg = C._strip_docs(raw)
+    cfg["paths"]["work_root"] = os.path.join(root, "work_root")
+    path = os.path.join(root, "giulia.json")
+    with open(path, "w") as fh:
+        json.dump(cfg, fh, indent=1, sort_keys=True)
+    return path
+
+
 def test_reference():
     root = tempfile.mkdtemp(prefix="pipeline_b3_")
     try:
         env = dict(os.environ, PATH=_FAKE + os.pathsep + os.environ.get("PATH", ""),
                    FAKE_PBS_SPOOL=os.path.join(root, "spool"), PIPELINE_SKIP_CONDA="1")
-        r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config", GIULIA,
-                            "--dry-run"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config",
+                            _giulia_fresh_state(root), "--dry-run"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            universal_newlines=True, timeout=120)
         out = r.stdout
         assert r.returncode == 0 and "REFUSE" not in out, out

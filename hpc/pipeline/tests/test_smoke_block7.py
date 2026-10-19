@@ -292,12 +292,27 @@ def test_known_answer():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _giulia_fresh_state(root):
+    """The committed Giulia file with its work root under `root`: the dry run
+    reads no state (a work root holding a run's state, as on davinci, would
+    be read and, after a configuration change, refused); every other path is
+    the committed one, which the checks read in the dry run's lines."""
+    with open(GIULIA, "rb") as fh:
+        raw = json.loads(fh.read().decode("ascii"))
+    cfg = C._strip_docs(raw)
+    cfg["paths"]["work_root"] = os.path.join(root, "work_root")
+    path = os.path.join(root, "giulia.json")
+    with open(path, "w") as fh:
+        json.dump(cfg, fh, indent=1, sort_keys=True)
+    return path
+
+
 def test_reference():
     """The committed Giulia configuration's dry run (davinci paths absent)."""
     root = _tmp()
     try:
         env = _env(os.path.join(root, "spool"))
-        rc, out = _run(root, GIULIA, ["--dry-run"], env, timeout=120)
+        rc, out = _run(root, _giulia_fresh_state(root), ["--dry-run"], env, timeout=120)
         # blocks 2 and 3 are not built: their six REFUSE lines are expected; none for S7/S8
         assert "REFUSE: this code cannot honour" not in out, out
         assert "REFUSE: stage search" not in out and "REFUSE: stage best_fit" not in out, out
