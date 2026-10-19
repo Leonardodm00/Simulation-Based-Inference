@@ -268,56 +268,57 @@ Each line is one line, for ANY login node; run them in this order and read
 each result before the next. The pass condition of each is a line that must
 APPEAR.
 
+Done once, 2026-10-19, not to repeat: the probe of the scheduler from a
+compute node (`qsub -q cpu -o $HOME/probe_compute_qsub.log
+~/SBI/hpc/pipeline/tools/probe_compute_qsub.pbs`, then `cat
+$HOME/probe_compute_qsub.log $HOME/probe_compute_qsub_child.log`: `PROBE:
+QSUB OK`, `QSTAT OK`, `QSELECT OK`, `QDEL OK`, `PROBE: DONE`, `CHILD: ran on
+<node>` -- passed on dvnode002, job 1851748, 10:52), and the retirement of the
+sequencer started on a login node by the code before D-098
+(`run_pipeline.sh --project giulia --retire-login-sequencer`; its lock was
+already gone). A new cluster, or a new queue for the sequencer's jobs, runs
+the probe again first (its header names the queue).
+
 ```
 # 1. the code and the cluster-side check (LF, ASCII, syntax, the imports); pass line: PIPELINE CODE OK
 #    (`module load proxy`: git reaches GitHub through the cluster's proxy; skipped where there is no such module)
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git fetch origin && git checkout sci/pipeline && git pull --ff-only origin sci/pipeline && git log --oneline -1 && bash -c 'set -e; cd hpc/pipeline; for f in $(find . -name "*.py" -o -name "*.sh" -o -name "*.pbs" -o -name "*.json" | grep -v __pycache__); do if LC_ALL=C grep -q $'"'"'\r'"'"' "$f"; then echo "CR in $f"; exit 1; fi; if LC_ALL=C grep -qP "[^\x00-\x7F]" "$f"; then echo "non-ASCII in $f"; exit 1; fi; done; python3 -m py_compile pipeline.py config.py state.py pbs.py envs.py stages/*.py tools/*.py tests/*.py; python3 -c "import sys; sys.path.insert(0, \".\"); import pipeline, stages; print(sorted(stages.BUILT))"; echo PIPELINE CODE OK'
 
-# 2. can a compute node drive jobs? (once; the sequencer's jobs need qsub, qstat, qselect, qdel there).
-#    Pass lines in the first file: PROBE: QSUB OK, PROBE: QSTAT OK, PROBE: QSELECT OK, PROBE: QDEL OK, PROBE: DONE;
-#    in the second: CHILD: ran on <node>. Read them about 2 minutes after the qsub.
-qsub -q cpu -o $HOME/probe_compute_qsub.log ~/SBI/hpc/pipeline/tools/probe_compute_qsub.pbs
-cat $HOME/probe_compute_qsub.log $HOME/probe_compute_qsub_child.log
-
-# 3. the block-1 tests under the fake PBS (stdlib); pass lines: 6 pass, 0 fail (about 25 s), then 6 pass, 0 fail
-#    (about 3 min), then 7 pass, 0 fail (the core cap, about 2 min; it reads the launchers' cores from this checkout)
+# 2. the block-1 tests under the fake PBS (stdlib, about 6 min in all); pass lines, one per test:
+#    -- 6 pass, 0 fail, 0 error, 0 todo, 1 skip      (the sequencer, about 25 s)
+#    -- 6 pass, 0 fail, 0 error, 0 todo, 1 skip      (the sequencer's jobs, D-098, about 3 min)
+#    -- 7 pass, 0 fail, 0 error, 0 todo, 1 skip      (the core cap, D-099, about 2 min; the launchers' cores from this checkout)
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_pipeline.py 2>&1 | tail -1 && python3 hpc/pipeline/tests/test_smoke_block1b.py 2>&1 | tail -1 && SBIX_CLONE=/davinci-1/home/ldellamea/repos/Sbi-extractor python3 hpc/pipeline/tests/test_smoke_block1c.py 2>&1 | tail -1
 
-# 4. ONCE, 2026-10-18 (done: on 2026-10-19 no lock was left; skip it): retire the sequencer started on a login
-#    node by the code before D-098 (it ignores --stop).
-#    It works through the shared file system only. Pass lines: RETIRE: OLD SEQUENCER STOPPED, or RETIRE: no lock ...,
-#    or RETIRE: the lock is still there after 300 s ... (it was already gone; the first sequencer job takes its lock
-#    after 600 s without a state write).
-bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --retire-login-sequencer
-
-# 5. the dry run (submits nothing); pass: no REFUSE or STOP line, exit 0, the line "the sequencer: PBS jobs named
+# 3. the dry run (submits nothing); pass: no REFUSE or STOP line, exit 0, the line "the sequencer: PBS jobs named
 #    pl_giulia ...", the line "cores: at most 200 at once ... in flight per the state file: <n> in <k> job(s)" (the
-#    jobs already queued or running), S1-S6 "would be skipped", "search: would run" with its node-fault lines and
-#    "cores (D-099): at most 4 trial(s) at once ...". A stage the state file
-#    records as failed prints "<stage>: FAILED in the state file ... add --retry <stage>" and exit 3: add that
-#    --retry to this line and to step 6. --accept-config-change: the run was started under an earlier version.
+#    jobs the state file records as queued or running), S1-S6 "would be skipped", "search: would run" with its
+#    node-fault lines and "cores (D-099): at most 4 trial(s) at once ...". A stage the state file records as failed
+#    prints "<stage>: FAILED in the state file ... add --retry <stage>" and exit 3: add that --retry to this line
+#    and to step 4. --accept-config-change: the run was started under an earlier configuration version.
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --accept-config-change 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|node fault|cores|exit" ; echo "exit ${PIPESTATUS[0]}"
 
-# 6. the run: submits the sequencer's first job and returns; pass line: SUBMITTED the sequencer: job <id> (pl_giulia)
+# 4. the run: submits the sequencer's first job and returns; pass line: SUBMITTED the sequencer: job <id> (pl_giulia)
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --accept-config-change
 
-# 7. any time, from any login node: the status and the log. Lines to watch: `driver <id> on <node>: started; its
+# 5. any time, from any login node: the status and the log. Lines to watch: `driver <id> on <node>: started; its
 #    successor <id> waits for it (afterany)`, `sequencer started: job <id> on <node>`, the search's lines
 #    (`search: trial <id> ... was never examined for a node fault; examining it`, `search: trial <id> NODE FAULT on
 #    <node> (...); ... queued again with --resume (r of 2)`, `submitted trial ...`, `search: round r complete (...)`,
 #    `search: SEARCH COMPLETE (...)`), `driver <id>: time budget reached; the successor <id> continues` once a day,
 #    `best_fit: BEST FIT COMPLETE: ...`, `PIPELINE DONE: every stage done or skipped`; in --status, the `cores:`
-#    line (at most 200 in flight).
+#    line (at most 200 in flight). The first sequencer job waits in the queue while the trials submitted before
+#    the cap fill the user's running-job limit; it starts when one of them ends.
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/giulia/pipeline.log
 ```
 
 A `STOP: stage search failed: budget gate: ...` line names the projected
 trial time and memory against `search.trial.walltime` and `mem`: raise them
 (or narrow the space) in `projects/giulia/giulia.json`, then submit again
-(step 6) with `--retry search --accept-config-change` appended. A sequencer
+(step 4) with `--retry search --accept-config-change` appended. A sequencer
 job that died is followed by its successor; a chain that ended (`the chain
 ends (...)` in the log, `none queued or running` in `--status`) is resumed by
-step 6: it re-attaches to the recorded jobs.
+step 4: it re-attaches to the recorded jobs.
 
 ## Tests
 
@@ -349,7 +350,7 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 
 | block | what | status |
 |---|---|---|
-| 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4; the sequencer as a chain of PBS jobs on compute nodes, the lock and the state hardened, adoption, the transition (D-098, config v8); the core cap (D-099, config v9) | built 2026-10-15, smoke-tested; amended 2026-10-18 (`test_smoke_block1b.py`) and 2026-10-19 (`test_smoke_block1c.py`) |
+| 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4; the sequencer as a chain of PBS jobs on compute nodes, the lock and the state hardened, adoption, the transition (D-098, config v8); the core cap (D-099, config v9) | built 2026-10-15, smoke-tested; amended 2026-10-18 (`test_smoke_block1b.py`) and 2026-10-19 (`test_smoke_block1c.py`); on davinci 2026-10-19: the probe passed (a compute node drives jobs), the three block-1 tests pass |
 | 2 | the bank stages S4-S6 through `launch_bank.sh` (the profile from the configuration; the chain line BC as phases; a gate that never ran is run alone; the self-healing simulated bank: the verification job, the quarantine, the reruns, the certificate; config v6) | built 2026-10-16, smoke-tested on the stand-in; amended 2026-10-16 (the dropped gate), 2026-10-18 (D-094, D-095) and 2026-10-19 (D-099: the cap, the launcher's NCPUS passed; `test_cores`) |
 | 3 | the input stages S1-S3 through `launch_stage_d.sh`, `launch_sim_reextract.sh`, `preflight_label_axes.py` | built 2026-10-16, smoke-tested (S3 on the real tool; S1-S2 on stubs of the launchers); amended 2026-10-19 (D-099: the cap; `test_cores`) |
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |

@@ -43,7 +43,10 @@ Run
 
 Everything runs under the fake PBS (tests/fake_pbs/, first on PATH) in a
 temporary folder, on the synthetic graph A -> B -> C of synthetic_graph.py;
-the sequencer's jobs run that file's `drive`. Nothing touches davinci.
+the sequencer's jobs run that file's `drive`. Nothing touches davinci. A
+lock "on another host" names OTHER_HOST, never a real node: the test ran on
+dvlogin04 itself on 2026-10-19 and the two checks that assumed dvlogin04 was
+elsewhere failed there (the code was right).
 The fake PBS hands its environment to its jobs (davinci passes only -v):
 that is how the stages' switches and a mutation reach the driver jobs.
 
@@ -81,6 +84,10 @@ import state as ST      # noqa: E402
 GIULIA = os.path.join(_PIPE, "projects", "giulia", "giulia.json")
 PYTHON = sys.executable
 SG = os.path.join(_HERE, "synthetic_graph.py")
+# a host that is never this one, whatever this one is called (a login node
+# of davinci included): a pid lock naming it is judged by the state's
+# heartbeat, not by a pid on this host
+OTHER_HOST = socket.gethostname() + "-elsewhere"
 
 # A mutation disables one piece of the code; the check named after it must FAIL.
 MUTATION = os.environ.get("MUTATION", "")
@@ -478,7 +485,7 @@ def test_invariants():
         assert P.read_lock(lk) is None
         # (iii) a pid on another host whose state is being written: refused
         with open(p, "w") as fh:
-            fh.write("4242 dvlogin04 2026-10-18T12:55:01Z\n")
+            fh.write("4242 %s 2026-10-18T12:55:01Z\n" % OTHER_HOST)
         stop = threading.Event()
 
         def writer():
@@ -496,7 +503,7 @@ def test_invariants():
             assert not P.acquire_lock(lk, lines, quiet_s=4.0), \
                 "a pid lock on another host whose state is being written must be refused; " \
                 "log:\n" + lines.text()
-            assert "another sequencer (pid 4242 on dvlogin04) is still writing the state" \
+            assert ("another sequencer (pid 4242 on %s) is still writing the state" % OTHER_HOST) \
                 in lines.text(), lines.text()
         finally:
             stop.set()
@@ -506,7 +513,7 @@ def test_invariants():
         t0 = time.time()
         assert P.acquire_lock(lk, lines, quiet_s=2.0)
         assert time.time() - t0 >= 2.0
-        assert "stale lock from pid 4242 on dvlogin04 replaced: no state write for 2 s" \
+        assert ("stale lock from pid 4242 on %s replaced: no state write for 2 s" % OTHER_HOST) \
             in lines.text(), lines.text()
         P.release_lock(lk)
         # (v) a pid of this host that is not alive (nor 0, nor -1)
@@ -842,7 +849,7 @@ def _edge_retire():
         old = os.path.join(root, "old_style_sequencer.py")
         with open(old, "w") as fh:
             fh.write(_OLD_STYLE)
-        proc = subprocess.Popen([PYTHON, old, wr, "dvlogin04"], stdout=subprocess.PIPE,
+        proc = subprocess.Popen([PYTHON, old, wr, OTHER_HOST], stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, universal_newlines=True)
         for _ in range(100):
             if "old tick 3" in _read(ST.State.path_of(wr)):
@@ -859,7 +866,7 @@ def _edge_retire():
         # (b) a lock with no writer behind it, and a temporary FILE a crash left
         os.rmdir(ST.State.path_of(wr) + ".tmp")
         with open(os.path.join(wr, "pipeline.lock"), "w") as fh:
-            fh.write("4242 dvlogin04 2026-10-18T12:55:01Z\n")
+            fh.write("4242 %s 2026-10-18T12:55:01Z\n" % OTHER_HOST)
         with open(ST.State.path_of(wr) + ".tmp", "w") as fh:
             fh.write("{}")
         rc, out = _pl(root, env, "retire", "--wait", "3", timeout=60)
@@ -871,7 +878,7 @@ def _edge_retire():
         rc, out = _pl(root, env3, "submit")
         assert rc == 0 and "a sequencer started on a login node" in out, out
         log = _wait_for(cfg, "PIPELINE DONE", timeout=90)
-        assert "stale lock from pid 4242 on dvlogin04 replaced: no state write for 3 s" in log, log
+        assert ("stale lock from pid 4242 on %s replaced: no state write for 3 s" % OTHER_HOST) in log, log
         _wait_for(cfg, "the chain ends (done")
         # (d) a job's lock: nothing to retire
         with open(os.path.join(wr, "pipeline.lock"), "w") as fh:

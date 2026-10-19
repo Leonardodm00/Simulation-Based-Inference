@@ -727,6 +727,21 @@ fixture, not part of the pipeline.
   which a dry run reads and, after the v9 change, refuses -- rehearsed
   with such a state in place: the six checks of `e449fb5` FAIL there, the
   corrected ones pass, and step 3's three tests pass (6, 6 and 7 pass).]
+  [2026-10-19, davinci (the user's paste of 14:51): the probe
+  `tools/probe_compute_qsub.pbs` PASSED on dvnode002 (job 1851748, queue
+  cpu, 10:52): qsub with afterany, qstat, qselect and qdel answer from a
+  compute node and the child ran after its parent -- the scheduler checks
+  listed above as skipped for want of davinci are now verified; the
+  block-1 tests there: `test_smoke_pipeline.py` 6 pass, `test_smoke_block1c.py`
+  7 pass, `test_smoke_block1b.py` 4 pass, 2 FAIL on dvlogin04 --
+  `test_invariants` (iii) and `_edge_retire` (c) wrote a pid lock naming
+  `dvlogin04` as "another host", which on dvlogin04 itself is judged by the
+  local pid (dead: replaced at once), not by the state's heartbeat;
+  reproduced in the sandbox with `socket.gethostname` patched to
+  `dvlogin04` (the same 4 pass, 2 fail), corrected: the lock names
+  `OTHER_HOST = gethostname() + "-elsewhere"`, which is never the running
+  host; 6 pass, 1 skip under both names, the `heartbeat` and `lock_check`
+  mutations still caught under both. The code was right.]
 
 ### Block 2: the bank stages S4-S6 (`stages/bank.py`)
 
@@ -1609,7 +1624,11 @@ fixture, not part of the pipeline.
   run, the run, the status), each with the lines that must appear.
 - Not rehearsed: davinci's queues and conda, the 48-core probes on the
   real space, the real S1 and S2 tools.
-- Status: smoke-tested 2026-10-16 (1 pass, 1 skip).
+- Status: smoke-tested 2026-10-16 (1 pass, 1 skip). [2026-10-19: on
+  davinci, the scheduler probe passed from a compute node and the three
+  block-1 tests pass (block 1's Status); the README's run sheet is the
+  final one: the pull and check, the tests, the dry run, the submission,
+  the status.]
 
 Every block is written (2026-10-16); the constraints are those of secs. 2-4
 above.
@@ -1619,9 +1638,9 @@ above.
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
 |---|---|---|---|
 | `bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run` | the stage table and every qsub line; submits nothing | the committed `giulia.json`; davinci paths need not exist (each stage reports `not done`) | seconds |
-| `bash hpc/pipeline/run_pipeline.sh --project giulia` | the one command: starts the sequencer under `nohup`, prints the log and state paths | davinci | days |
+| `bash hpc/pipeline/run_pipeline.sh --project giulia` | the one command: submits the sequencer's first PBS job (D-098) and prints its id, the log and state paths | davinci | days |
 | `bash hpc/pipeline/run_pipeline.sh --project giulia --status` | the stage table from the state file and the live scheduler | -- | seconds |
-| `python3 hpc/pipeline/tests/test_smoke_pipeline.py` | block 1's smoke test under the fake PBS | none (synthetic project in a temporary directory) | about 30 s |
+| `python3 hpc/pipeline/tests/test_smoke_pipeline.py`, `test_smoke_block1b.py`, `test_smoke_block1c.py` | block 1's smoke tests under the fake PBS: the sequencer; its jobs (D-098); the core cap (D-099) | none (synthetic project in a temporary directory; `SBIX_CLONE` for 1c's launcher check) | about 25 s, 3 min, 2 min |
 | `python3 hpc/pipeline/tests/test_smoke_block7.py` | block 7's smoke test: the search and the best fit under the fake PBS on the fixture banks | the training environment (torch, sbi, skopt) | about 2 min |
 | `python3 hpc/pipeline/tests/test_smoke_block2.py`, `test_smoke_block3.py` | blocks 2 and 3: the bank stages and the input stages on the stand-in davinci | the Sbi-extractor checkout (`SBIX_CLONE`), numpy | about 20 s, 7 s |
 | `python3 hpc/pipeline/tests/test_smoke_block8.py` | block 8: the one command end to end on the stand-in with the real tools | both of the above | about 1 min |
