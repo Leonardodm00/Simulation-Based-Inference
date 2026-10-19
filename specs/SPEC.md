@@ -1725,6 +1725,44 @@ fixture, not part of the pipeline.
     that cannot be read: set aside, queued again; a fresh state's refresh:
     set aside at once, no crash; write_json fsyncs; mutation `unreadable`
     (the read that raises restored) -> `unreadable_record` FAILS.
+    `tools/search_reset.py --config <file> [--confirm <CODE>]` [the user's
+    call of 2026-10-19 17:19, "remove everything from the round 0 of S7"]:
+    a list-then-confirm tool (the project's delete rule; nothing deleted).
+    The listing: the campaign's `trials`, `pending`, `runs`, `jobs`,
+    `pipeline_rounds.json`, `finalists.json`, `SEARCH_COMPLETE.json` (those
+    present, with their sizes), `gate` and `bank_split.json` kept, the
+    ledger's counts, the trial jobs the state records that the scheduler
+    reports not finished, and `CODE <8 hex>` -- the first 8 hex digits of
+    the sha256 of the listing's items, live jobs and ledger counts, so that
+    a file or a job that changed makes the CODE stale. `--confirm <CODE>`:
+    refused (exit 4) when a `pl_<tag>` job is queued or running or the CODE
+    no longer matches; else the live trial jobs are deleted (qdel) and
+    awaited up to 180 s (still live: nothing moved, exit 4), the items are
+    moved to `<campaign>_set_aside_<utc>/` with a `RESET_RECORD.json` (the
+    jobs deleted, the ledger's counts, the CODE, the configuration's
+    digest), and the pass line `SEARCH RESET DONE: <n> job(s) deleted,
+    round(s) set aside as <dir>; next: submit with --retry search
+    --accept-config-change`. The state is left to that submission's
+    `--retry search` (accepted once the jobs have ended). The search then
+    starts again: the identity recomputed, the gate's probe files reused
+    (no probe job), round 0 proposed anew -- with `search.gp_seed` unchanged
+    the same configurations as before (checked by computation: `propose`
+    with seed 0 twice gives the same 50 ids and configurations, seed 1 gives
+    50 others, none in common `[SANDBOX 2026-10-19]`). Test oracles
+    (`tests/test_smoke_reset.py`, the report test's fixture under the fake
+    PBS with two running trial jobs and one finished): the listing (items,
+    kept, counts, the two live jobs, the finished one not, nothing moved);
+    the CODE a function of the listing (a new record or an ended job
+    changes it); bytes preserved (every file's sha256 the same in the
+    set-aside folder, the gate untouched); the confirm (jobs F, the folder,
+    the record, the pass line, then the dry run with `--retry search
+    --accept-config-change` accepted, a second listing empty); a wrong
+    CODE, a sequencer job, a bad configuration refused; mutation `code`
+    (the CODE constant) -> the wrong-CODE case acts: FAIL. Rehearsed on the
+    stand-in (`rehearse_reset.py`, not in the repository): a search stopped
+    mid round 0, reset with the CODE (3 jobs deleted, round 0 set aside, the
+    gate kept), submitted again with the two flags: no probe job, the same
+    round-0 ids, 5 ok records, `PIPELINE DONE` `[SANDBOX 2026-10-19]`.
     `tests/test_smoke_report.py` (stdlib; runs on davinci): a hand-made
     campaign folder and state (ok, a SIGBUS failure, a ValueError failure,
     an empty record with its pending spec, a NUL record without, a running

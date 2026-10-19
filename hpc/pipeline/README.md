@@ -342,6 +342,36 @@ cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --accept-config-c
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project giulia --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/giulia/pipeline.log
 ```
 
+Restarting the search from nothing (the user's call of 2026-10-19 17:19):
+`tools/search_reset.py --config <file>` lists what a reset would do -- the
+campaign's `trials/`, `pending/`, `runs/`, `jobs/`, `pipeline_rounds.json`,
+`finalists.json`, `SEARCH_COMPLETE.json` to set aside (moved to
+`<campaign>_set_aside_<utc>/`, never deleted), `gate/` and `bank_split.json`
+kept (the budget gate's probe files are reused: no probe jobs again), and the
+trial jobs still queued or running, to be deleted (qdel) -- and prints a CODE;
+with `--confirm <CODE>` it does it (pass line `SEARCH RESET DONE: ...`),
+refused when a sequencer job is queued or running or the CODE no longer
+matches. The state file is not touched: the submission that follows carries
+`--retry search --accept-config-change`, and the search starts again at the
+gate (reused) and round 0. With `search.gp_seed` unchanged, round 0 draws the
+same configurations as before (verified: two proposals with seed 0 give the
+same 50 ids and configurations, seed 1 gives 50 others). The lines, from any
+login node, after step 1 of the run sheet:
+
+```
+# R1. the listing (nothing done); pass line: CODE <8 hex> -- run again with --confirm <CODE> ...
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/search_reset.py --config hpc/pipeline/projects/giulia/giulia.json
+
+# R2. the reset, with the CODE of R1; pass line: SEARCH RESET DONE: <n> job(s) deleted, round(s) set aside as ...
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/search_reset.py --config hpc/pipeline/projects/giulia/giulia.json --confirm <CODE>
+
+# R3. the dry run; pass: exit 0, no REFUSE, "search reset to pending (--retry)", "search: would run"
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --retry search --accept-config-change 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|reset|would|sequencer|cores|exit" ; echo "exit ${PIPESTATUS[0]}"
+
+# R4. the submission; pass line: SUBMITTED the sequencer: job <id> (pl_giulia)
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --retry search --accept-config-change
+```
+
 A `STOP: stage search failed: budget gate: ...` line names the projected
 trial time and memory against `search.trial.walltime` and `mem`: raise them
 (or narrow the space) in `projects/giulia/giulia.json`, then submit again
@@ -363,6 +393,7 @@ python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 7 s, the
 python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
 python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults, checkpoints and unreadable records, block 1's stop and retry guard, about 9 min, the same
 python3 hpc/pipeline/tests/test_smoke_report.py        # tools/search_report.py, a few seconds, stdlib
+python3 hpc/pipeline/tests/test_smoke_reset.py         # tools/search_reset.py, about 20 s, stdlib and the fake PBS
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 ```
 
