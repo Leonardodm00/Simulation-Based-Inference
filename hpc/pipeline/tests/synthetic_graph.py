@@ -24,7 +24,13 @@ from the environment, which the fake PBS hands to its jobs:
 SYNTH_REFUSE=A,B, SYNTH_SILENT_KILL=..., SYNTH_CRASH_POLL=... (that stage's
 poll raises: a sequencer that crashes), SYNTH_JOB_SLEEP=<s> (each job's
 sleep, default 0.3), MUTATION_PATCH=<python> (exec'd before the command:
-block 1b's mutations).
+block 1b's mutations). For the core cap (D-099, block 1c's test), in every
+mode: SYNTH_PARALLEL=1 makes A and B independent (C after both),
+SYNTH_STAGE_NCPUS=<n> makes each stage's job ask n cores and its start
+wait (S.Deferred) while they do not fit, SYNTH_NO_CHECK=1 submits without
+asking (the sequencer's guard must refuse it), SYNTH_POLL_ASK=<n> makes
+every poll ask whether n cores fit (a job that can never start, asked in
+a poll).
 Not pipeline code: a fixture. Pure ASCII, LF only; stdlib only.
 """
 
@@ -86,8 +92,9 @@ class SyntheticStage(S.Stage):
         return p
 
     def _qsub(self, cfg):
+        n = int(os.environ.get("SYNTH_STAGE_NCPUS", "1"))
         return ["qsub", "-N", "synth_" + self.name, "-q", "cpu",
-                "-l", "select=1:ncpus=1:mem=1gb", "-l", "walltime=00:10:00",
+                "-l", "select=1:ncpus=%d:mem=1gb" % n, "-l", "walltime=00:10:00",
                 "-j", "oe", "-o", self._log(cfg), "-v", "STAGE=%s" % self.name,
                 self._script(cfg)]
 
@@ -95,6 +102,9 @@ class SyntheticStage(S.Stage):
         d = os.path.dirname(self._log(cfg))
         if not os.path.isdir(d):
             os.makedirs(d)
+        n = int(os.environ.get("SYNTH_STAGE_NCPUS", "1"))
+        if os.environ.get("SYNTH_NO_CHECK") != "1" and not sub.fits(n):
+            raise S.Deferred("job asks %d cores; %s free" % (n, sub.free()))
         sub.submit(self._qsub(cfg), role="job", log_path=self._log(cfg))
 
     def verify(self, cfg, st):
@@ -115,11 +125,20 @@ class SyntheticStage(S.Stage):
     def poll(self, cfg, st, sub):
         if self.name in _env_list("SYNTH_CRASH_POLL"):
             raise RuntimeError("synthetic crash in the poll of %s" % self.name)
+        if os.environ.get("SYNTH_POLL_ASK"):
+            sub.fits(int(os.environ["SYNTH_POLL_ASK"]))
         return S.Stage.poll(self, cfg, st, sub)
 
 
 def _env_list(var):
     return [x for x in os.environ.get(var, "").split(",") if x]
+
+
+def _deps():
+    """A -> B -> C, or with SYNTH_PARALLEL=1 A and B independent, C after both."""
+    if os.environ.get("SYNTH_PARALLEL") == "1":
+        return {"A": (), "B": (), "C": ("A", "B")}
+    return {"A": (), "B": ("A",), "C": ("B",)}
 
 
 def env_graph():
@@ -130,9 +149,8 @@ def env_graph():
         if name in _env_list("SYNTH_SILENT_KILL"):
             return "silent-kill"
         return "ok"
-    return [SyntheticStage("A", (), mode("A")),
-            SyntheticStage("B", ("A",), mode("B")),
-            SyntheticStage("C", ("B",), mode("C"))]
+    deps = _deps()
+    return [SyntheticStage(n, deps[n], mode(n)) for n in ("A", "B", "C")]
 
 
 def main(argv=None):
@@ -170,9 +188,8 @@ def main(argv=None):
             return "silent-kill"
         return "ok"
 
-    graph = [SyntheticStage("A", (), mode("A")),
-             SyntheticStage("B", ("A",), mode("B")),
-             SyntheticStage("C", ("B",), mode("C"))]
+    deps = _deps()
+    graph = [SyntheticStage(n, deps[n], mode(n)) for n in ("A", "B", "C")]
     for name in args.pre_make:
         st = [s for s in graph if s.name == name][0]
         art = st._artefact(cfg)

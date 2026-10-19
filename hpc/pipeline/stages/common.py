@@ -150,6 +150,62 @@ def write_argv_file(path, argv):
     return path
 
 
+_PBS_SELECT_LINE = re.compile(r"^#PBS\s+-l\s+(\S*select=\S+|\S*ncpus=\S+)")
+
+
+def pbs_header_ncpus(path):
+    """The cores a job script asks for in its `#PBS -l select=...` header
+    (D-099: a launcher whose qsub line passes no -l uses its script's).
+    RuntimeError when the file has none."""
+    try:
+        with open(path) as fh:
+            for line in fh:
+                m = _PBS_SELECT_LINE.match(line.strip())
+                if m:
+                    n = PBS.cores_of_select(m.group(1))
+                    if n is not None:
+                        return n
+    except OSError as exc:
+        raise RuntimeError("cannot read the cores of %s: %s" % (path, exc))
+    raise RuntimeError("cannot read the cores of %s: no #PBS -l select=...:ncpus=N line" % path)
+
+
+def shell_default(path, var):
+    """The default a launcher gives `var`, from its `VAR="${VAR:-value}"`
+    line (D-099: the cores it asks for unless told otherwise). RuntimeError
+    when the file has no such line."""
+    pat = re.compile(r'^\s*%s="\$\{%s:-([^}]*)\}"' % (re.escape(var), re.escape(var)))
+    try:
+        with open(path) as fh:
+            for line in fh:
+                m = pat.match(line)
+                if m:
+                    return m.group(1)
+    except OSError as exc:
+        raise RuntimeError("cannot read the default of %s in %s: %s" % (var, path, exc))
+    raise RuntimeError("cannot read the default of %s in %s: no %s=\"${%s:-...}\" line"
+                       % (var, path, var, var))
+
+
+def stage_budget(cfg):
+    """The cores the stages' jobs may hold at once: resources.max_cores less
+    the sequencer's own job (D-099); None without a cap."""
+    d = cfg.data
+    if "resources" not in d:
+        return None
+    return int(d["resources"]["max_cores"]) - int(d["driver"]["ncpus"])
+
+
+def cap_room(cfg, ncpus, limit=None):
+    """How many jobs of `ncpus` cores the cap holds at once, at most `limit`
+    (the dry runs' line; D-099)."""
+    b = stage_budget(cfg)
+    k = (b // int(ncpus)) if b is not None else None
+    if limit is None:
+        return k
+    return int(limit) if k is None else min(int(limit), k)
+
+
 def read_argv_file(path):
     with open(path) as fh:
         return [line.rstrip("\n") for line in fh if line.rstrip("\n") != ""]

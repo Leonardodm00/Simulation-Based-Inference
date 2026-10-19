@@ -264,7 +264,7 @@ def test_known_answer():
 
 def test_reference():
     cfg = C.load_config(GIULIA)
-    assert cfg.data["config_version"] == 8
+    assert cfg.data["config_version"] == 9
     assert cfg.data["search"]["resubmit_node_faults"] is True, "D-096"
     assert cfg.data["best_fit"]["resubmit_node_faults"] is True
     root = tempfile.mkdtemp(prefix="b7b_ref_")

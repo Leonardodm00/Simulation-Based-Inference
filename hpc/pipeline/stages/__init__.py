@@ -121,6 +121,12 @@ def artefact_done(kind, path):
 # The interface
 # ---------------------------------------------------------------------------
 
+class Deferred(Exception):
+    """Raised by a stage's start when its first job does not fit under
+    resources.max_cores (D-099): the stage stays pending, and the sequencer
+    calls start again at the next tick."""
+
+
 class StageNotBuilt(RuntimeError):
     """Raised by a placeholder's start(): the runner belongs to a later block."""
 

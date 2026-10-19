@@ -41,7 +41,7 @@ Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 import os
 import re
 
-from . import DEPS, Stage, artefact_of
+from . import DEPS, Deferred, Stage, artefact_of
 from . import common as CM
 from .bank import _last_lines, _JOB_LINE, read_log, job_exit_line, grace_over
 
@@ -107,6 +107,7 @@ class _InputBase(Stage):
 # ---------------------------------------------------------------------------
 
 _S1_LINE = re.compile(r"^\s*(array|agg)\s*:\s*(\S+)", re.M)
+_S1_QSUB_J = re.compile(r"qsub\s+-J\s+0-([0-9]+)")
 
 
 class RealExtractionStage(_InputBase):
@@ -126,6 +127,37 @@ class RealExtractionStage(_InputBase):
         if not os.path.isfile(d["real"]["cohort_config"]):
             raise RuntimeError("real_extraction: real.cohort_config not found: %s"
                                % d["real"]["cohort_config"])
+        # D-099: the array has no concurrency limit of its own, so all of it
+        # must fit; its size from the launcher's own dry run, its cores from
+        # the job script's header (once per stage start)
+        fp = sub.get("cores")
+        if fp is None:
+            rc, text = self._run(cfg, ["bash", os.path.join(self._dir(cfg), "launch_stage_d.sh"),
+                                       d["real"]["extract_root"]], self._dir(cfg),
+                                 CONFIG=d["real"]["cohort_config"], COHORT_TAG=d["real"]["cohort_tag"],
+                                 DRYRUN=1)
+            m = _S1_QSUB_J.search(text)
+            if rc != 0 or not m:
+                sub["fail"] = ("the extraction could not be planned (its dry run, exit %d): %s"
+                               % (rc, self._refusal(text) if rc != 0
+                                  else "no 'qsub -J 0-<n>' line in its output"))
+                sub["phase"] = "failed"
+                return
+            per = CM.pbs_header_ncpus(os.path.join(self._dir(cfg), "run_extractor_array_mea.pbs"))
+            agg = CM.pbs_header_ncpus(os.path.join(self._dir(cfg), "run_cohort_manifest.pbs"))
+            n = int(m.group(1)) + 1
+            fp = sub["cores"] = {"elements": n, "per": per, "array": n * per, "agg": agg}
+        need = max(fp["array"], fp["agg"])     # the aggregation runs after the array
+        budget = pbs.budget()
+        if budget is not None and fp["array"] > budget:
+            raise RuntimeError("real_extraction: the extraction array asks %d x %d = %d cores at once and "
+                               "has no concurrency limit, more than the %d the cap leaves "
+                               "(resources.max_cores less the sequencer's job); a CONCURRENCY in "
+                               "Sbi-extractor's launcher (a laptop change, D-062) or a larger "
+                               "resources.max_cores" % (fp["elements"], fp["per"], fp["array"], budget))
+        if not pbs.fits(need):
+            raise Deferred("the extraction array asks %d x %d = %d cores at once (no concurrency limit "
+                           "of its own); %s free" % (fp["elements"], fp["per"], fp["array"], pbs.free()))
         rc, text = self._run(cfg, ["bash", os.path.join(self._dir(cfg), "launch_stage_d.sh"),
                                    d["real"]["extract_root"]], self._dir(cfg),
                              CONFIG=d["real"]["cohort_config"], COHORT_TAG=d["real"]["cohort_tag"])
@@ -140,9 +172,9 @@ class RealExtractionStage(_InputBase):
                 pbs.log("real_extraction: " + line.strip())
         pbs.record(jobs["array"], "extraction array", ["launch_stage_d.sh", d["real"]["extract_root"]],
                    log_path=os.path.join(self._dir(cfg), "out", "chsub_mea_array_%s_<index>.log"
-                                         % d["real"]["cohort_tag"]))
+                                         % d["real"]["cohort_tag"]), ncpus=fp["array"])
         pbs.record(jobs["agg"], "cohort manifest", ["launch_stage_d.sh", d["real"]["extract_root"]],
-                   log_path=self._agg_log(cfg))
+                   log_path=self._agg_log(cfg), ncpus=fp["agg"], after=jobs["array"])
         sub["agg_job"] = jobs["agg"]
         sub["phase"] = "jobs"
 
@@ -175,7 +207,11 @@ class RealExtractionStage(_InputBase):
 
     def dry_run(self, cfg, st):
         d = cfg.data
-        return ["login node (envs.extract): CONFIG=%s COHORT_TAG=%s ENV_NAME=%s bash %s/launch_stage_d.sh %s "
+        return ["cores (D-099): the array has no concurrency limit of its own, so it is launched only "
+                "when all of it fits: the wells of the launcher's dry run x the cores of its job script "
+                "(%s), at most %s; refused above that"
+                % (os.path.join(self._dir(cfg), "run_extractor_array_mea.pbs"), CM.stage_budget(cfg)),
+                "login node (envs.extract): CONFIG=%s COHORT_TAG=%s ENV_NAME=%s bash %s/launch_stage_d.sh %s "
                 "-> the array (one well per element) and the aggregation job"
                 % (d["real"]["cohort_config"], d["real"]["cohort_tag"], d["envs"]["extract"],
                    self._dir(cfg), d["real"]["extract_root"]),
@@ -221,6 +257,13 @@ class SimRedetectionStage(_InputBase):
             raise RuntimeError("sim_redetection: the cohort's profile %s does not exist; the "
                                "launcher needs it (the device geometry and the cohort's own "
                                "folders): add it to Sbi-extractor first" % profile)
+        # D-099: a cap that can never hold the array with its gate stops the
+        # stage here, before its test task
+        gate = CM.pbs_header_ncpus(os.path.join(self._dir(cfg), "run_sim_reextract_gate.pbs"))
+        pbs.check(max(int(d["sim"]["ncpus"]), gate))
+        if not pbs.fits(int(d["sim"]["ncpus"])):
+            raise Deferred("the re-detection test task asks %d cores; %s free"
+                           % (int(d["sim"]["ncpus"]), pbs.free()))
         rc, text = self._launch(cfg, "plan")
         if rc != 0:
             sub["fail"] = "the re-detection plan was refused (exit %d): %s" % (rc, self._refusal(text))
@@ -235,16 +278,42 @@ class SimRedetectionStage(_InputBase):
             sub["fail"] = "the test task could not be submitted (exit %d): %s" % (rc, self._refusal(text))
             sub["phase"] = "failed"
             return
-        pbs.record(jobs["job"], "re-detection test task 0", ["launch_sim_reextract.sh", "test"])
+        pbs.record(jobs["job"], "re-detection test task 0", ["launch_sim_reextract.sh", "test"],
+                   ncpus=int(d["sim"]["ncpus"]))
         sub["test_job"] = jobs["job"]
         sub["phase"] = "test"
 
     def _start_array(self, cfg, st, pbs):
         d = cfg.data
         sub = st["sub"]
-        rc, text = self._launch(cfg, "array", WALLTIME=d["sim"]["walltime"], RESUME=1)
+        ncpus = int(d["sim"]["ncpus"])
+        try:
+            gate = CM.pbs_header_ncpus(os.path.join(self._dir(cfg), "run_sim_reextract_gate.pbs"))
+        except RuntimeError as exc:     # in the poll too: the stage, not the sequencer, stops
+            sub["fail"] = "the gate's cores cannot be read (D-099): %s" % exc
+            sub["phase"] = "failed"
+            return
+        # the array and its gate (after it) hold the larger of the two at once
+        if not pbs.fits(max(ncpus, gate)):
+            if sub.get("phase") != "array_waiting":
+                pbs.log("sim_redetection: the array waits for cores (a task %d, its gate %d; %s free "
+                        "under resources.max_cores, D-099)" % (ncpus, gate, pbs.free()))
+            sub["phase"] = "array_waiting"
+            return
+        conc = int(d["sim"]["concurrency"])
+        free = pbs.free()
+        if free is not None:
+            conc = min(conc, free // ncpus)     # >= 1: free >= max(ncpus, gate)
+        if conc < int(d["sim"]["concurrency"]):
+            pbs.log("sim_redetection: the array at CONCURRENCY %d (sim.concurrency %d; the cap leaves "
+                    "room for %d task(s) of %d cores, D-099)"
+                    % (conc, int(d["sim"]["concurrency"]), free // ncpus, ncpus))
+        rc, text = self._launch(cfg, "array", WALLTIME=d["sim"]["walltime"], RESUME=1,
+                                CONCURRENCY=conc)
+        alone = False
         if rc != 0 and "tasks.tsv is empty" in text:
             pbs.log("sim_redetection: every task complete after the test task; the gate alone")
+            alone = True
             rc, text = self._launch(cfg, "gate", RESUME=1)
         jobs = dict(_JOB_LINE.findall(text))
         if rc != 0 or "gate" not in jobs:
@@ -254,10 +323,14 @@ class SimRedetectionStage(_InputBase):
         for line in text.split("\n"):
             if line.startswith("[plan] tasks") or line.startswith("# tasks"):
                 pbs.log("sim_redetection: " + line.strip())
-        if "job" in jobs:
-            pbs.record(jobs["job"], "re-detection array", ["launch_sim_reextract.sh", "array"])
+        m = re.search(r"(?m)^\[plan\] tasks to run\s*:\s*([0-9]+)", text)
+        n_tasks = int(m.group(1)) if m else conc
+        if "job" in jobs and not alone:
+            pbs.record(jobs["job"], "re-detection array", ["launch_sim_reextract.sh", "array"],
+                       ncpus=ncpus * max(1, min(conc, n_tasks)))
         pbs.record(jobs["gate"], "re-detection gate", ["launch_sim_reextract.sh", "array"],
-                   log_path=self._gate_log(cfg))
+                   log_path=self._gate_log(cfg), ncpus=gate,
+                   after=jobs["job"] if ("job" in jobs and not alone) else None)
         sub["gate_job"] = jobs["gate"]
         sub["phase"] = "gate"
 
@@ -278,7 +351,10 @@ class SimRedetectionStage(_InputBase):
             pbs.log("sim_redetection: test task finished (job %s exit %s)"
                     % (sub["test_job"], job.get("exit_status")))
             self._start_array(cfg, st, pbs)
-            return "running" if sub.get("phase") == "gate" else "finished"
+            return "running" if sub.get("phase") in ("gate", "array_waiting") else "finished"
+        if phase == "array_waiting":
+            self._start_array(cfg, st, pbs)
+            return "running" if sub.get("phase") in ("gate", "array_waiting") else "finished"
         if phase == "gate":
             job_id = sub["gate_job"]
             if not finished.get(job_id):
@@ -309,7 +385,12 @@ class SimRedetectionStage(_InputBase):
         vs = " ".join("%s=%s" % (k, v[k]) for k in ("COHORT_TAG", "COHORT_MANIFEST", "SIM_MAIN", "OUT_ROOT",
                                                     "TOOLS", "CAMPAIGN_GLOB", "PLAN_ARGS", "QUEUE",
                                                     "NCPUS", "CONCURRENCY"))
-        return ["login node (envs.extract): %s bash %s/launch_sim_reextract.sh plan" % (vs, self._dir(cfg)),
+        return ["cores (D-099): the test task %d; the array at CONCURRENCY %s = min(sim.concurrency %d, "
+                "the cap's room %s) of %d cores each, its gate (%s) after it"
+                % (int(d["sim"]["ncpus"]), CM.cap_room(cfg, d["sim"]["ncpus"], d["sim"]["concurrency"]),
+                   int(d["sim"]["concurrency"]), CM.cap_room(cfg, d["sim"]["ncpus"]), int(d["sim"]["ncpus"]),
+                   os.path.join(self._dir(cfg), "run_sim_reextract_gate.pbs")),
+                "login node (envs.extract): %s bash %s/launch_sim_reextract.sh plan" % (vs, self._dir(cfg)),
                 "then: WALLTIME=%s TEST_INDEX=0 ... test -> one job; then WALLTIME=%s RESUME=1 ... array "
                 "-> the array and its gate (or `gate` alone when every task is complete)"
                 % (d["sim"]["test_walltime"], d["sim"]["walltime"]),

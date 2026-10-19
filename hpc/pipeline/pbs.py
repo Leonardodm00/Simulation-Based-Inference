@@ -16,7 +16,8 @@ import subprocess
 import time
 
 __all__ = ["JobStatus", "SubmitError", "SchedulerError", "submit", "status", "select",
-           "delete", "job_seq", "job_number", "same_job", "parse_qstat",
+           "delete", "job_seq", "job_number", "same_job", "cores_of_select",
+           "cores_of_argv", "parse_qstat",
            "walltime_to_seconds", "seconds_to_walltime", "FINISHED_STATES",
            "RUNNING_STATES", "QSUB", "QSTAT", "QSELECT", "QDEL"]
 
@@ -162,6 +163,55 @@ def status(job_id, retries=_QSTAT_RETRIES, retry_wait_s=_QSTAT_RETRY_WAIT_S):
         if attempt + 1 < retries:
             time.sleep(float(retry_wait_s))
     raise SchedulerError("qstat failed %d times for %s: %s" % (retries, job_id, last))
+
+
+def cores_of_select(text):
+    """The cores of one `-l` value: `select=K:ncpus=N[:...][+K2:ncpus=N2...]`
+    gives the sum of K x N over the chunks (K = 1 when a chunk has no count),
+    an old-style `ncpus=N` gives N; other resources in the same value
+    (`,walltime=...`) are ignored. None when no ncpus is named."""
+    total, seen = 0, False
+    for part in str(text).split(","):
+        part = part.strip()
+        if part.startswith("select="):
+            for chunk in part[len("select="):].split("+"):
+                fields = chunk.split(":")
+                k = int(fields[0]) if fields and fields[0].isdigit() else 1
+                for f in fields:
+                    if f.startswith("ncpus=") and f[len("ncpus="):].isdigit():
+                        total += k * int(f[len("ncpus="):])
+                        seen = True
+        elif part.startswith("ncpus=") and part[len("ncpus="):].isdigit():
+            total += int(part[len("ncpus="):])
+            seen = True
+    return total if seen else None
+
+
+_ARRAY_RANGE = re.compile(r"^([0-9]+)-([0-9]+)(?::([0-9]+))?(?:%([0-9]+))?$")
+
+
+def cores_of_argv(argv):
+    """The cores a qsub command line can hold at once (D-099): the cores of
+    its `-l select=...` (or `ncpus=`) values, times, for an array `-J
+    a-b[:s][%c]`, min(c, count) with count = (b - a) // s + 1 (all of them
+    without `%`). None when the line names no ncpus."""
+    argv = [str(a) for a in argv]
+    per, seen = 0, False
+    elements = 1
+    for i, a in enumerate(argv[:-1]):
+        if a == "-l":
+            c = cores_of_select(argv[i + 1])
+            if c is not None:
+                per += c
+                seen = True
+        elif a == "-J":
+            m = _ARRAY_RANGE.match(argv[i + 1].strip())
+            if m:
+                lo, hi = int(m.group(1)), int(m.group(2))
+                step = int(m.group(3) or 1)
+                count = (hi - lo) // step + 1 if hi >= lo else 0
+                elements = min(int(m.group(4)), count) if m.group(4) else count
+    return per * elements if seen else None
 
 
 def job_seq(job_id):

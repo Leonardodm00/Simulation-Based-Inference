@@ -45,6 +45,14 @@ Checks (specs/SPEC.md block 2, "Test oracles")
                         from its own files, the grace period, a stale log
     test_decisions      in process: what the stage does with each kind of
                         verification report, and with a job that leaves none
+    test_cores          D-099: under a cap that leaves 9 cores, with NCPUS=4
+                        and GATE_NCPUS=16 in the sequencer's environment (a
+                        PBS job's): the tasks ask the launcher's 1 core, the
+                        gate its 8, the array's CONCURRENCY is 9, the gate
+                        after it, nothing over 9 in the fake PBS's records;
+                        in process, the array waits while its gate does not
+                        fit, and a cap that can never hold the gate stops
+                        the stage at its start
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block2.py
@@ -263,7 +271,7 @@ def test_known_answer():
         assert committed["freeze_path"] == g.data["freeze"]["out"]
         assert committed["plan_out"] == "export_windows/giulia/bank_plan.json"
         # config v6: the verification job and the rerun budget (D-094); v7 since D-096
-        assert g.data["config_version"] == 8
+        assert g.data["config_version"] == 9
         assert b["verify"] == {"ncpus": 8, "mem": "16gb", "walltime": "02:00:00"}, b["verify"]
         assert b["max_rerun_rounds"] == 2
     finally:
@@ -667,7 +675,21 @@ class _FakeSub(object):
     def record(self, *a, **k):
         pass
 
-    def submit(self, argv, role, log_path=None, cwd=None, env=None):
+    # the core cap (D-099): the sequencer's Submitter without a configuration,
+    # where everything fits (block 2's in-process checks are not about the cap)
+    def budget(self):
+        return None
+
+    def free(self):
+        return None
+
+    def check(self, n):
+        return True
+
+    def fits(self, n):
+        return True
+
+    def submit(self, argv, role, log_path=None, cwd=None, env=None, ncpus=None, after=None):
         job_id = "%d.fake" % (900 + len(self.submitted))
         self.submitted.append((role, argv))
         return job_id
@@ -923,6 +945,115 @@ def test_decisions():
         s.close()
 
 
+def _record_cores(rec):
+    """The cores a fake PBS record can hold at once: its -l values, times
+    min(%c, the elements) for an array."""
+    import pbs as PBS
+    argv = ["qsub"]
+    for r in rec.get("resources", []):
+        argv += ["-l", r]
+    if rec.get("array_spec"):
+        argv += ["-J", rec["array_spec"]]
+    return PBS.cores_of_argv(argv + ["x"]) or 0
+
+
+def _peak(records):
+    """The most cores the records held at once: from each one's submission
+    -- or the end of the job it depends on -- to its end."""
+    by_id = dict((r["id"], r) for r in records)
+    ev = []
+    for r in records:
+        begin = r["submitted"]
+        dep = by_id.get(r.get("depend") or "")
+        if dep is not None:
+            begin = max(begin, dep["finished"] or float("inf"))
+        end = r["finished"] if r["finished"] else float("inf")
+        if begin < end:
+            ev += [(begin, 1, _record_cores(r)), (end, 0, -_record_cores(r))]
+    peak, now = 0, 0
+    for _t, _k, d in sorted(ev):
+        now += d
+        peak = max(peak, now)
+    return peak
+
+
+def _capped(s, stages_share):
+    """resources.max_cores = the sequencer's cores + `stages_share`; the
+    sized jobs small enough for the load's cross-check (the verifier 2)."""
+    c = s.cfg
+    c["search"]["trial"]["ncpus"] = 1
+    c["best_fit"]["ncpus"] = 1
+    c["sim"]["ncpus"] = 1
+    c["bank"]["verify"]["ncpus"] = 2
+    c["resources"]["max_cores"] = int(c["driver"]["ncpus"]) + int(stages_share)
+    with open(s.path, "w") as fh:
+        json.dump(c, fh, indent=1, sort_keys=True)
+    return C.load_config(s.path)
+
+
+def test_cores():
+    import pipeline as P
+    import state as SF
+    import stages.bank as B
+    s = Standin()
+    try:
+        cfg = _capped(s, 9)
+        rc, out = s.run(["--dry-run"])
+        assert rc == 0 and ("cores (D-099): a task 1 core(s) and the gate 8 (the launcher's NCPUS / "
+                            "GATE_NCPUS, passed to it); the array at CONCURRENCY 9 = min(bank."
+                            "concurrency 20, the cap's room 9), its gate after it; the verification "
+                            "job 2") in out, out
+        # in process first: another stage's job holds 2 of the 9: the array (its
+        # gate after it: 8) waits, logged once; the stage's own state untouched
+        held = SF.State.new(os.path.join(s.root, "wr_inproc"), "synth", s.path, "a" * 64)
+        held.stage("other")["status"] = "running"
+        held.add_job("other", "77.fake", "x", ["qsub", "-l", "select=1:ncpus=2", "x.pbs"])
+        lines = []
+        sub = P.Submitter(None, held, "sim_bank", lines.append, cfg)
+        st = {"jobs": [], "sub": {"phase": "test", "round": 0}}
+        B.SimBankStage()._start_array(cfg, st, sub)
+        B.SimBankStage()._start_array(cfg, st, sub)
+        assert st["sub"]["phase"] == "array_waiting" and not st["jobs"], st
+        assert lines == ["sim_bank: the array (its gate after it) waits for cores (8 asked, 7 free "
+                         "under resources.max_cores, D-099)"], lines
+        # a cap whose share (7) can never hold the gate (8): the stage stops at its start
+        c7 = json.loads(json.dumps(s.cfg))
+        c7["resources"]["max_cores"] = int(c7["driver"]["ncpus"]) + 7
+        p7 = os.path.join(s.root, "cap7.json")
+        with open(p7, "w") as fh:
+            json.dump(c7, fh, indent=1, sort_keys=True)
+        cfg7 = C.load_config(p7)
+        sub7 = P.Submitter(None, SF.State.new(os.path.join(s.root, "wr7"), "synth", p7, "b" * 64),
+                           "sim_bank", lines.append, cfg7)
+        try:
+            B.SimBankStage().start(cfg7, {"jobs": [], "sub": {}}, sub7)
+            raise AssertionError("a gate of 8 cores in a share of 7 must stop the stage")
+        except P.CapExceeded as exc:
+            assert ("sim_bank: a job of 8 cores can never start: the stages' jobs share 7 cores "
+                    "(resources.max_cores %d less the sequencer's job, %d)"
+                    % (int(c7["driver"]["ncpus"]) + 7, int(c7["driver"]["ncpus"]))) in str(exc), exc
+        # the run, with the cores PBS gives a job in the sequencer's environment
+        rc, out = s.run([], timeout=900, env_extra={"NCPUS": "4", "GATE_NCPUS": "16"})
+        assert rc == 0 and "PIPELINE DONE" in out and "sim_bank: VERIFIED:" in out, out
+        assert ("sim_bank: the array at CONCURRENCY 9 (bank.concurrency 20; the cap leaves room for 9 "
+                "task(s) of 1 core(s), D-099)") in out, out
+        recs = s.jobs()
+        names = [r["name"] for r in recs]
+        assert names == ["bank_test", "bank_task", "bank_gate", "bank_verify"], names
+        test, task, gate, verify = recs
+        assert _record_cores(test) == 1 and _record_cores(gate) == 8 and _record_cores(verify) == 2, \
+            [(r["name"], r["resources"]) for r in recs]
+        assert task["array_spec"] == "0-2%9" and _record_cores(task) == 3, task["array_spec"]
+        assert gate["depend"] == task["id"]
+        assert _peak(recs) <= 9, "the bank's jobs held %d cores at once, over 9" % _peak(recs)
+        st = json.load(open(os.path.join(s.cfg["paths"]["work_root"], "state.json")))
+        jobs = st["stages"]["sim_bank"]["jobs"]
+        assert [j.get("ncpus") for j in jobs] == [1, 3, 8, 2], jobs
+        assert jobs[2]["after"] == jobs[1]["id"]
+    finally:
+        s.close()
+
+
 # ------------------------------------------------------------------ main ---
 
 CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_reference),
@@ -930,7 +1061,8 @@ CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_refe
           ("test_contract", test_contract), ("test_determinism", test_determinism),
           ("test_verify_tool", test_verify_tool), ("test_edge_cases", test_edge_cases),
           ("test_dropped_gate", test_dropped_gate), ("test_healing", test_healing),
-          ("test_log_timing", test_log_timing), ("test_decisions", test_decisions)]
+          ("test_log_timing", test_log_timing), ("test_decisions", test_decisions),
+          ("test_cores", test_cores)]
 
 
 def main():

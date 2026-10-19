@@ -164,9 +164,11 @@ class BestFitStage(Stage):
                                                         "utc": CM.utc_now()})
                 if m["resubmits"] < int(b["max_resubmits"]):
                     m["resubmits"] += 1
-                    self._submit_member(cfg, st, pbs, seed, resume=True)
+                    self._resubmit_member(cfg, st, pbs, seed)
                     log("best_fit: member seed %d NODE FAULT on %s (%s); resubmitted with --resume "
-                        "(%d of %d)" % (int(seed), host, why, m["resubmits"], int(b["max_resubmits"])))
+                        "(%d of %d)%s" % (int(seed), host, why, m["resubmits"], int(b["max_resubmits"]),
+                                          "" if m["status"] == "running"
+                                          else ": it starts when the cores allow (D-099)"))
                     return
                 m["status"] = "failed"
                 m["why"] = ("member seed %d: node fault on %s (%s) after %d resubmission(s); raise "
@@ -182,16 +184,28 @@ class BestFitStage(Stage):
             return
         if m["resubmits"] < int(b["max_resubmits"]):
             m["resubmits"] += 1
-            self._submit_member(cfg, st, pbs, seed, resume=True)
+            self._resubmit_member(cfg, st, pbs, seed)
             log("best_fit: member seed %d ended without a record (job %s exit %s); resubmitted "
-                "with --resume (%d of %d)" % (int(seed), job["id"], job.get("exit_status"),
-                                               m["resubmits"], int(b["max_resubmits"])))
+                "with --resume (%d of %d)%s" % (int(seed), job["id"], job.get("exit_status"),
+                                                 m["resubmits"], int(b["max_resubmits"]),
+                                                 "" if m["status"] == "running"
+                                                 else ": it starts when the cores allow (D-099)"))
             return
         m["status"] = "failed"
         m["why"] = ("member seed %d: %d job(s) ended without a record (last %s exit %s); "
                     "raise best_fit.max_resubmits or fix the cause, then --retry best_fit "
                     "(finished members are kept)" % (int(seed), len(m["jobs"]), job["id"],
                                                      job.get("exit_status")))
+
+    def _resubmit_member(self, cfg, st, pbs, seed):
+        """A member's next job with --resume: at once when it fits under
+        resources.max_cores, else waiting for the stage's own throttle."""
+        m = st["sub"]["members"][str(seed)]
+        if pbs.fits(int(cfg.data["best_fit"]["ncpus"])):
+            self._submit_member(cfg, st, pbs, seed, resume=True)
+        else:
+            m["status"] = "waiting"
+            m["resume_next"] = True
 
     def _refused(self, job):
         """A member job that printed a refusal (a traceback or a REFUSE/
@@ -272,9 +286,23 @@ class BestFitStage(Stage):
                 m["record"] = rec
                 m["L"] = CM.read_json(rec).get("L")
                 pbs.log("best_fit: member seed %d already has a record: %s" % (int(seed), rec))
-            elif m["status"] in ("waiting", "failed"):
-                self._submit_member(cfg, st, pbs, seed, resume=bool(m["jobs"]))
+            elif m["status"] == "failed":
+                m["status"] = "waiting"                # a --retry: the member again
         sub["phase"] = "members"
+        self._submit_waiting(cfg, st, pbs)
+
+    def _submit_waiting(self, cfg, st, pbs):
+        """The waiting members, in seed order, as long as they fit under
+        resources.max_cores (D-099)."""
+        b = cfg.data["best_fit"]
+        for seed in b["member_seeds"]:
+            m = st["sub"]["members"][str(seed)]
+            if m["status"] != "waiting":
+                continue
+            if not pbs.fits(int(b["ncpus"])):
+                break
+            resume_next = m.pop("resume_next", False)
+            self._submit_member(cfg, st, pbs, seed, resume=bool(m["jobs"]) or resume_next)
 
     def poll(self, cfg, st, pbs):
         b = cfg.data["best_fit"]
@@ -298,8 +326,9 @@ class BestFitStage(Stage):
                 job = by_id.get(m["jobs"][-1])
                 if job is not None and job.get("finished"):
                     self._finish_member_job(cfg, st, pbs, seed, job, log)
+            self._submit_waiting(cfg, st, pbs)
             statuses = [sub["members"][str(s)]["status"] for s in b["member_seeds"]]
-            if any(s_ == "running" for s_ in statuses):
+            if any(s_ in ("running", "waiting") for s_ in statuses):
                 return "running"
             failed = [sub["members"][str(s)] for s in b["member_seeds"]
                       if sub["members"][str(s)]["status"] == "failed"]
@@ -336,7 +365,10 @@ class BestFitStage(Stage):
                          os.path.join(dirs["jobs"], "member_seed<k>.<n>.log"),
                          os.path.join(dirs["jobs"], "member_seed<k>.<n>.argv"), p["stage4"])
         q[2] = "bf_%s_s<k>" % d["dataset"][:6]
-        return ["finalist: the lowest report-split nll of %s" % dirs["search_complete"],
+        return ["cores (D-099): at most %s member(s) at once -- the cap leaves room for %s of %d "
+                "cores each" % (CM.cap_room(cfg, b["ncpus"], len(b["member_seeds"])),
+                                CM.cap_room(cfg, b["ncpus"]), int(b["ncpus"])),
+                "finalist: the lowest report-split nll of %s" % dirs["search_complete"],
                 "members: one job per seed %s, split seed %d, passes %g in %d epochs, patience %d:"
                 % (b["member_seeds"], int(b["split_seed"]), float(b["passes"]), int(b["epochs"]),
                    int(b["patience_epochs"])),

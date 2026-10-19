@@ -150,12 +150,20 @@ class State(object):
             st["note"] = note
         self.event("%s -> %s%s" % (name, status, (": " + note) if note else ""))
 
-    def add_job(self, name, job_id, role, cmd, log=None):
+    def add_job(self, name, job_id, role, cmd, log=None, ncpus=None, after=None):
+        """A job of the stage. `ncpus`: the cores it can hold at once (an
+        array: its elements that can run together); `after`: the id of the
+        job it waits on (a gate, an aggregation) -- D-099's count."""
         st = self.stage(name)
-        st["jobs"].append({"id": str(job_id), "role": role,
-                           "submitted_utc": utc_now(), "cmd": list(cmd),
-                           "log": log, "finished": False, "exit_status": None,
-                           "walltime_s": None})
+        job = {"id": str(job_id), "role": role,
+               "submitted_utc": utc_now(), "cmd": list(cmd),
+               "log": log, "finished": False, "exit_status": None,
+               "walltime_s": None}
+        if ncpus is not None:
+            job["ncpus"] = int(ncpus)
+        if after:
+            job["after"] = str(after)
+        st["jobs"].append(job)
         self.event("%s: submitted %s as %s" % (name, role, job_id))
 
     def reset_stage(self, name):

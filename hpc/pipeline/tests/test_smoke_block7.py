@@ -36,10 +36,15 @@ Checks (specs/SPEC.md block 7, "Test oracles")
     test_edge_cases     the elapsed clock at a tiny cap ends the search
                         after round 0 (ended_by budget), the GP round never
                         proposed; a pre-made BEST_FIT_COMPLETE skips S8
+    test_cores          D-099: a cap that leaves room for two 1-core jobs:
+                        the gate's 3 probes and the trials never more than
+                        two at once (max_concurrent_trials 3), the members
+                        of 2 cores one at a time, nothing over the cap in
+                        the fake PBS's records; the dry run's cores lines
 
 Run
-    python3 hpc/pipeline/tests/test_smoke_block7.py
-        About 5 minutes at one thread. Needs torch, sbi, zuko, scikit-
+    python3 hpc/pipeline/tests/test_smoke_block7.py [check ...]
+        About 7 minutes at one thread; names of checks run only those. Needs torch, sbi, zuko, scikit-
         optimize (the training environment); run with PIPELINE_SKIP_CONDA=1
         set by the test itself. Nothing touches davinci.
 
@@ -281,7 +286,7 @@ def test_known_answer():
         assert got == want, got
         # (d) no NEEDS-CODE key left
         assert C.unhonoured_keys(cfg) == [], C.unhonoured_keys(cfg)
-        assert cfg.data["config_version"] == 8
+        assert cfg.data["config_version"] == 9
         assert cfg.data["search"]["trial"]["queue"] == "cpu" and cfg.data["best_fit"]["queue"] == "cpu"
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -531,12 +536,97 @@ def test_edge_cases():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _record_cores(rec):
+    """The cores a fake PBS record can hold at once: its -l values, times
+    min(%c, the elements) for an array."""
+    import pbs as PBS
+    argv = ["qsub"]
+    for r in rec.get("resources", []):
+        argv += ["-l", r]
+    if rec.get("array_spec"):
+        argv += ["-J", rec["array_spec"]]
+    return PBS.cores_of_argv(argv + ["x"]) or 0
+
+
+def _peak(records, jobs=False):
+    """The most cores (jobs=True: jobs) the records held at once: from each
+    one's submission -- or the end of the job it depends on -- to its end
+    (a finish before a submission at one instant: the sequencer saw it)."""
+    by_id = dict((r["id"], r) for r in records)
+    ev = []
+    for r in records:
+        begin = r["submitted"]
+        dep = by_id.get(r.get("depend") or "")
+        if dep is not None:
+            begin = max(begin, dep["finished"] or float("inf"))
+        end = r["finished"] if r["finished"] else float("inf")
+        w = 1 if jobs else _record_cores(r)
+        if begin < end:
+            ev += [(begin, 1, w), (end, 0, -w)]
+    peak, now = 0, 0
+    for _t, _k, d in sorted(ev):
+        now += d
+        peak = max(peak, now)
+    return peak
+
+
+def test_cores():
+    """D-099: resources.max_cores = the sequencer's 4 + 2: two 1-core jobs."""
+    root = _tmp()
+    try:
+        path, c = _synthetic_project(
+            root, search={"n_initial_points": 3, "trials_per_round": 2, "gp_rounds": 1,
+                          "max_concurrent_trials": 3,
+                          "space_overrides": {"batch_size_npe": [16, 32, 64]}},
+            best_fit={"ncpus": 2})
+        c = json.load(open(path))
+        c["sim"]["ncpus"] = 1
+        c["bank"]["verify"]["ncpus"] = 1
+        c["resources"]["max_cores"] = int(c["driver"]["ncpus"]) + 2
+        with open(path, "w") as fh:
+            json.dump(c, fh, indent=1, sort_keys=True)
+        spool = os.path.join(root, "spool")
+        env = _env(spool)
+        rc, out = _run(root, path, ["--dry-run"], env, timeout=120)
+        assert rc == 0, out
+        for want in ("cores (D-099): at most 2 trial(s) at once -- max_concurrent_trials 3, and the "
+                     "cap leaves room for 2 of 1 cores each; the gate's probes likewise",
+                     "cores (D-099): at most 1 member(s) at once -- the cap leaves room for 1 of 2 "
+                     "cores each",
+                     "cores: at most 6 at once (resources.max_cores, D-099): the sequencer's job 4, "
+                     "the stages' jobs 2"):
+            assert want in out, (want, out)
+        rc, out = _run(root, path, [], env, timeout=1200)
+        assert rc == 0 and "PIPELINE DONE: every stage done or skipped" in out, out
+        recs = sorted([json.load(open(p_)) for p_ in glob.glob(os.path.join(spool, "*.json"))
+                       if os.path.basename(p_)[:-5].isdigit()], key=lambda r: r["num"])
+        probes = [r for r in recs if r["name"].startswith("gate_b")]
+        trials = [r for r in recs if r["name"].startswith("t_")]
+        members = [r for r in recs if r["name"].startswith("bf_")]
+        assert (len(probes), len(trials), len(members)) == (3, 5, 2), \
+            [(r["name"], r["state"]) for r in recs]
+        assert _peak(recs) <= 2, "the jobs held %d cores at once, over the 2 the cap leaves" % _peak(recs)
+        # the cap, not max_concurrent_trials (3), held the trials and the probes to two
+        assert _peak(trials, jobs=True) == 2 and _peak(probes, jobs=True) == 2, \
+            (_peak(trials, jobs=True), _peak(probes, jobs=True))
+        assert _peak(members, jobs=True) == 1, "the members of 2 cores ran one at a time"
+        assert all(_record_cores(r) == 1 for r in probes + trials)
+        assert all(_record_cores(r) == 2 for r in members)
+        sc = json.load(open(os.path.join(c["paths"]["tune_root"], "S-A1", "SEARCH_COMPLETE.json")))
+        assert sc["n_trials"]["ok"] == 5 and sc["ended_by"] == "rounds", sc
+        st = json.load(open(os.path.join(c["paths"]["work_root"], "state.json")))
+        assert all(j.get("ncpus") == 1 for j in st["stages"]["search"]["jobs"])
+        assert all(j.get("ncpus") == 2 for j in st["stages"]["best_fit"]["jobs"])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # ------------------------------------------------------------------ main ---
 
 CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_reference),
           ("test_convergence", test_convergence), ("test_invariants", test_invariants),
           ("test_contract", test_contract), ("test_determinism", test_determinism),
-          ("test_edge_cases", test_edge_cases)]
+          ("test_edge_cases", test_edge_cases), ("test_cores", test_cores)]
 
 
 def main():
@@ -549,7 +639,10 @@ def main():
         return 0
     rows, bad = [], 0
     t0 = time.time()
+    only = set(sys.argv[1:])
     for name, fn in CHECKS:
+        if only and name not in only:
+            continue
         t1 = time.time()
         try:
             fn()

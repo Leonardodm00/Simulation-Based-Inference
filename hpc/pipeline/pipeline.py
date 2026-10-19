@@ -356,17 +356,126 @@ def _same_output(path_a, path_b):
     return os.path.normpath(path_a) == os.path.normpath(path_b)
 
 
+# ---------------------------------------------------------------------------
+# The core cap (D-099): what the pipeline's jobs hold at once
+# ---------------------------------------------------------------------------
+
+class CapExceeded(RuntimeError):
+    """A submission that would take the pipeline past resources.max_cores
+    (the stages ask Submitter.fits first: this is a guard)."""
+
+
+def job_cores(job):
+    """The cores a recorded job can hold at once: its `ncpus` (recorded at
+    submission since D-099), else read from its qsub line; None when
+    neither says."""
+    if job.get("ncpus") is not None:
+        return int(job["ncpus"])
+    return PBS.cores_of_argv(job.get("cmd") or [])
+
+
+def cores_in_flight(state):
+    """(cores, jobs counted, [ids of jobs whose cores no record gives]) over
+    the jobs not marked finished of every stage not done or skipped (a done
+    stage's record its polls never marked finished holds no cores). Jobs
+    recorded `after` one (a gate, an aggregation) start when it ends: the
+    group holds the larger of its cores and the sum of theirs, never both."""
+    jobs = [j for st in state.data.get("stages", {}).values()
+            if st.get("status") not in ("done", "skipped")
+            for j in st.get("jobs", []) if not j.get("finished")]
+    by_id = dict((j["id"], j) for j in jobs)
+    later = {}
+    for j in jobs:
+        if j.get("after") in by_id:
+            later.setdefault(j["after"], []).append(j)
+    count = {"n": 0, "unknown": []}
+    seen = set()
+
+    def footprint(j):
+        if j["id"] in seen:
+            return 0
+        seen.add(j["id"])
+        c = job_cores(j)
+        if c is None:
+            count["unknown"].append(j["id"])
+            c = 0
+        else:
+            count["n"] += 1
+        return max(c, sum(footprint(d) for d in later.get(j["id"], [])))
+
+    total = sum(footprint(j) for j in jobs if j.get("after") not in by_id)
+    return total, count["n"], count["unknown"]
+
+
+def stage_budget(cfg):
+    """The cores the stages' jobs may hold: resources.max_cores less the
+    sequencer's own job (D-099); None without a cap (an old configuration)."""
+    return None if cfg is None else CM.stage_budget(cfg)
+
+
+def cores_line(cfg, state):
+    """The dry run's and --status's line on the cap."""
+    cap = int(cfg.data["resources"]["max_cores"])
+    drv = int(cfg.data["driver"]["ncpus"])
+    used, n, unknown = cores_in_flight(state)
+    return ("cores: at most %d at once (resources.max_cores, D-099): the sequencer's job %d, the "
+            "stages' jobs %d; in flight per the state file: %d in %d job(s)%s"
+            % (cap, drv, cap - drv, used, n,
+               ("; %d job(s) of unknown cores, not counted: %s" % (len(unknown), ", ".join(unknown[:6])))
+               if unknown else ""))
+
+
 class Submitter(object):
     """Submits through the adapter and records every job in the state, so
-    a stage never has to know the state file's layout."""
+    a stage never has to know the state file's layout. With the
+    configuration it also keeps the stages under resources.max_cores
+    (D-099): `fits(n)` before a submission."""
 
-    def __init__(self, pbs_module, state, stage_name, log):
+    def __init__(self, pbs_module, state, stage_name, log, cfg=None):
         self._pbs = pbs_module
         self._state = state
         self._name = stage_name
         self._log = log
+        self._cfg = cfg
 
-    def submit(self, argv, role, log_path=None, cwd=None, env=None):
+    def budget(self):
+        return stage_budget(self._cfg)
+
+    def in_flight(self):
+        return cores_in_flight(self._state)[0]
+
+    def free(self):
+        b = self.budget()
+        return None if b is None else b - self.in_flight()
+
+    def check(self, n):
+        """CapExceeded when a job of n cores can never start: more than the
+        stages' whole share (a stage's start asks it of the jobs it submits
+        later, so it stops before its first job, not after); True else."""
+        b = self.budget()
+        if b is not None and n is not None and int(n) > b:
+            d = self._cfg.data
+            raise CapExceeded(
+                "%s: a job of %d cores can never start: the stages' jobs share %d cores "
+                "(resources.max_cores %d less the sequencer's job, %d); raise "
+                "resources.max_cores (--stop, then a submission with --accept-config-change) "
+                "or ask fewer cores (D-099)"
+                % (self._name, int(n), b, int(d["resources"]["max_cores"]),
+                   int(d["driver"]["ncpus"])))
+        return True
+
+    def fits(self, n):
+        """True when a job of n cores fits under the cap now (always without a
+        cap, or when n is not known); one that can never start raises
+        (check), so its stage stops with the reason instead of waiting for
+        ever."""
+        b = self.budget()
+        if b is None or n is None:
+            return True
+        self.check(n)
+        return int(n) <= b - self.in_flight()
+
+    def submit(self, argv, role, log_path=None, cwd=None, env=None, ncpus=None, after=None):
         # A job already queued, held or running under the same name AND the
         # same output file (-o, unique per project and role; a name alone is
         # not: `bank_verify`, `gate_b16`) is ADOPTED, not submitted again: a
@@ -386,21 +495,28 @@ class Submitter(object):
                 live = []
             if live:
                 job_id = live[-1]
-                self._state.add_job(self._name, job_id, role, argv, log=log_path)
+                self._state.add_job(self._name, job_id, role, argv, log=log_path,
+                                    ncpus=ncpus if ncpus is not None else PBS.cores_of_argv(argv),
+                                    after=after)
                 self._state.save()
                 self._log("%s: adopted %s -> %s (a job of that name and output file was queued "
                           "or running but not recorded)" % (self._name, role, job_id))
                 return job_id
+        n = ncpus if ncpus is not None else PBS.cores_of_argv(argv)
+        if n is not None and not self.fits(n):
+            raise CapExceeded("%s: %s asks %d cores; %s of %s free under resources.max_cores"
+                              % (self._name, role, n, self.free(), self.budget()))
         job_id = self._pbs.submit(argv, cwd=cwd, env=env)
-        self._state.add_job(self._name, job_id, role, argv, log=log_path)
+        self._state.add_job(self._name, job_id, role, argv, log=log_path, ncpus=n, after=after)
         self._state.save()
         self._log("%s: submitted %s -> %s" % (self._name, role, job_id))
         return job_id
 
-    def record(self, job_id, role, cmd, log_path=None):
+    def record(self, job_id, role, cmd, log_path=None, ncpus=None, after=None):
         """A job another tool submitted (a launcher's `job : <id>` line):
-        recorded like one of ours, so it is polled and resumed alike."""
-        self._state.add_job(self._name, job_id, role, cmd, log=log_path)
+        recorded like one of ours, so it is polled and resumed alike, with
+        the cores the stage worked out before it ran the launcher."""
+        self._state.add_job(self._name, job_id, role, cmd, log=log_path, ncpus=ncpus, after=after)
         self._state.save()
         self._log("%s: recorded %s -> %s" % (self._name, role, job_id))
         return job_id
@@ -555,6 +671,8 @@ def _dry_run(cfg, graph, state, log):
             log("%s: would run" % stage.name)
         for line in stage.dry_run(cfg, st):
             log("    %s" % line)
+    if "resources" in cfg.data:
+        log(cores_line(cfg, state))
     if "driver" in cfg.data:
         d = cfg.data["driver"]
         log("the sequencer: PBS jobs named %s on queue %s (%d cores, %s, walltime %s, a tick every "
@@ -649,7 +767,7 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                     log("STOP: stage %s failed: %s" % (stage.name, st.get("note", "")))
                     _END["why"] = "failed"
                     return EXIT_FAILED
-                sub = Submitter(pbs_module, state, stage.name, log)
+                sub = Submitter(pbs_module, state, stage.name, log, cfg)
                 if status == "pending":
                     done, why = stage.is_done(cfg)
                     if done:
@@ -665,12 +783,19 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                         log("REFUSE: %s" % exc)
                         _END["why"] = "refused"
                         return EXIT_CONFIG
+                    except S.Deferred as exc:   # its first job does not fit (D-099)
+                        if st.get("waiting_note") != str(exc):
+                            st["waiting_note"] = str(exc)
+                            state.save()
+                            log("%s: waits for cores: %s" % (stage.name, exc))
+                        continue
                     except Exception as exc:  # a refusal before submission
                         state.set_status(stage.name, "failed", str(exc))
                         state.save()
                         log("STOP: stage %s refused: %s" % (stage.name, exc))
                         _END["why"] = "failed"
                         return EXIT_FAILED
+                    st.pop("waiting_note", None)
                     state.set_status(stage.name, "running")
                     state.save()
                     log("%s: running" % stage.name)
@@ -684,6 +809,14 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                         state.save()
                         log("%s: scheduler unreachable (%s); will retry next tick" % (stage.name, exc))
                         continue
+                    except CapExceeded as exc:
+                        # a job that can never start, or the guard (D-099): stop with the
+                        # reason, not a crash of every driver of the chain
+                        state.set_status(stage.name, "failed", str(exc))
+                        state.save()
+                        log("STOP: stage %s failed: %s" % (stage.name, exc))
+                        _END["why"] = "failed"
+                        return EXIT_FAILED
                     state.save()
                     if r == "running":
                         continue
@@ -1084,6 +1217,8 @@ def cmd_status(args, graph=None, entry=None):
                else "pid %s" % state.data.get("pid"), state.data.get("host")))
         lock = read_lock(work_root)
         log("lock: %s" % ("%s on %s" % lock if lock else "none (no sequencer ticking)"))
+    if "resources" in cfg.data:
+        log(cores_line(cfg, state))
     if "driver" in cfg.data:
         try:
             live = _drivers(cfg)

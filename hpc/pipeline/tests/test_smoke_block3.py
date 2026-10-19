@@ -29,10 +29,17 @@ Checks (specs/SPEC.md block 3, "Test oracles")
     test_edge_cases     the flags refusal of S1 (NEW COHORT ... COMMIT) stops
                         the run before any job; a refused aggregation and a
                         refused gate stop it with their REFUSED lines
+    test_cores          D-099: S2's CONCURRENCY clamped by the cap (3 tasks of
+                        3 cores in the 10 it leaves), its jobs' cores in the
+                        state, the gate after the array; S1 refused when its
+                        array (2 wells x 2 cores, no concurrency limit of its
+                        own) exceeds the share; S1 recorded (4 cores, the
+                        aggregation after it), then S2 refused at its start
+                        when its gate (8 cores) can never fit
 
 Run
-    python3 hpc/pipeline/tests/test_smoke_block3.py
-        About 1 minute. Needs the Sbi-extractor checkout (SBIX_CLONE or a
+    python3 hpc/pipeline/tests/test_smoke_block3.py [check ...]
+        About 1 minute; names of checks run only those. Needs the Sbi-extractor checkout (SBIX_CLONE or a
         known place) and numpy.
 
 Pure ASCII, LF only.
@@ -281,7 +288,10 @@ def test_edge_cases():
     s = Standin()
     try:
         rc, out = s.run([], timeout=300, STUB_REFUSE="flags")
-        assert rc == 3 and "STOP: stage real_extraction failed: the extraction could not be submitted" in out, out
+        # since D-099 the launcher's own dry run comes first (the array's size, for
+        # the core cap): the flags refusal is that run's, as with the real launcher
+        assert rc == 3 and ("STOP: stage real_extraction failed: the extraction could not be planned "
+                            "(its dry run, exit 3)") in out, out
         assert "NEW COHORT: wrote extraction_flags_synth.sh" in out, out
         llog = open(os.path.join(s.cfg["paths"]["work_root"], "logs", "real_extraction_login_node.log")).read()
         assert "COMMIT it" in llog and "Nothing was submitted" in llog, llog
@@ -309,18 +319,93 @@ def test_edge_cases():
         s.close()
 
 
+def _cap(s, stages_share, sim_ncpus=1):
+    """resources.max_cores = the sequencer's cores + `stages_share`; every
+    sized job small enough for the load's cross-check."""
+    c = s.cfg
+    c["search"]["trial"]["ncpus"] = 1
+    c["best_fit"]["ncpus"] = 1
+    c["sim"]["ncpus"] = int(sim_ncpus)
+    c["bank"]["verify"]["ncpus"] = 1
+    c["resources"]["max_cores"] = int(c["driver"]["ncpus"]) + int(stages_share)
+    with open(s.path, "w") as fh:
+        json.dump(c, fh, indent=1, sort_keys=True)
+    return c
+
+
+def _fake_records(s):
+    recs = [json.load(open(p)) for p in glob.glob(os.path.join(s.spool, "*.json"))
+            if os.path.basename(p)[:-5].isdigit()]
+    return sorted(recs, key=lambda r: r["num"])
+
+
+def test_cores():
+    # (a) S2 under a share of 10 with tasks of 3 cores: CONCURRENCY 3 = min(20, 10 // 3)
+    s = Standin(keep=("real_extraction", "label_freeze"))
+    try:
+        _cap(s, 10, sim_ncpus=3)
+        rc, out = s.run(["--dry-run"], timeout=120)
+        assert rc == 0 and ("cores (D-099): the test task 3; the array at CONCURRENCY 3 = "
+                            "min(sim.concurrency 20, the cap's room 3) of 3 cores each") in out, out
+        rc, out = s.run([], timeout=300)
+        assert rc == 0 and "PIPELINE DONE" in out, out
+        assert ("sim_redetection: the array at CONCURRENCY 3 (sim.concurrency 20; the cap leaves "
+                "room for 3 task(s) of 3 cores, D-099)") in out, out
+        arrays = [r for r in _fake_records(s) if r["name"] == "g2_mea"]
+        assert len(arrays) == 1 and arrays[0]["array_spec"] == "0-1%3", arrays
+        st = json.load(open(os.path.join(s.cfg["paths"]["work_root"], "state.json")))
+        jobs = st["stages"]["sim_redetection"]["jobs"]
+        assert [(j["role"], j.get("ncpus")) for j in jobs] == [
+            ("re-detection test task 0", 3), ("re-detection array", 3), ("re-detection gate", 8)], jobs
+        assert jobs[2]["after"] == jobs[1]["id"] and "after" not in jobs[1]
+    finally:
+        s.close()
+    # (b) S1's array, 2 wells x 2 cores at once, in a share of 3: refused, nothing submitted
+    s = Standin()
+    try:
+        _cap(s, 3)
+        rc, out = s.run([], timeout=300)
+        assert rc == 3 and ("STOP: stage real_extraction refused: real_extraction: the extraction "
+                            "array asks 2 x 2 = 4 cores at once and has no concurrency limit, more "
+                            "than the 3 the cap leaves") in out, out
+        assert s.n_submitted() == 0
+    finally:
+        s.close()
+    # (c) a share of 4: S1 fits and is recorded; S2's gate (8) never can: refused at its start
+    s = Standin()
+    try:
+        _cap(s, 4)
+        rc, out = s.run([], timeout=300)
+        assert rc == 3 and ("STOP: stage sim_redetection refused: sim_redetection: a job of 8 cores "
+                            "can never start: the stages' jobs share 4 cores (resources.max_cores "
+                            "%d less the sequencer's job, %d)"
+                            % (int(s.cfg["driver"]["ncpus"]) + 4, int(s.cfg["driver"]["ncpus"]))) in out, out
+        st = json.load(open(os.path.join(s.cfg["paths"]["work_root"], "state.json")))
+        jobs = st["stages"]["real_extraction"]["jobs"]
+        assert [(j["role"], j.get("ncpus")) for j in jobs] == [("extraction array", 4),
+                                                               ("cohort manifest", 1)], jobs
+        assert jobs[1]["after"] == jobs[0]["id"]
+        assert st["stages"]["real_extraction"]["status"] == "done"
+        assert s.n_submitted() == 2, "S2 submitted nothing"
+    finally:
+        s.close()
+
+
 # ------------------------------------------------------------------ main ---
 
 CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_reference),
           ("test_convergence", test_convergence), ("test_invariants", test_invariants),
           ("test_contract", test_contract), ("test_determinism", test_determinism),
-          ("test_edge_cases", test_edge_cases)]
+          ("test_edge_cases", test_edge_cases), ("test_cores", test_cores)]
 
 
 def main():
     rows, bad = [], 0
     t0 = time.time()
+    only = set(sys.argv[1:])
     for name, fn in CHECKS:
+        if only and name not in only:
+            continue
         t1 = time.time()
         try:
             fn()

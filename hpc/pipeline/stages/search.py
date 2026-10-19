@@ -227,12 +227,23 @@ class SearchStage(Stage):
                                 s["trial"]["mem"], s["trial"]["walltime"],
                                 os.path.join(dirs["jobs"], "gate_b%d.log" % b), argv_file,
                                 CM.paths_of(cfg)["stage4"])
-            job_id = pbs.submit(line, role="gate_b%d" % b,
-                                log_path=os.path.join(dirs["jobs"], "gate_b%d.log" % b))
-            probes[str(b)] = {"job": job_id, "probe_json": os.path.join(pdir, "*_probe.json"),
-                              "reused": False}
+            probes[str(b)] = {"job": None, "line": line,
+                              "log": os.path.join(dirs["jobs"], "gate_b%d.log" % b),
+                              "probe_json": os.path.join(pdir, "*_probe.json"), "reused": False}
         sub["gate"] = {"probes": probes, "verdict": None, "started_utc": CM.utc_now()}
         sub["phase"] = "gate"
+        self._submit_probes(cfg, st, pbs)
+
+    def _submit_probes(self, cfg, st, pbs):
+        """The gate's probes not yet submitted, in batch order, as long as
+        they fit under resources.max_cores (D-099)."""
+        n = int(cfg.data["search"]["trial"]["ncpus"])
+        for b, pr in sorted(st["sub"]["gate"]["probes"].items(), key=lambda kv: int(kv[0])):
+            if pr.get("reused") or pr.get("job") or not pr.get("line"):
+                continue
+            if not pbs.fits(n):
+                break
+            pr["job"] = pbs.submit(pr["line"], role="gate_b%s" % b, log_path=pr.get("log"))
 
     def _gate_verdict(self, cfg, st):
         """Read every probe file and decide; None while a probe file is
@@ -454,10 +465,18 @@ class SearchStage(Stage):
             return
         if s["resubmit_killed"] and tr["resubmits"] < int(s["trial"]["max_resubmits"]):
             tr["resubmits"] += 1
-            self._submit_trial(cfg, st, pbs, tid, resume=True)
-            log("search: trial %s ended without a record (job %s exit %s); resubmitted with "
-                "--resume (%d of %d)" % (tid[:12], job["id"], job.get("exit_status"),
-                                          tr["resubmits"], int(s["trial"]["max_resubmits"])))
+            if pbs.fits(int(s["trial"]["ncpus"])):
+                self._submit_trial(cfg, st, pbs, tid, resume=True)
+                log("search: trial %s ended without a record (job %s exit %s); resubmitted with "
+                    "--resume (%d of %d)" % (tid[:12], job["id"], job.get("exit_status"),
+                                              tr["resubmits"], int(s["trial"]["max_resubmits"])))
+            else:
+                tr["status"] = "waiting"
+                tr["resume_next"] = True
+                log("search: trial %s ended without a record (job %s exit %s); queued again with "
+                    "--resume (%d of %d): it starts when the cores allow (D-099)"
+                    % (tid[:12], job["id"], job.get("exit_status"), tr["resubmits"],
+                       int(s["trial"]["max_resubmits"])))
             return
         why = ("killed: %d job(s) ended without a record (last job %s exit %s)"
                % (len(tr["jobs"]), job["id"], job.get("exit_status")))
@@ -669,12 +688,16 @@ class SearchStage(Stage):
                 job["walltime_s"] = js.walltime_s
                 job["state"] = js.state
                 finished_now.append(job)
-        by_id = dict((j["id"], j) for j in st["jobs"])
-
         phase = sub.get("phase")
         if phase == "gate":
+            self._submit_probes(cfg, st, pbs)      # those that did not fit before (D-099)
+        by_id = dict((j["id"], j) for j in st["jobs"])
+
+        if phase == "gate":
             probes = sub["gate"]["probes"]
-            if any(pr["job"] and not by_id[pr["job"]].get("finished") for pr in probes.values()):
+            if any((pr.get("line") and not pr.get("job"))
+                   or (pr["job"] and not by_id[pr["job"]].get("finished"))
+                   for pr in probes.values()):
                 return "running"
             verdict = self._gate_verdict(cfg, st)
             sub["gate"]["verdict"] = verdict
@@ -706,9 +729,10 @@ class SearchStage(Stage):
             # (a revived trial of an earlier round after a --retry comes first)
             running = sum(1 for tr in sub["trials"].values() if tr["status"] == "running")
             r = sub["round"]
+            trial_cores = int(s["trial"]["ncpus"])
             for rr in sub["rounds"][:r + 1]:
                 for tid in rr["trial_ids"]:
-                    if running >= int(s["max_concurrent_trials"]):
+                    if running >= int(s["max_concurrent_trials"]) or not pbs.fits(trial_cores):
                         break
                     if sub["trials"][tid]["status"] == "waiting":
                         self._submit_trial(cfg, st, pbs, tid)
@@ -785,6 +809,11 @@ class SearchStage(Stage):
                  "(%d trials in all), at most %d trial jobs at once, each:"
                  % (int(s["n_initial_points"]), int(s["gp_rounds"]), int(s["trials_per_round"]),
                     n_total, int(s["max_concurrent_trials"])),
+                 "cores (D-099): at most %s trial(s) at once -- max_concurrent_trials %d, and the "
+                 "cap leaves room for %s of %d cores each; the gate's probes likewise"
+                 % (CM.cap_room(cfg, s["trial"]["ncpus"], s["max_concurrent_trials"]),
+                    int(s["max_concurrent_trials"]), CM.cap_room(cfg, s["trial"]["ncpus"]),
+                    int(s["trial"]["ncpus"])),
                  "    " + line_of("t_<trial>", os.path.join(dirs["jobs"], "<trial>.<n>.log"),
                                   os.path.join(dirs["jobs"], "<trial>.<n>.argv")),
                  "    argv: %s %s evaluate --campaign %s --results-dir %s --pending-id <trial> "

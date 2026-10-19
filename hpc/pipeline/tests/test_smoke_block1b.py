@@ -291,7 +291,7 @@ class _Lines(object):
 
 def test_known_answer():
     cfg = C.load_config(GIULIA)
-    assert cfg.data["config_version"] == 8
+    assert cfg.data["config_version"] == 9
     assert cfg.data["driver"] == {"queue": "cpu", "ncpus": 4, "mem": "16gb",
                                   "walltime": "24:00:00", "poll_seconds": 60}, cfg.data["driver"]
     assert P.driver_name(cfg) == "pl_giulia"

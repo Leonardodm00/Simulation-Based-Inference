@@ -208,6 +208,12 @@ echo "# cohort tag   : $COHORT_TAG"
 echo "# extract root : $ROOT   (config declares: $ROOT)"
 echo "# wells        : 2   -> array 0-1   (out/extraction_manifest_${COHORT_TAG}.tsv)"
 echo "# env          : ${ENV_NAME:-sbi_export}"
+if [ "${DRYRUN:-0}" = "1" ]; then
+    # as the real launcher: both qsub lines printed, nothing submitted
+    echo "  qsub -J 0-1 -N chsub_mea_array_${COHORT_TAG} -o out/chsub_mea_array_${COHORT_TAG}_^array_index^.log -v ENV_NAME=${ENV_NAME:-sbi_export} run_extractor_array_mea.pbs"
+    echo "  qsub -W depend=afterok:<array id> -N cohort_manifest_${COHORT_TAG} -o out/cohort_manifest_${COHORT_TAG}.log -v EXTRACT_ROOT=${ROOT} run_cohort_manifest.pbs"
+    echo; echo "(DRYRUN -- nothing was submitted. Re-run without DRYRUN=1.)"; exit 0
+fi
 cat > out/stub_array_${COHORT_TAG}.sh <<EOS
 #!/bin/bash
 echo "[array] well \${PBS_ARRAY_INDEX} extracted (stub)"

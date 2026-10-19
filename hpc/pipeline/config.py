@@ -24,7 +24,7 @@ import re
 __all__ = ["Config", "ConfigError", "load_config", "unhonoured_keys",
            "SCHEMA", "NEEDS_CODE", "CONFIG_VERSION"]
 
-CONFIG_VERSION = 8
+CONFIG_VERSION = 9
 
 _WALLTIME = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
 _MEM = re.compile(r"^[0-9]+(kb|mb|gb|tb)$")
@@ -141,7 +141,12 @@ SCHEMA = (
     ("driver.mem", "mem"),
     ("driver.walltime", "walltime"),
     ("driver.poll_seconds", "int>=1"),
+    ("resources.max_cores", "int>=1"),
 )
+
+# D-099: the cap must hold the sequencer's job and the largest single job the
+# configuration sizes (a smaller one would leave that job waiting for ever)
+_SIZED_JOBS = ("search.trial.ncpus", "best_fit.ncpus", "sim.ncpus", "bank.verify.ncpus")
 
 # Keys whose values the pipeline can only honour once a later block exists:
 # (key, block number, what the block adds, the stages that use the key).
@@ -340,6 +345,14 @@ def validate(data):
         if any(e.startswith(key + ".") for e in expected):
             continue
         problems.append("%s: unknown key (not in the schema)" % key)
+    named = ("resources.max_cores", "driver.ncpus") + _SIZED_JOBS
+    if not any(p.split(":")[0] in named for p in problems):
+        cap = int(_lookup(data, "resources.max_cores"))
+        drv = int(_lookup(data, "driver.ncpus"))
+        key, size = max(((k, int(_lookup(data, k))) for k in _SIZED_JOBS), key=lambda kv: kv[1])
+        if cap < drv + size:
+            problems.append("resources.max_cores: %d cannot hold the sequencer's job (driver.ncpus %d) "
+                            "and the largest job (%s %d)" % (cap, drv, key, size))
     return problems
 
 

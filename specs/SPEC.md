@@ -219,7 +219,7 @@ Claude's as the log records (D-085..D-090).
 
 | Key | Type | Constraint |
 |---|---|---|
-| `config_version` | int | 8 (v8, 2026-10-18: the `driver` block, D-098; v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
+| `config_version` | int | 9 (v9, 2026-10-19: `resources.max_cores`, D-099; v8, 2026-10-18: the `driver` block, D-098; v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
 | `dataset` | str | `[a-z0-9_]+`; the `<tag>` of the folder and of the artefact names |
 | `paths.{sbix_dir, sbi_dir, work_root, banks_root, runs_root, tune_root}` | str | absolute paths |
 | `envs.{extract, train}` | str | conda environment names |
@@ -263,6 +263,7 @@ Claude's as the log records (D-085..D-090).
 | `loader.buffer_shards` | int | >= 1 |
 | `driver.{queue, mem, walltime}` | str | the sequencer's PBS jobs (D-098; v8): queue, PBS memory, `hh:mm:ss` |
 | `driver.{ncpus, poll_seconds}` | int | >= 1: the jobs' cores; seconds between two ticks |
+| `resources.max_cores` | int | >= 1 (D-099; v9): the most cores the pipeline's jobs request at once, queued, held or running, the sequencer's job included; at least `driver.ncpus` + the largest single job of the configuration |
 
 Keys whose code is not built yet (the NEEDS-CODE keys) are refused by
 `pipeline.py run` with the block that builds them named, until that block
@@ -369,6 +370,11 @@ fixture, not part of the pipeline.
     Everything runs as PBS jobs on compute nodes; the user's commands only
     submit, read and write files on the shared file system, from any login
     node (block 1, amended 2026-10-18 (c)).
+  - D-099: the cores requested by the pipeline's jobs that are queued, held
+    or running, the sequencer's own job included, never sum to more than
+    `resources.max_cores` (200 for Giulia, raisable); a job waits until it
+    fits; nothing submitted is deleted for it (block 1, amended 2026-10-19
+    (d); blocks 2, 3 and 7, amended 2026-10-19).
   - D-082: every search and training value from the configuration.
   - D-083: the posteriors and the report are not started by this command.
   - D-084: the runner streams the bank through a buffer of
@@ -636,6 +642,59 @@ fixture, not part of the pipeline.
     compute nodes as usual"); the driver block's values, the limit of 3
     unclean ends, the 600 s quiet time and the budget's margin rule are
     Claude's `[proposed]`.
+- Amended 2026-10-19 (d) (D-099; the user, 11:50: "You will have available
+  200 cores so put this cap (that can be risen) for the whole pipeline"):
+  the cores the pipeline's jobs request at once are counted and capped.
+  - `pipeline.job_cores(job) -> int | None`: the job's `ncpus`, recorded at
+    submission since this amendment, else read from its qsub line: `-l
+    select=K:ncpus=N` gives K x N (K = 1 when absent; a `select=...,
+    walltime=...` argument is read the same way), times, for an array `-J
+    a-b[:s][%c]`, min(c, count) with count = (b - a) // s + 1 (no `%`: all
+    of them); None when neither says.
+  - `pipeline.cores_in_flight(state) -> (cores, n, unknown)`: over the
+    jobs not marked finished of every stage not done or skipped (a done
+    stage's record its polls never marked finished holds no cores), the
+    sum of the footprints of the jobs recorded after no such job: a job's
+    `job_cores`, or, when jobs are recorded `after` it (a gate, an
+    aggregation: they start when it ends), the larger of its cores and the
+    sum of theirs (never both at once); n, the jobs counted; `unknown`,
+    the ids of the jobs no record gives the cores of (counted 0, named by
+    the dry run and `--status`).
+  - `Submitter(pbs, state, stage, log, cfg)`: `budget()` =
+    `resources.max_cores` - `driver.ncpus` (the sequencer's own job is
+    always counted); `in_flight()`; `free()` = budget - in flight;
+    `check(n)` raises `CapExceeded` (a RuntimeError) when n exceeds the
+    whole budget, a job that can never start (`<stage>: a job of <n> cores
+    can never start: the stages' jobs share <b> cores (resources.max_cores
+    <m> less the sequencer's job, <d>); raise resources.max_cores ... or
+    ask fewer cores (D-099)`); `fits(n)` asks `check` first, then whether n
+    <= free; `submit(argv, role, ..., ncpus=None, after=None)` records
+    `ncpus` (given, else read from the argv) and `after`, and raises
+    `CapExceeded` when the job does not fit -- the stages ask `fits` first,
+    so this is a guard; `record(job_id, role, cmd, ..., ncpus=None,
+    after=None)`: a launcher's job, with the cores the stage worked out
+    before it ran the launcher (no check here). A stage's start asks
+    `check` of the jobs it submits later (S2's and the bank's array with
+    its gate), so it stops before its first job. `run` fails the stage on
+    a `CapExceeded` from its poll as from its start (`STOP: stage <s>
+    failed: ...`), never a crash of every driver. Without a configuration
+    (the unit tests' Submitter) everything fits.
+  - `stages.Deferred`: raised by a stage's `start` when its first job does
+    not fit; `run` leaves the stage pending, logs `<stage>: waits for cores:
+    <reason>` once per reason (kept as the stage's `waiting_note`), and
+    calls `start` again at the next tick.
+  - Config v9: `resources.max_cores`; the load refuses a value below
+    `driver.ncpus` + the largest job the configuration sizes
+    (`search.trial.ncpus`, `best_fit.ncpus`, `sim.ncpus`,
+    `bank.verify.ncpus`): `resources.max_cores: <n> cannot hold the
+    sequencer's job (driver.ncpus <d>) and the largest job (<key> <v>)`.
+    Giulia: 200 `[user]`. Raising it: the value, `--stop`, a submission
+    with `--accept-config-change`.
+  - The dry run and `--status` print `cores: at most <cap> at once
+    (resources.max_cores, D-099): the sequencer's job <d>, the stages' jobs
+    <b>; in flight per the state file: <n> in <k> job(s)` (and the unknown
+    ones).
+  - Tests: `tests/test_smoke_block1c.py`.
 - Confirmed: yes 2026-10-15 (the user's answers to the build handoff's Q1-Q7
   and the follow-up; D-090..D-093)
 - Status: smoke-tested 2026-10-15 (6 pass, 1 skip: convergence, not a
@@ -650,6 +709,17 @@ fixture, not part of the pipeline.
   `tools/probe_compute_qsub.pbs` is the user's to run first), `Output_Path`
   as qstat prints it for a job submitted from a compute node, the real
   dependency hold (H) and kill delay.]
+  [2026-10-19, amendment (d): `test_smoke_block1c.py` 7 pass, 1 skip
+  (convergence); five mutations each caught (fits_always, footprint_sum,
+  done_counted, never_fits, guard); the `test_cores` checks of blocks 2,
+  3 and 7 pass, seven one-off mutations each caught (the bank's NCPUS from
+  the environment, its CONCURRENCY unclamped, its array asking room for
+  its tasks alone, S2's CONCURRENCY unclamped, S2's start check removed,
+  S1's own refusal removed, the throttle without the cap); blocks 1, 1b,
+  2, 3, 7, 7b, 8 pass. Skipped for want of davinci: how the cluster
+  accounts the 200 cores (whether PBS enforces them, whether the user's
+  jobs outside the pipeline count) and the launchers of the davinci
+  checkout (step 3's `test_launchers` reads them there).]
 
 ### Block 2: the bank stages S4-S6 (`stages/bank.py`)
 
@@ -899,6 +969,31 @@ fixture, not part of the pipeline.
     task log's `FAILED:` line) -- and a verification job that leaves no
     report (again; the third time STOP).
 
+- Amended 2026-10-19 (D-099: the core cap, block 1 (d)). (a) The bank
+  launcher gets `NCPUS` from the pipeline -- the launcher's own default,
+  read from its `NCPUS="${NCPUS:-<n>}"` line -- never from the
+  environment: since D-098 the stage runs in the sequencer's PBS job, where
+  PBS sets `NCPUS` to that job's cores, and the launcher reads it (its
+  tasks would ask for the sequencer's cores). (b) Each of the stage's
+  jobs waits in a phase of its own until it fits (`test_waiting`,
+  `array_waiting`, `gate_alone_waiting`, `verify_waiting`: logged once,
+  tried again at every poll): the test task (`NCPUS`); the array when
+  max(`NCPUS`, `GATE_NCPUS`) fits (the array and its gate hold the larger
+  of the two), with `CONCURRENCY` = min(`bank.concurrency`, floor(free /
+  `NCPUS`)); recorded with min(`CONCURRENCY`, the plan's tasks) x
+  `NCPUS`, and its gate with
+  `GATE_NCPUS` (the launcher's default, read likewise) `after` the array;
+  the gate alone (`GATE_NCPUS`) and the verification job
+  (`bank.verify.ncpus`) when they fit. A launcher whose `NCPUS` or
+  `GATE_NCPUS` line cannot be read stops the stage with the reason (in a
+  poll as at the start). At its start the stage asks
+  `check(max(NCPUS, GATE_NCPUS))`: a cap that can never hold the array
+  with its gate stops it before its test task. The dry run prints the
+  `CONCURRENCY` the cap leaves. Tests: `test_smoke_block2.py` `test_cores`
+  (a share of 9 with NCPUS=4 and GATE_NCPUS=16 in the sequencer's
+  environment: the tasks 1 core, the gate 8, `-J 0-2%9`; in process, the
+  array waits while 7 are free; a share of 7 stops the stage at its start).
+
 ### Block 3: the input stages S1-S3 (`stages/inputs.py`)
 
 - Module: `hpc/pipeline/stages/inputs.py` (`RealExtractionStage`,
@@ -940,6 +1035,34 @@ fixture, not part of the pipeline.
   REFUSE line.
 - Not rehearsed: the real S1 and S2 tools end to end (davinci).
 - Status: smoke-tested 2026-10-16 (6 pass, 1 skip, about 7 s).
+
+- Amended 2026-10-19 (D-099: the core cap, block 1 (d)). (a) S1's array
+  has no concurrency limit (the launcher's `-J 0-<n-1>`): its cores are n x
+  the element's (the `#PBS -l select` header of
+  `extractor/run_extractor_array_mea.pbs`), n read from the launcher's own
+  dry run (`DRYRUN=1`, its printed qsub line), once per stage start; it is
+  launched when all of it and its aggregation (the larger of the two)
+  fit, else `Deferred`; refused when it alone exceeds the stages' share
+  (`the extraction array asks <n> x <c> = <t> cores at once and has no
+  concurrency limit, more than the <b> the cap leaves ...; a CONCURRENCY in
+  Sbi-extractor's launcher (a laptop change, D-062) or a larger
+  resources.max_cores`); the aggregation (its header's cores) `after` the
+  array. A launcher's refusal now comes from its dry run (`the extraction
+  could not be planned (its dry run, exit <rc>): ...`). (b) S2: at its
+  start, `check(max(sim.ncpus, the gate's cores))` (a cap that can never
+  hold them stops the stage before its test task); the test task
+  (`sim.ncpus`) when it fits (else `Deferred`, before the plan runs); the
+  array when max(`sim.ncpus`, its gate's cores) fits, else it waits
+  (`array_waiting`), with `CONCURRENCY` = min(`sim.concurrency`, floor(free
+  / `sim.ncpus`)), recorded with min(`CONCURRENCY`, the plan's tasks) x
+  `sim.ncpus`; its gate (the header of
+  `sim_reextract/run_sim_reextract_gate.pbs`) `after` the array; a header
+  that cannot be read stops the stage (`cannot read the cores of <file>`),
+  in a poll as at the start. The tests' stub of `launch_stage_d.sh` honours
+  `DRYRUN=1` as the real one does. Tests: `test_smoke_block3.py`
+  `test_cores` (S2's CONCURRENCY 3 in a share of 10 with tasks of 3 cores;
+  S1 refused in a share of 3; S1 recorded in a share of 4, then S2
+  refused at its start: its gate of 8 can never fit).
 
 ### Block 4: the campaign prior in the runner
 
@@ -1441,6 +1564,27 @@ fixture, not part of the pipeline.
     Not in the sandbox: davinci's PBS (its job logs land when the job
     ends, which the 300 s wait for `RUN_ARGV EXIT:` covers), its Lustre
     errors (the signature's lines are davinci's own of 2026-10-18).
+- The core cap [amended 2026-10-19, D-099; block 1 (d)]. The search's
+  throttle submits a waiting trial only while fewer than
+  `max_concurrent_trials` run AND `fits(search.trial.ncpus)`: at most
+  min(`max_concurrent_trials`, floor(free / ncpus)) at once (Giulia, 200 -
+  4 = 196 cores: 4 trials of 48). The budget gate's probes are prepared at
+  the gate's start and submitted as they fit (a probe still waiting counts
+  as running). A trial whose job ended without a record is resubmitted at
+  once when it fits, else it waits (`waiting`, `--resume` next) for the
+  throttle, within the same `max_resubmits`. The best fit submits its
+  members as they fit, at its start and at every poll, the others
+  `waiting`; a member's resubmission likewise. The dry run prints
+  `cores (D-099): at most <n> trial(s) at once -- max_concurrent_trials
+  <m>, and the cap leaves room for <k> of <c> cores each; the gate's
+  probes likewise`, and `cores (D-099): at most <n> member(s) at once --
+  the cap leaves room for <k> of <c> cores each`. Trials submitted before
+  the cap keep running; no new one starts until the pipeline is under it.
+  Tests: `test_smoke_block7.py` `test_cores` (a cap that leaves room for
+  two 1-core jobs, `max_concurrent_trials` 3: the gate's 3 probes and the
+  trials never more than two at once, the members of 2 cores one at a
+  time, nothing over the cap in the fake PBS's records).
+
 ### Block 8: end to end on the stand-in and the delivery
 
 - Test (`tests/test_smoke_block8.py`): the one command from an empty work

@@ -169,13 +169,24 @@ class _BankBase(Stage):
     def _login_log(self, cfg):
         return os.path.join(cfg.data["paths"]["work_root"], "logs", "bank_login_node.log")
 
+    def _launcher_cores(self, cfg):
+        """(a task's cores, the gate's): the launcher's own defaults, read from
+        its NCPUS / GATE_NCPUS lines and passed to it explicitly (D-099): the
+        stage runs in the sequencer's PBS job (D-098), whose environment PBS
+        gives an NCPUS of its own, which the launcher would read."""
+        p = os.path.join(self._launcher_dir(cfg), "launch_bank.sh")
+        return int(CM.shell_default(p, "NCPUS")), int(CM.shell_default(p, "GATE_NCPUS"))
+
     def _env(self, cfg, **extra):
         d = cfg.data
         env = dict(os.environ)
-        for k in ("DRYRUN", "WALLTIME", "TEST_INDEX", "PROFILE", "QUEUE", "CONCURRENCY"):
+        for k in ("DRYRUN", "WALLTIME", "TEST_INDEX", "PROFILE", "QUEUE", "CONCURRENCY", "NCPUS",
+                  "GATE_NCPUS"):
             env.pop(k, None)
+        task, gate = self._launcher_cores(cfg)
         env.update({"PROFILE": self._profile_path(cfg), "ENV_NAME": d["envs"]["extract"],
                     "QUEUE": d["bank"]["queue"], "CONCURRENCY": str(int(d["bank"]["concurrency"])),
+                    "NCPUS": str(task), "GATE_NCPUS": str(gate),
                     # the DSN tree the Sbi-extractor tools import (env.sh defaults it
                     # to artifacts/sbi_hpc, a per-machine symlink): the configuration knows it
                     "SBI_HPC_DIR": os.path.join(d["paths"]["sbi_dir"], "hpc")})
@@ -417,8 +428,31 @@ class SimBankStage(_BankBase):
 
     # -- submissions -------------------------------------------------------------
 
+    def _waits(self, sub, pbs, phase, what, asked):
+        """Stay in a waiting phase until `asked` cores fit (D-099); logged once."""
+        if sub.get("phase") != phase:
+            pbs.log("%s: %s waits for cores (%d asked, %s free under resources.max_cores, D-099)"
+                    % (self.name, what, asked, pbs.free()))
+        sub["phase"] = phase
+
+    def _cores_or_fail(self, cfg, sub):
+        """The launcher's cores, or None with the stage failed on the reason
+        (these run in the poll too, where an exception would end the
+        sequencer's job instead of the stage)."""
+        try:
+            return self._launcher_cores(cfg)
+        except RuntimeError as exc:
+            self._fail(sub, "the launcher's cores cannot be read (D-099): %s" % exc)
+            return None
+
     def _start_test(self, cfg, st, pbs):
         sub = st["sub"]
+        cores = self._cores_or_fail(cfg, sub)
+        if cores is None:
+            return
+        task = cores[0]
+        if not pbs.fits(task):
+            return self._waits(sub, pbs, "test_waiting", "the test task", task)
         log_path = os.path.join(self._log_dir(cfg), "bank_test_0.log")
         rc, text = self._run_launcher(cfg, "test", self._login_log(cfg), TEST_INDEX="0")
         jobs = self._jobs_of(text)
@@ -426,7 +460,8 @@ class SimBankStage(_BankBase):
             sub["fail"] = "the test task could not be submitted (exit %d): %s" % (rc, self._refusal(text))
             sub["phase"] = "failed"
             return
-        pbs.record(jobs["job"], "bank test task 0", ["launch_bank.sh", "test"], log_path=log_path)
+        pbs.record(jobs["job"], "bank test task 0", ["launch_bank.sh", "test"], log_path=log_path,
+                   ncpus=task)
         sub["test_job"] = jobs["job"]
         sub["test_log"] = log_path
         sub["phase"] = "test"
@@ -442,8 +477,24 @@ class SimBankStage(_BankBase):
         before = file_stat(gate_log)
         record_before = file_stat(self._record_path(cfg))
         walltime = sub.get("walltime_used") or str(cfg.data["bank"]["walltime"])
+        cores = self._cores_or_fail(cfg, sub)
+        if cores is None:
+            return
+        task, gate = cores
+        # the array and its gate (after it) hold the larger of the two at once
+        if not pbs.fits(max(task, gate)):
+            return self._waits(sub, pbs, "array_waiting", "the array (its gate after it)",
+                               max(task, gate))
+        conc = int(cfg.data["bank"]["concurrency"])
+        free = pbs.free()
+        if free is not None:
+            conc = min(conc, free // task)      # >= 1: free >= max(task, gate)
+        if conc < int(cfg.data["bank"]["concurrency"]):
+            pbs.log("sim_bank: the array at CONCURRENCY %d (bank.concurrency %d; the cap leaves room "
+                    "for %d task(s) of %d core(s), D-099)"
+                    % (conc, int(cfg.data["bank"]["concurrency"]), free // task, task))
         rc, text = self._run_launcher(cfg, "array", self._login_log(cfg),
-                                      WALLTIME=walltime, TEST_INDEX="0")
+                                      WALLTIME=walltime, TEST_INDEX="0", CONCURRENCY=str(conc))
         jobs = self._jobs_of(text)
         if rc != 0 or "job" not in jobs or "gate" not in jobs:
             sub["fail"] = ("the array could not be submitted (round %d, exit %d): %s"
@@ -460,9 +511,13 @@ class SimBankStage(_BankBase):
         if not sub.get("walltime_used") and walltime != "auto":
             sub["walltime_used"] = walltime
         label = "" if r == 0 else " (rerun round %d)" % r
+        m = re.search(r"(?m)^# tasks\s*:\s*([0-9]+)", text)
+        n_tasks = int(m.group(1)) if m else conc
         pbs.record(jobs["job"], "bank array" + label, ["launch_bank.sh", "array"],
-                   log_path=os.path.join(self._log_dir(cfg), "bank_task_<index>.log"))
-        pbs.record(jobs["gate"], "bank gate" + label, ["launch_bank.sh", "array"], log_path=gate_log)
+                   log_path=os.path.join(self._log_dir(cfg), "bank_task_<index>.log"),
+                   ncpus=task * max(1, min(conc, n_tasks)))
+        pbs.record(jobs["gate"], "bank gate" + label, ["launch_bank.sh", "array"], log_path=gate_log,
+                   ncpus=gate, after=jobs["job"])
         for k in ("gate_outcome", "gate_said", "gate_alone_unrun_of"):
             sub.pop(k, None)
         sub.update(array_job=jobs["job"], gate_job=jobs["gate"], gate_log=gate_log,
@@ -473,6 +528,12 @@ class SimBankStage(_BankBase):
         """`launch_bank.sh gate`: the gate with no dependency, after a verified
         round whose gate never ran."""
         sub = st["sub"]
+        cores = self._cores_or_fail(cfg, sub)
+        if cores is None:
+            return
+        gate = cores[1]
+        if not pbs.fits(gate):
+            return self._waits(sub, pbs, "gate_alone_waiting", "the gate alone", gate)
         gate_log = os.path.join(self._log_dir(cfg), "bank_gate.log")
         before = file_stat(gate_log)
         record_before = file_stat(self._record_path(cfg))
@@ -482,7 +543,8 @@ class SimBankStage(_BankBase):
             sub["fail"] = "the gate alone could not be submitted (exit %d): %s" % (rc, self._refusal(text))
             sub["phase"] = "failed"
             return
-        pbs.record(jobs["gate"], "bank gate alone", ["launch_bank.sh", "gate"], log_path=gate_log)
+        pbs.record(jobs["gate"], "bank gate alone", ["launch_bank.sh", "gate"], log_path=gate_log,
+                   ncpus=gate)
         sub.update(gate_alone_unrun_of=sub.get("gate_job"), gate_job=jobs["gate"],
                    gate_log=gate_log, gate_log_stat=before, record_stat=record_before,
                    phase="gate_alone")
@@ -492,6 +554,9 @@ class SimBankStage(_BankBase):
         sub = st["sub"]
         d = cfg.data
         v = d["bank"]["verify"]
+        if not pbs.fits(int(v["ncpus"])):
+            self._waits(sub, pbs, "verify_waiting", "the verification job", int(v["ncpus"]))
+            return "running"
         r = int(sub.get("round", 0))
         a = int(sub.get("verify_try", 0)) + 1
         sub["verify_try"] = a
@@ -562,7 +627,8 @@ class SimBankStage(_BankBase):
                 if not sub.get("gate_alone_unrun_of"):
                     pbs.log("sim_bank: every task verified and no record (the gate never ran): the gate alone")
                     self._start_gate_alone(cfg, st, pbs)
-                    return "running" if sub.get("phase") == "gate_alone" else "finished"
+                    return "running" if sub.get("phase") in ("gate_alone", "gate_alone_waiting") \
+                        else "finished"
                 return self._fail(sub, "the gate did not run, alone either (jobs %s and %s), though every task "
                                        "verified OK on %s (%s)" % (sub.get("gate_alone_unrun_of"),
                                                                    sub.get("gate_job"), host, path))
@@ -607,7 +673,7 @@ class SimBankStage(_BankBase):
         pbs.log("sim_bank: rerun round %d of at most %d: the array again (finished tasks skip on their "
                 "markers)" % (r + 1, max_r))
         self._start_array(cfg, st, pbs)
-        return "running" if sub.get("phase") == "gate" else "finished"
+        return "running" if sub.get("phase") in ("gate", "array_waiting") else "finished"
 
     def _quarantine(self, cfg, st, pbs, rep, report_path):
         """Move every file of every bad task, and the record and the
@@ -690,6 +756,9 @@ class SimBankStage(_BankBase):
     def start(self, cfg, st, pbs):
         sub = st["sub"]
         self.ensure_profile(cfg, pbs)
+        # D-099: a cap that can never hold the array with its gate stops the
+        # stage here, before its test task
+        pbs.check(max(self._launcher_cores(cfg)))
         sub["round"] = 0
         if self._test_marker_ok(cfg):
             pbs.log("sim_bank: the test task's marker belongs to this plan: test skipped")
@@ -702,6 +771,18 @@ class SimBankStage(_BankBase):
         sub = st["sub"]
         finished, by_id = self._refresh_jobs(st, pbs)
         phase = sub.get("phase")
+        # the waiting phases (D-099): the job that did not fit, again
+        if phase == "test_waiting":
+            self._start_test(cfg, st, pbs)
+            return "running" if sub.get("phase") in ("test", "test_waiting") else "finished"
+        if phase == "array_waiting":
+            self._start_array(cfg, st, pbs)
+            return "running" if sub.get("phase") in ("gate", "array_waiting") else "finished"
+        if phase == "verify_waiting":
+            return self._submit_verify(cfg, st, pbs)
+        if phase == "gate_alone_waiting":
+            self._start_gate_alone(cfg, st, pbs)
+            return "running" if sub.get("phase") in ("gate_alone", "gate_alone_waiting") else "finished"
         if phase == "test":
             job_id = sub["test_job"]
             if not finished.get(job_id):
@@ -712,7 +793,7 @@ class SimBankStage(_BankBase):
                 pbs.log("sim_bank: test task passed: %s (its marker is this plan's)"
                         % (ok_lines[-1].strip() if ok_lines else "no log line yet"))
                 self._start_array(cfg, st, pbs)
-                return "running" if sub.get("phase") == "gate" else "finished"
+                return "running" if sub.get("phase") in ("gate", "array_waiting") else "finished"
             # no marker of this plan: the task failed -- unless the marker or
             # the log is still on its way (the log says OK, or it lacks the
             # job script's end line): wait, at most the grace period
@@ -797,7 +878,17 @@ class SimBankStage(_BankBase):
         d = cfg.data
         ld = self._launcher_dir(cfg)
         v = d["bank"]["verify"]
-        return ["test (skipped when %s/tasks/task_0000.json belongs to the plan): PROFILE=<profile> "
+        try:
+            task, gate = self._launcher_cores(cfg)
+            cores = ("cores (D-099): a task %d core(s) and the gate %d (the launcher's NCPUS / GATE_NCPUS, "
+                     "passed to it); the array at CONCURRENCY %s = min(bank.concurrency %d, the cap's room "
+                     "%s), its gate after it; the verification job %d"
+                     % (task, gate, CM.cap_room(cfg, task, d["bank"]["concurrency"]),
+                        int(d["bank"]["concurrency"]), CM.cap_room(cfg, task), int(v["ncpus"])))
+        except RuntimeError as exc:
+            cores = "cores (D-099): %s -- the stage would stop on it" % exc
+        return [cores,
+                "test (skipped when %s/tasks/task_0000.json belongs to the plan): PROFILE=<profile> "
                 "QUEUE=%s TEST_INDEX=0 bash %s/launch_bank.sh test -> one job; passed by its marker "
                 "(log line TASK 0 OK)" % (self._bank_root(cfg), d["bank"]["queue"], ld),
                 "array: WALLTIME=%s CONCURRENCY=%d QUEUE=%s bash %s/launch_bank.sh array -> the array "

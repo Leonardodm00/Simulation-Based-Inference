@@ -173,8 +173,9 @@ def cmd_qsub(argv):
            "resources": resources, "script": os.path.abspath(script),
            "cwd": os.getcwd(), "out": out, "vars": vars_, "depend": depend,
            "depend_kind": depend_kind,
-           "indices": indices, "state": "H" if held else "Q", "exit_status": None,
-           "started": None, "finished": None, "comment": "",
+           "indices": indices, "array_spec": array,
+           "state": "H" if held else "Q", "exit_status": None,
+           "submitted": time.time(), "started": None, "finished": None, "comment": "",
            "elements": {}}
     _save(rec)
     subprocess.Popen([sys.executable, os.path.abspath(__file__), "--run", str(num)],
