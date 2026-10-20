@@ -22,14 +22,37 @@ known:
       corrupt   theta = 1.0 in one row (outside the open box): SKIPPED
     campaign 2 (--campaign-dir, a set-aside run)
       old       r = -1.0                          ledger nll = L
+      norec     r = -0.3, no runner record        ledger nll = L
       trunc     a per-row file that is not a zip: SKIPPED
+
+Beside each read per-row file a runner record A1_seed0.json with a planted
+selection-split curve val_npe(e) (written as the runner writes it, NaN
+fields included), e* the best epoch by the runner's rule, g the gain of the
+last 5 epochs:
+
+      good      2.0 - 0.05 e, e = 0..19            e* = 19 (the last), g = 0.25
+      bad       1.0 + 0.01 (e - 9)^2               e* = 9, g = 0
+      mism      3.0 2.5 2.2 2.0, then 16 x (2.0 - 9e-7)
+                                                   e* = 3: inside the 1e-6 margin
+      other     1.5 1.4 1.3 1.2                    e* = 3 (the last), g none (E <= 5)
+      pickled   a record without `history`         no curve; p_eff 0.5
+      old       3.0 2.5 2.2 2.0, then 2.0 - 9e-7 (e - 3), e = 4..19
+                                                   e* = 19, g = 4.5e-6: no epoch
+                falls 1e-6 below the one before, every second one falls 1.8e-6
+                below the best so far (the runner's rule, not "below every
+                earlier epoch", which would give e* = 3)
+      norec     no record                          no curve
+
+      TRAINING CURVES: best epoch the last in 3 of 5, in the last 5 in 3;
+      median gain 2.25e-6 (2 without a curve)
 
 Checks
     test_known_answer   T and its table by a scalar transcription, every
                         trial's L and R, the two row sets, the ledger
                         verdicts, the skipped and missing files, the shares
                         of edge rows, the pass line, the physical edge zone
-                        from a hand-made bank sidecar
+                        from a hand-made bank sidecar; the training curves
+                        above, their p_eff and the TRAINING CURVES line
     test_reference      tau against a scalar math transcription; symmetric
                         in theta and 1 - theta; 0 inside the bound; with
                         torch, sbi and zuko importable, the tool's T_i
@@ -42,16 +65,23 @@ Checks
                         that does not load, 3 when no per-row file is read
     test_edge_cases     load_perrow's refusals (a missing key, shapes, a
                         non-finite nll, theta at 0, no rows); ledger_check
-                        without a record or an nll
+                        without a record or an nll; curve_summary's refusals
+                        (no list, an epoch without a finite number) and its
+                        boundaries (1 epoch; g none at E = 5, defined at 6);
+                        read_runner_record without a file, on a JSON list,
+                        on a broken file
     MUTATION=sign       the ln(theta (1 - theta)) term negated   } each must make
     MUTATION=bound      the edge mask |u| >= 4 instead of > 5   } test_known_answer
     MUTATION=crosscheck the ledger comparison always equal      } FAIL
+    MUTATION=margin     the best epoch without the 1e-6 margin  }
+    MUTATION=rule       e* by "below every earlier epoch"       }
 
 Run
     python3 hpc/pipeline/tests/test_smoke_perrow.py
         A few seconds without torch; numpy needed (sbi_export has it).
     MUTATION=sign python3 hpc/pipeline/tests/test_smoke_perrow.py
-        must report test_known_answer FAIL (likewise bound, crosscheck).
+        must report test_known_answer FAIL (likewise bound, crosscheck,
+        margin, rule).
 
 Pure ASCII, LF only; Python 3.6 syntax.
 """
@@ -101,8 +131,26 @@ elif MUTATION == "bound":
     PC.edge_terms = _bound
 elif MUTATION == "crosscheck":
     PC.ledger_check = lambda L, rec, tol=PC.LEDGER_TOL: ("equal", "ledger (not compared)")
+elif MUTATION == "margin":
+    PC.CURVE_MARGIN = 0.0
+elif MUTATION == "rule":
+    _REAL_CURVE = PC.curve_summary
+
+    def _rule(history, margin=None, tail=None):
+        c = _REAL_CURVE(history, margin, tail)
+        if c is None:
+            return c
+        vals = [float(h["val_npe"]) for h in history]
+        low, e_star = math.inf, -1
+        for e, v in enumerate(vals):
+            if v < low - PC.CURVE_MARGIN:
+                e_star = e
+            low = min(low, v)
+        return dict(c, best_epoch=e_star, best_val=vals[e_star], best_is_last=e_star == len(vals) - 1,
+                    best_in_tail=e_star >= len(vals) - PC.CURVE_TAIL)
+    PC.curve_summary = _rule
 elif MUTATION:
-    raise SystemExit("unknown MUTATION %r; known: sign, bound, crosscheck" % MUTATION)
+    raise SystemExit("unknown MUTATION %r; known: sign, bound, crosscheck, margin, rule" % MUTATION)
 
 
 # --------------------------------------------------------------- oracle ---
@@ -171,16 +219,56 @@ R_OF = {
     "other": np.zeros(N),
     "pickled": np.full(N, 0.1),
     "old": np.full(N, -1.0),
+    "norec": np.full(N, -0.3),
+}
+
+# the planted selection-split curves of the module docstring, and what they must give
+CURVES = {
+    "good": [2.0 - 0.05 * e for e in range(20)],
+    "bad": [1.0 + 0.01 * (e - 9) ** 2 for e in range(20)],
+    "mism": [3.0, 2.5, 2.2, 2.0] + [2.0 - 9e-7] * 16,
+    "other": [1.5, 1.4, 1.3, 1.2],
+    "old": [3.0, 2.5, 2.2, 2.0] + [2.0 - 9e-7 * (e - 3) for e in range(4, 20)],
+}
+P_EFF = {"good": 3.21, "bad": None, "mism": True, "other": float("nan"), "pickled": 0.5}
+#              (E, e*, e* = E-1, e* >= E-5, g, best val_npe, last val_npe, p_eff)
+WANT_CURVE = {
+    "good": (20, 19, True, True, 0.25, 1.05, 1.05, 3.21),
+    "bad": (20, 9, False, False, 0.0, 1.0, 2.0, None),
+    "mism": (20, 3, False, False, 0.0, 2.0, 2.0 - 9e-7, None),
+    "other": (4, 3, True, True, None, 1.2, 1.2, None),
+    "old": (20, 19, True, True, 4.5e-6, 2.0 - 1.44e-5, 2.0 - 1.44e-5, None),
 }
 
 
-def _write_trial(camp, name, theta32, group, r, ledger_shift=0.0, object_group=False):
+def _history(vals):
+    """Epoch entries as joint_train.py writes them (T and p_eff NaN without a replicate term)."""
+    return [{"epoch": e, "npe": v + 0.1, "dsn": 0.0, "rep": 0.0, "T": float("nan"),
+             "p_eff": float("nan"), "n_p_eff_invalid": 0, "ramp": None, "val_npe": v}
+            for e, v in enumerate(vals)]
+
+
+def _write_record(run, name):
+    """The runner record beside the per-row file, written as run_joint_arms.py writes it."""
+    rec = {"arm": "A1", "seed": 0}
+    if name in CURVES:
+        rec["history"] = _history(CURVES[name])
+        rec["val_npe"] = CURVES[name][-1]
+    if name in P_EFF:
+        rec["p_eff_spectrum"] = P_EFF[name]
+    with open(os.path.join(run, "A1_seed0.json"), "w") as fh:
+        json.dump(rec, fh, indent=1, sort_keys=True, default=str)
+
+
+def _write_trial(camp, name, theta32, group, r, ledger_shift=0.0, object_group=False, record=True):
     tid = _tid(name)
     run = os.path.join(camp, "runs", tid)
     os.makedirs(run)
     nll = tau_rows(theta32) + r
     g = np.array(group.tolist(), dtype=object) if object_group else group
     np.savez_compressed(os.path.join(run, "A1_seed0_perrow.npz"), nll=nll, group=g, theta=theta32)
+    if record:
+        _write_record(run, name)
     with open(os.path.join(camp, "trials", tid + ".json"), "w") as fh:
         json.dump({"trial_id": tid, "status": "ok", "nll": float(np.mean(nll)) + ledger_shift}, fh)
     return tid
@@ -213,6 +301,7 @@ def build(root):
     np.savez_compressed(os.path.join(camp1, "runs", ids["corrupt"], "A1_seed0_perrow.npz"),
                         nll=np.zeros(N), group=g, theta=bad_th)
     ids["old"] = _write_trial(camp2, "old", th, g, R_OF["old"])
+    ids["norec"] = _write_trial(camp2, "norec", th, g, R_OF["norec"], record=False)
     ids["trunc"] = _tid("trunc")
     os.makedirs(os.path.join(camp2, "runs", ids["trunc"]))
     with open(os.path.join(camp2, "runs", ids["trunc"], "A1_seed0_perrow.npz"), "wb") as fh:
@@ -261,8 +350,8 @@ def test_known_answer():
         assert len(res["sets"]) == 2, sorted(res["sets"])
         main = max(res["sets"].values(), key=lambda s: len(s["trials"]))
         other = min(res["sets"].values(), key=lambda s: len(s["trials"]))
-        assert sorted(main["trials"]) == sorted(ids[k] for k in ("good", "bad", "mism", "pickled", "old")), \
-            main["trials"]
+        assert sorted(main["trials"]) == sorted(ids[k] for k in ("good", "bad", "mism", "pickled", "old",
+                                                                 "norec")), main["trials"]
         assert other["trials"] == [ids["other"]], other["trials"]
         # float64 sums in another order: 1e-10 nats is far above roundoff, far below any tau
         assert abs(main["T"] - T_main) < 1e-10, (main["T"], T_main)
@@ -279,16 +368,17 @@ def test_known_answer():
         for k in range(D):
             assert abs(tab[k]["T_k"] - want_k[k]) < 1e-10, (k, tab[k]["T_k"], want_k[k])
         # every trial: L the per-row mean, R the planted rest
-        for name in ("good", "bad", "mism", "pickled", "old", "other"):
+        for name in ("good", "bad", "mism", "pickled", "old", "other", "norec"):
             t = by[ids[name]]
             rr = float(np.mean(R_OF[name]))
             assert abs(t["R"] - rr) < 1e-10, (name, t["R"], rr)
             assert abs(t["L"] - t["T"] - t["R"]) < 1e-12, name
         assert abs(by[ids["good"]]["L_no_edge"] - (-0.5)) < 1e-12, by[ids["good"]]["L_no_edge"]
         # the ledger verdicts
-        verdicts = dict((k, by[ids[k]]["ledger"]) for k in ("good", "bad", "mism", "pickled", "old", "other"))
+        verdicts = dict((k, by[ids[k]]["ledger"])
+                        for k in ("good", "bad", "mism", "pickled", "old", "other", "norec"))
         assert verdicts == {"good": "equal", "bad": "equal", "mism": "MISMATCH", "pickled": "equal",
-                            "old": "equal", "other": "equal"}, verdicts
+                            "old": "equal", "other": "equal", "norec": "equal"}, verdicts
         # what was skipped and what had no file
         sk = dict((k["trial"], k["why"]) for k in res["skipped"])
         assert sorted(sk) == sorted([ids["corrupt"], ids["trunc"]]), sk
@@ -304,14 +394,49 @@ def test_known_answer():
         assert abs(hi - math.exp(math.log(0.01) + (1 - s) * span)) < 1e-12, hi
         lo2, hi2, _u = PC.physical_edges(res["phys"][2], 5.0)
         assert abs(lo2 - (-70.0 + 20.0 * s)) < 1e-12 and abs(hi2 - (-70.0 + 20.0 * (1 - s))) < 1e-12
+        # the training curves: e*, g, best and last val_npe, p_eff; the trials without one
+        for name in sorted(WANT_CURVE):
+            E, e_star, last, in_tail, g, best_v, last_v, pe = WANT_CURVE[name]
+            t = by[ids[name]]
+            c = t["curve"]
+            assert c is not None and t["curve_problem"] is None, (name, t["curve_problem"])
+            got = (c["epochs"], c["best_epoch"], c["best_is_last"], c["best_in_tail"])
+            assert got == (E, e_star, last, in_tail), (name, got, (E, e_star, last, in_tail))
+            assert (g is None) == (c["gain_tail"] is None), (name, c["gain_tail"], g)
+            if g is not None:
+                assert abs(c["gain_tail"] - g) < 1e-12, (name, c["gain_tail"], g)
+            assert abs(c["best_val"] - best_v) < 1e-12, (name, c["best_val"], best_v)
+            assert abs(c["last_val"] - last_v) < 1e-12, (name, c["last_val"], last_v)
+            assert t["p_eff"] == pe, (name, t["p_eff"], pe)
+        pk, nr = by[ids["pickled"]], by[ids["norec"]]
+        assert pk["curve"] is None and pk["curve_problem"] == PC.NO_CURVE and pk["p_eff"] == 0.5, pk
+        assert nr["curve"] is None and nr["curve_problem"] == "no runner record A1_seed0.json", nr
+        assert nr["p_eff"] is None, nr["p_eff"]
+        st = PC.curve_stats(res["trials"])
+        assert (st["n"], st["last"], st["tail"], st["without"]) == (5, 3, 3, 2), st
+        assert abs(st["median_gain"] - 2.25e-6) < 1e-12, st["median_gain"]
         # the CLI's report and pass line
         rc, out = run_cli(["--config", path, "--campaign-dir", camp2])
         assert rc == 0, out[-3000:]
-        want = ("PERROW CHECK OK: 6 trial(s) read, 2 skipped, 1 without a per-row file; 2 row set(s); "
+        want = ("PERROW CHECK OK: 7 trial(s) read, 2 skipped, 1 without a per-row file; 2 row set(s); "
                 "T = %.4f, %.4f nats/row (one per row set); nothing was written" % (T_main, T_other))
         assert want in out, (want, out[-3000:])
         assert "MISMATCH" in out and "SKIPPED" in out, out[-3000:]
         assert "below 0.01039, above 2.888 1" in out, out[-3000:]
+        line = PC.curves_line(st)
+        assert line.startswith("TRAINING CURVES: best epoch the last in 3 of 5 trial(s), in the last 5 in 3; "
+                               "median gain of the last 5 epochs 2.") and line.endswith(
+                                   "e-06 nats/row (2 without a curve)"), line
+        assert line in out, (line, out[-3000:])
+        for frag in ("best epoch 20 of 20 (the last: still improving)",
+                     "best epoch 10 of 20 (plateaued or rising after it)",
+                     "best epoch  4 of 20 (plateaued or rising after it)",
+                     "best epoch  4 of  4 (the last: still improving)",
+                     "gain of the last 5 0.2500 | p_eff 3.21",
+                     "gain of the last 5 4.5e-06 | p_eff -",
+                     "no curve (%s) | p_eff 0.50" % PC.NO_CURVE,
+                     "no curve (no runner record A1_seed0.json) | p_eff -"):
+            assert frag in out, (frag, out[-4000:])
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -377,6 +502,11 @@ def test_contract():
         assert rc == 0, out[-2000:]
         assert ("PERROW CHECK OK: 1 trial(s) read, 0 skipped, 0 without a per-row file; 1 row set(s); "
                 in out), out[-2000:]
+        assert ("TRAINING CURVES: best epoch the last in 1 of 1 trial(s), in the last 5 in 1; median gain "
+                "of the last 5 epochs 0.2500 nats/row (0 without a curve)" in out), out[-2000:]
+        rc, out = run_cli(["--config", path, "--campaign-dir", camp2, "--trial", ids["norec"][:10]])
+        assert rc == 0 and ("TRAINING CURVES: none read (no runner record with a finite val_npe "
+                            "in every epoch)" in out), (rc, out[-2000:])
         rc, out = run_cli(["--config", path, "--trial", "zzzz"])
         assert rc == 3 and "no per-row file was read" in out, (rc, out[-2000:])
         broken = os.path.join(root, "broken.json")
@@ -422,6 +552,38 @@ def test_edge_cases():
         assert PC.ledger_check(0.5, {"status": "ok", "nll": True})[0] == "none"
         assert PC.ledger_check(0.5, {"status": "ok", "nll": 0.5 + 5e-7})[0] == "equal"
         assert PC.ledger_check(0.5, {"status": "ok", "nll": 0.5 + 5e-6})[0] == "MISMATCH"
+        # the training curve: what is no curve, and the boundaries of g
+        for nope in (None, [], "abc", {"val_npe": 1.0}, [{"epoch": 0}], [{"val_npe": float("nan")}],
+                     [{"val_npe": True}], [{"val_npe": "1.0"}], [1.0, 2.0],
+                     [{"val_npe": 1.0}, {"val_npe": float("inf")}], [{"val_npe": 10 ** 400}]):
+            assert PC.curve_summary(nope) is None, nope
+        one = PC.curve_summary([{"val_npe": 1.0}])
+        assert (one["epochs"], one["best_epoch"], one["best_is_last"], one["gain_tail"]) == (1, 0, True, None), one
+        five = PC.curve_summary([{"val_npe": 1.0 - 0.1 * e} for e in range(5)])
+        assert five["best_epoch"] == 4 and five["gain_tail"] is None, five
+        six = PC.curve_summary([{"val_npe": 1.0 - 0.1 * e} for e in range(6)])
+        assert six["best_epoch"] == 5 and abs(six["gain_tail"] - 0.5) < 1e-12 and six["best_in_tail"], six
+        flat = PC.curve_summary([{"val_npe": 1.0}] * 8)
+        assert flat["best_epoch"] == 0 and not flat["best_in_tail"] and flat["gain_tail"] == 0.0, flat
+        assert PC.curve_stats([]) is None and PC.curve_stats([{"curve": None}]) is None
+        assert (PC._nats(None), PC._nats(0.0), PC._nats(0.25), PC._nats(4.5e-6), PC._nats(-0.00012)) == \
+            ("-", "0.0000", "0.2500", "4.5e-06", "-0.0001")
+        assert PC._number(2) == 2.0 and PC._number(False) is None and PC._number(float("-inf")) is None
+        # the runner record beside a per-row file: none, a JSON list, a broken file
+        pr = os.path.join(root, "A1_seed0_perrow.npz")
+        rj = os.path.join(root, "A1_seed0.json")
+        assert PC.read_runner_record(pr) == (None, "no runner record A1_seed0.json")
+        with open(rj, "w") as fh:
+            fh.write("[1, 2]")
+        assert PC.read_runner_record(pr) == (None, "runner record not a JSON object")
+        with open(rj, "w") as fh:
+            fh.write('{"history": [')
+        assert PC.read_runner_record(pr) == (None, "runner record unreadable (JSONDecodeError)")
+        with open(rj, "w") as fh:
+            fh.write('{"history": [{"val_npe": NaN}], "p_eff_spectrum": NaN}')
+        rec, why = PC.read_runner_record(pr)
+        assert why is None and PC.curve_summary(rec["history"]) is None, (rec, why)
+        assert PC._number(rec["p_eff_spectrum"]) is None
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

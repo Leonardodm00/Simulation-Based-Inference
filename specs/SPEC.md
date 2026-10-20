@@ -1826,6 +1826,26 @@ fixture, not part of the pipeline.
     `PERROW CHECK OK: <k> trial(s) read, <s> skipped, <m> without a
     per-row file; <r> row set(s); T = <t> nats/row; nothing was written`
     (several row sets: `T = <t1>, <t2>, ... nats/row (one per row set)`).
+    The training curves [added 2026-10-20 19:15, the user's "add the
+    check": is a trial still improving when its epochs end?]: beside
+    every per-row file `<stem>_perrow.npz` the runner record `<stem>.json`
+    holds `history`, one entry per epoch e = 0, ..., E-1 with `val_npe`,
+    the selection-split NLL in nats/row, and `p_eff_spectrum`. The best
+    epoch by the runner's own rule (`joint_train.py:204, 315-316`,
+    D-087): e* = -1 and best = inf to start; epoch e becomes e* when
+    val_npe(e) < best - 1e-6, and best becomes val_npe(e) (epoch 0 always
+    does; the runner then scores the report rows with e*'s weights,
+    `joint_train.py:375-376`). Per trial: e* + 1 of E; whether
+    e* = E - 1 (still improving when the epochs ran out); the gain of the
+    last 5 epochs g = min_{e < E-5} val_npe(e) - min_e val_npe(e) >= 0
+    (none when E <= 5); p_eff. Over the trials with a curve: how many
+    have e* = E - 1, how many e* >= E - 5, the median g; the line
+    `TRAINING CURVES: best epoch the last in <k> of <n> trial(s), in the
+    last 5 in <m>; median gain of the last 5 epochs <g> nats/row (<j>
+    without a curve)`, g printed to 4 decimals (2 significant digits where
+    4 decimals would print a nonzero g as 0). A missing or unreadable
+    record, or a history without a finite val_npe in every entry, is a
+    trial without a curve, its reason printed.
     A per-row file that cannot be read, lacks a key, has inconsistent
     shapes, non-finite values or theta outside the open box is SKIPPED with
     its reason. Exit 0; 2 the configuration does not load; 3 no per-row
@@ -1840,13 +1860,26 @@ fixture, not part of the pipeline.
     shares and the table, a ledger MISMATCH, a trial on other rows (a second
     row set), a trial with no per-row file, a corrupt file SKIPPED, a
     pickled donor array read, the pass line, the physical edge zone from a
-    hand-made sidecar; nothing written (every file's bytes and mtime
+    hand-made sidecar; the training curves of planted runner records,
+    written as the runner writes them (a steady fall over 20 epochs:
+    e* = 19, g = 0.25; a minimum at epoch 9 then a rise: e* = 9, g = 0; a
+    fall of 9e-7 after epoch 3: e* = 3 by the margin, best = the value at
+    epoch 3; a creep of 9e-7 per epoch after epoch 3: e* = 19, every
+    second epoch 1.8e-6 below the best so far, g = 4.5e-6; 4 epochs:
+    g none; a record without `history` and a trial without a record: no
+    curve, with their reasons; p_eff a number, None, a bool, NaN, absent)
+    and their summary line (3 of 5 the last, 3 in the last 5, median g
+    2.25e-6, 2 without); curve_summary's refusals (not a list, an epoch
+    without a finite number, an int too large for a float) and
+    boundaries (1 epoch; g none at E = 5, defined at E = 6; a flat
+    curve: e* = 0); nothing written (every file's bytes and mtime
     unchanged); `--trial`; exit 2 and 3; with torch, sbi and zuko
     importable, the tool's T_i against the real flow's loss (both
     coordinates past the bound; skipped otherwise); mutations `sign` (the
-    ln(theta (1 - theta)) term negated), `bound` (|u| >= 4) and `crosscheck`
-    (the ledger comparison always equal) must each make the known answer
-    FAIL.
+    ln(theta (1 - theta)) term negated), `bound` (|u| >= 4), `crosscheck`
+    (the ledger comparison always equal), `margin` (the best epoch
+    without the 1e-6 margin) and `rule` (e* by "below every earlier
+    epoch", not the best so far) must each make the known answer FAIL.
   - Status (perrow_check): smoke-tested 2026-10-20 (`test_smoke_perrow.py`
     5 pass, 1 skip (convergence, not a discretisation) with torch, sbi
     0.27.0 and zuko 1.6.0 importable; 4 pass, 2 skip without torch, the
@@ -1866,6 +1899,16 @@ fixture, not part of the pipeline.
     file; 1 row set(s); T = 3.9821 nats/row` -- both runs on the same
     29,639 report rows of 131 donors, 26.06% of them with an edge
     coordinate; R from -3.7927 to -0.8911, below 0 in all 40 trials.]
+    [2026-10-20 19:15, the training curves: `test_smoke_perrow.py` 5 pass,
+    1 skip with torch, sbi and zuko; 4 pass, 2 skip without torch; the
+    mutations `margin` and `rule` each make `test_known_answer` FAIL, as
+    `sign`, `bound` and `crosscheck` still do. Rehearsed on three records
+    written by the real runner (arm A1, 8 epochs, seeds 0-2, stopped after
+    epoch 7 with its per-epoch checkpoint kept, then `--resume`): e*
+    equal to the runner's own `best_epoch` read from the checkpoint in all
+    three (epochs 5, 6 and 1 of 0-7: none the last), the record's history
+    equal to the checkpoint's `[SANDBOX 2026-10-20, rehearse_curves.py,
+    not in the repository]`. Not yet run on davinci's records.]
   - Status: smoke-tested 2026-10-19 (`test_smoke_block7b.py` 6 pass, 1 skip,
     about 4 minutes -- `unreadable_units` and `unreadable_record` run in
     `test_edge_cases`; the mutation `unreadable` makes `unreadable_record`

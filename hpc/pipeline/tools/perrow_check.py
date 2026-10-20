@@ -21,7 +21,13 @@ n report rows
 
 T the same for every trial on the same rows, R = L - T the part the trial
 controls. The report: per row set, T and a table per coordinate; per trial,
-L, T, R and the ledger's nll; then the pass line
+L, T, R and the ledger's nll; per trial its training curve from the runner
+record beside the per-row file (`history`: the selection-split NLL per
+epoch): the best epoch by the runner's rule (a fall of more than 1e-6
+below the best so far; the runner scores the report rows with that
+epoch's weights), whether it is the last epoch, the gain of the last 5
+epochs, p_eff -- and the line `TRAINING CURVES: ...` (added 2026-10-20
+19:15, the user's "add the check"); then the pass line
 
     PERROW CHECK OK: <k> trial(s) read, <s> skipped, <m> without a per-row
     file; <r> row set(s); T = <t> nats/row; nothing was written
@@ -54,6 +60,9 @@ BOUND = 5.0             # zuko 1.6.0 MonotonicRQSTransform's default (sbi 0.27.0
 LEDGER_TOL = 1e-6       # nats/row: the runner writes L = float(mean(nll)) of the same array
 HALF_LN_2PI = 0.5 * math.log(2.0 * math.pi)
 KEYS = ("nll", "theta", "group")
+CURVE_MARGIN = 1e-6     # nats/row: the runner's best-epoch margin (joint_train.py:315, D-087)
+CURVE_TAIL = 5          # epochs: "the last 5 epochs" of the gain and of the summary
+NO_CURVE = "history missing, or an epoch without a finite val_npe"
 
 
 # ------------------------------------------------------------ loading ---
@@ -138,6 +147,22 @@ def load_perrow(path):
         return None, ("%d theta value(s) outside the open unit box (or non-finite)"
                       % int(np.sum(~inside)))
     return {"nll": nll64, "theta": th64, "theta_stored": theta, "group": group}, None
+
+
+def read_runner_record(perrow_path):
+    """(record, None) or (None, problem): the runner's record <stem>.json
+    beside <stem>_perrow.npz."""
+    p = perrow_path[:-len("_perrow.npz")] + ".json"
+    if not os.path.isfile(p):
+        return None, "no runner record %s" % os.path.basename(p)
+    try:
+        with open(p, "r") as fh:
+            rec = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return None, "runner record unreadable (%s)" % type(exc).__name__
+    if not isinstance(rec, dict):
+        return None, "runner record not a JSON object"
+    return rec, None
 
 
 def row_set_id(theta_stored, group):
@@ -226,6 +251,56 @@ def ledger_check(L, rec, tol=LEDGER_TOL):
                         % (rec.get("status", "?"), float(v), diff))
 
 
+def _number(v):
+    """v as a float when it is a finite JSON number (not a bool), else None."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    try:
+        f = float(v)
+    except OverflowError:
+        return None
+    return f if math.isfinite(f) else None
+
+
+def curve_summary(history, margin=None, tail=None):
+    """The selection-split NLL per epoch, summarised, or None when there is
+    no curve. e* by the runner's rule (joint_train.py:204 and 315-316):
+    best = inf and e* = -1 to start; epoch e becomes e* when
+    val_npe(e) < best - margin, and best becomes val_npe(e). Epoch 0
+    always does; best is within `margin` of the lowest val_npe."""
+    margin = CURVE_MARGIN if margin is None else margin
+    tail = CURVE_TAIL if tail is None else tail
+    if not isinstance(history, list) or not history:
+        return None
+    vals = []
+    for h in history:
+        v = _number(h.get("val_npe")) if isinstance(h, dict) else None
+        if v is None:
+            return None
+        vals.append(v)
+    best, best_e = math.inf, -1
+    for e, v in enumerate(vals):
+        if v < best - margin:
+            best, best_e = v, e
+    E = len(vals)
+    gain = (min(vals[:E - tail]) - min(vals)) if E > tail else None
+    return {"epochs": E, "best_epoch": best_e, "best_val": best, "last_val": vals[-1],
+            "best_is_last": best_e == E - 1, "best_in_tail": best_e >= E - tail, "gain_tail": gain}
+
+
+def curve_stats(trials):
+    """Over the trials with a curve: how many end on their best epoch, how
+    many have it in the last CURVE_TAIL epochs, the median gain; or None."""
+    cs = [t["curve"] for t in trials if t.get("curve")]
+    if not cs:
+        return None
+    gains = [c["gain_tail"] for c in cs if c["gain_tail"] is not None]
+    return {"n": len(cs), "last": sum(1 for c in cs if c["best_is_last"]),
+            "tail": sum(1 for c in cs if c["best_in_tail"]),
+            "median_gain": float(np.median(gains)) if gains else None,
+            "without": len(trials) - len(cs)}
+
+
 def coordinate_table(theta, tau, u, bound):
     """Per coordinate: shares past the bound, part of T, distinct values, range."""
     rows = []
@@ -284,9 +359,14 @@ def analyse(cfg, camps, only, bound):
                 s = sets[sid]
                 dec = decompose(arr["nll"], s["tau_row"], s["edge_row"])
                 verdict, text = ledger_check(dec["L"], rec)
+                run_rec, run_problem = read_runner_record(path)
+                run_rec = run_rec or {}
+                curve = curve_summary(run_rec.get("history"))
                 s["trials"].append(tid)
                 trials.append(dict(dec, campaign=ci, trial=tid, path=path, set=sid,
-                                   ledger=verdict, ledger_text=text))
+                                   ledger=verdict, ledger_text=text, curve=curve,
+                                   p_eff=_number(run_rec.get("p_eff_spectrum")),
+                                   curve_problem=(None if curve else run_problem or NO_CURVE)))
     d = max([s["d"] for s in sets.values()] or [0])
     names, phys = bank_axes(cfg, d) if d else ([], [])
     return {"bound": bound, "camps": camps, "sets": sets, "trials": trials,
@@ -359,6 +439,44 @@ def print_report(res, out=sys.stdout):
     if mism:
         w("  %d trial(s) whose per-row file does not give the ledger's nll: %s\n"
           % (len(mism), ", ".join(t["trial"][:12] for t in mism)))
+    print_curves(res, out)
+
+
+def _nats(x):
+    """4 decimals; 2 significant digits where 4 decimals would print a nonzero value as 0."""
+    if x is None:
+        return "-"
+    if x != 0.0 and abs(x) < 5e-5:
+        return "%.1e" % x
+    return "%.4f" % x
+
+
+def curves_line(stats):
+    if stats is None:
+        return ("TRAINING CURVES: none read (no runner record with a finite val_npe "
+                "in every epoch)")
+    return ("TRAINING CURVES: best epoch the last in %d of %d trial(s), in the last %d in %d; "
+            "median gain of the last %d epochs %s nats/row (%d without a curve)"
+            % (stats["last"], stats["n"], CURVE_TAIL, stats["tail"], CURVE_TAIL,
+               _nats(stats["median_gain"]), stats["without"]))
+
+
+def print_curves(res, out=sys.stdout):
+    w = out.write
+    w("training curves: the selection-split NLL per epoch, from each trial's runner record "
+      "(best epoch by the runner's rule; gain = how much the last %d epochs lowered the best)\n" % CURVE_TAIL)
+    for t in sorted(res["trials"], key=lambda t: t["L"]):
+        c = t["curve"]
+        pe = "-" if t["p_eff"] is None else "%.2f" % t["p_eff"]
+        if c is None:
+            w("  [%d] %-14s no curve (%s) | p_eff %s\n" % (t["campaign"] + 1, t["trial"][:14],
+                                                         t["curve_problem"], pe))
+            continue
+        state = "the last: still improving" if c["best_is_last"] else "plateaued or rising after it"
+        w("  [%d] %-14s best epoch %2d of %2d (%s) | best %8.4f, last %8.4f | gain of the last %d %s | "
+          "p_eff %s\n" % (t["campaign"] + 1, t["trial"][:14], c["best_epoch"] + 1, c["epochs"], state,
+                          c["best_val"], c["last_val"], CURVE_TAIL, _nats(c["gain_tail"]), pe))
+    w(curves_line(curve_stats(res["trials"])) + "\n")
 
 
 def main(argv=None):

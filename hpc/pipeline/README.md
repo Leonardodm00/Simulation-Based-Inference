@@ -384,7 +384,14 @@ is the same for every trial on the same rows; R = L - T is the part the
 trial controls. It prints, per row set, T and a table per coordinate (the
 shares past the bound, the part of T, the edge zone in physical units from
 the bank's sidecar); per trial L, T, R and whether the ledger's nll equals L;
-and the pass line `PERROW CHECK OK: ...; nothing was written`. The pull of
+per trial its training curve from the runner record `runs/<id>/<stem>.json`
+beside the per-row file (added 2026-10-20 19:15: the best epoch of the
+selection-split NLL by the runner's rule, whether it is the last epoch --
+still improving when the epochs ran out -- the gain of the last 5 epochs,
+p_eff) and the line `TRAINING CURVES: best epoch the last in <k> of <n>
+trial(s), in the last 5 in <m>; median gain of the last 5 epochs <g>
+nats/row (<j> without a curve)`; and the pass line `PERROW CHECK OK: ...;
+nothing was written`. The pull of
 step 1 changes no module the running sequencer or the trial jobs use. The
 lines, after step 1:
 
@@ -392,7 +399,7 @@ lines, after step 1:
 # P0. its test; pass line: -- 4 pass, 0 fail, 0 error, 2 skip (5 pass, 1 skip where torch, sbi and zuko import)
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_perrow.py 2>&1 | tail -1
 
-# P1. read-only, both runs (the first one set aside); pass line: PERROW CHECK OK: <k> trial(s) read, <s> skipped, <m> without a per-row file; <r> row set(s); T = <t> nats/row; nothing was written
+# P1. read-only, both runs (the first one set aside); pass line: PERROW CHECK OK: <k> trial(s) read, <s> skipped, <m> without a per-row file; <r> row set(s); T = <t> nats/row; nothing was written -- above it the line TRAINING CURVES: ...
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/perrow_check.py --config hpc/pipeline/projects/giulia/giulia.json --campaign-dir /davinci-1/home/ldellamea/tune_joint_giulia/S-A1_set_aside_2026-10-19T161735Z 2>&1 | tee ~/perrow_check_giulia.txt
 
 # P2. the bound of the trials' flows (read-only); expected: sbi 0.27.0 zuko 1.6.0 bound 5.0 -- another bound: P1 with --bound <it>; another sbi: the bound sbi passes was read at 0.27.0
