@@ -1860,6 +1860,12 @@ fixture, not part of the pipeline.
     Not in the sandbox: davinci's per-row files and bank sidecar, and the
     versions of sbi and zuko in `envs.train` (the README's line P2 prints
     them; the bound sbi passes was read at 0.27.0).
+    [2026-10-20 18:24, davinci `[CLUSTER, the user's pastes]`: P2 printed
+    `sbi 0.27.0 zuko 1.6.0 bound 5.0`, the sandbox's versions; P1 printed
+    `PERROW CHECK OK: 40 trial(s) read, 0 skipped, 35 without a per-row
+    file; 1 row set(s); T = 3.9821 nats/row` -- both runs on the same
+    29,639 report rows of 131 donors, 26.06% of them with an edge
+    coordinate; R from -3.7927 to -0.8911, below 0 in all 40 trials.]
   - Status: smoke-tested 2026-10-19 (`test_smoke_block7b.py` 6 pass, 1 skip,
     about 4 minutes -- `unreadable_units` and `unreadable_record` run in
     `test_edge_cases`; the mutation `unreadable` makes `unreadable_record`
