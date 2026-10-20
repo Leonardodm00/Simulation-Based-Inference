@@ -1777,6 +1777,89 @@ fixture, not part of the pipeline.
     trial): the report's rows and counts, its predictions, the pass line,
     and every file's bytes and mtime unchanged; mutation `classify` -> its
     check FAILS.
+  - `tools/perrow_check.py --config <file> [--campaign-dir <dir>]...
+    [--trial <id>]... [--bound <B>]` [added 2026-10-20, the user's "Write
+    it" after the comments on the tail NLLs] (read-only; numpy; writes
+    nothing): how much of each trial's report-split NLL is the flow's edge
+    term. Every trial's flow (`joint_model.build_joint_model`: `zuko_nsf`
+    behind sbi's `transform_to_unconstrained` for the unit box) models
+    u = logit(theta_k) with rational-quadratic splines on [-B, B] and the
+    identity outside, over a standard normal base (B = 5, zuko 1.6.0's
+    default; sbi 0.27.0 passes none). A coordinate with |u_ik| > B adds to
+    the row's -log q(theta_i | z_i), whatever the trial learned,
+        tau(theta) = u^2/2 + ln(2 pi)/2 + ln(theta (1 - theta)),
+        u = logit(theta) = ln(theta) - ln(1 - theta)
+    nats (checked by computation with sbi 0.27.0 and zuko 1.6.0: four flows
+    agree to 1e-6 nats at theta 1e-4 to 0.006 and 0.994 to 0.999; additive
+    over the coordinates of a row; no longer true just inside |u| = 5; the
+    flow's draws never fall past the bound, at most P(|z| > 5) = 5.7e-7 per
+    coordinate `[SANDBOX 2026-10-20, flow_box_check.py, not in the
+    repository]`). Over the n report rows i and the d coordinates k:
+        T_i = sum_k tau(theta_ik) 1{|u_ik| > B},   T = (1/n) sum_i T_i,
+        L = (1/n) sum_i l_i = T + R,   R = L - T,
+    with l_i = -log q(theta_i | z_i) the trial's per-row NLL (nats). T is
+    the same for every trial scored on the same rows -- the part of L no
+    flow of the family can lower; R is the part the trial controls, and
+    L_a - L_b = R_a - R_b for two trials on the same rows. tau is evaluated
+    in float64 at the stored float32 theta. Inputs: every
+    `<campaign>/runs/<id>/*_perrow.npz` (written by the runner: `nll` (n,)
+    float64 nats, `theta` (n, d) float32 in (0, 1), `group` (n,) the donor)
+    with the ledger record `<campaign>/trials/<id>.json` (`status`, `nll`);
+    the campaigns are the configuration's `<tune_root>/<campaign>` and every
+    `--campaign-dir` (a set-aside run, say); `--trial` keeps the ids that
+    start with one of the given prefixes. Optional: the bank's sidecar
+    `<banks_root>/<tag>_sim/shard_0000.json` (else the first `shard_*.json`)
+    for `param_names`, `bounds_theta` and `latent_spec.coord_physical` /
+    `units`, to name the coordinates and give the edge zone in physical
+    units (`ln` axes: exp(lo + s (hi - lo)); `linear`: lo + s (hi - lo);
+    s = sigmoid(-B) and sigmoid(B)). A row set is identified by a sha256 of
+    theta as stored and of the donors; trials on the same rows share it.
+    Output (stdout): the bound and the formula; per row set n, d, the
+    donors, the trials on it, T, the share of rows with an edge coordinate,
+    and per coordinate the share of rows with u < -B and u > B, its part of
+    T, its distinct values, min, max and the physical edge zone; per trial
+    (sorted by L) L, T, R, the median l_i, the share of rows with l_i < 0,
+    the mean l_i over the rows with no edge coordinate, and the ledger's
+    `nll` -- equal to L within 1e-6 nats (the runner writes
+    `L = float(mean(nll))` of the same array) or MISMATCH; R over the
+    trials (min, median, max, how many below 0); the pass line
+    `PERROW CHECK OK: <k> trial(s) read, <s> skipped, <m> without a
+    per-row file; <r> row set(s); T = <t> nats/row; nothing was written`
+    (several row sets: `T = <t1>, <t2>, ... nats/row (one per row set)`).
+    A per-row file that cannot be read, lacks a key, has inconsistent
+    shapes, non-finite values or theta outside the open box is SKIPPED with
+    its reason. Exit 0; 2 the configuration does not load; 3 no per-row
+    file read.
+  - Test oracles (`tests/test_smoke_perrow.py`, stdlib and numpy; runs on
+    davinci): tau's known answers (theta = 0.003: 11.962413 nats; the two
+    edges symmetric; 0 inside the bound) against a scalar `math`
+    transcription; a hand-made campaign folder (a copy of the Giulia
+    configuration under a temporary folder; 200 rows on 20 donors, d = 3,
+    edge coordinates planted at 0.003, 0.999, 1e-4 and 0.006, per-row nll
+    T_i + r_i with r_i known per trial): T, every trial's R and L, the edge
+    shares and the table, a ledger MISMATCH, a trial on other rows (a second
+    row set), a trial with no per-row file, a corrupt file SKIPPED, a
+    pickled donor array read, the pass line, the physical edge zone from a
+    hand-made sidecar; nothing written (every file's bytes and mtime
+    unchanged); `--trial`; exit 2 and 3; with torch, sbi and zuko
+    importable, the tool's T_i against the real flow's loss (both
+    coordinates past the bound; skipped otherwise); mutations `sign` (the
+    ln(theta (1 - theta)) term negated), `bound` (|u| >= 4) and `crosscheck`
+    (the ledger comparison always equal) must each make the known answer
+    FAIL.
+  - Status (perrow_check): smoke-tested 2026-10-20 (`test_smoke_perrow.py`
+    5 pass, 1 skip (convergence, not a discretisation) with torch, sbi
+    0.27.0 and zuko 1.6.0 importable; 4 pass, 2 skip without torch, the
+    davinci `sbi_export` case; the mutations `sign`, `bound` and
+    `crosscheck` each make `test_known_answer` FAIL). Rehearsed on a per-row
+    file written by the real runner (`run_joint_arms.py`, arm A1, the
+    blocks 4-6 fixture bank with edge coordinates planted, 31 report rows,
+    d = 23): the file's keys and dtypes as above (`group` int64 there), T
+    equal to the scalar transcription, the ledger's nll equal to L, the pass
+    line `[SANDBOX 2026-10-20, rehearse_perrow.py, not in the repository]`.
+    Not in the sandbox: davinci's per-row files and bank sidecar, and the
+    versions of sbi and zuko in `envs.train` (the README's line P2 prints
+    them; the bound sbi passes was read at 0.27.0).
   - Status: smoke-tested 2026-10-19 (`test_smoke_block7b.py` 6 pass, 1 skip,
     about 4 minutes -- `unreadable_units` and `unreadable_record` run in
     `test_edge_cases`; the mutation `unreadable` makes `unreadable_record`

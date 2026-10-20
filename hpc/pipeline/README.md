@@ -373,6 +373,32 @@ cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --retry
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --retry search --accept-config-change
 ```
 
+Reading the trials' NLL (2026-10-20): `tools/perrow_check.py --config <file>
+[--campaign-dir <dir>]... [--trial <id>]... [--bound 5.0]` reads (never
+writes) every trial's per-row file `runs/<id>/*_perrow.npz` and its ledger
+record and splits the report-split NLL as L = T + R. T is the flow's edge
+term: a coordinate with |logit theta| > 5 (theta within 0.0067 of an edge of
+the unit box, past the splines of zuko's NSF) adds
+tau = u^2/2 + ln(2 pi)/2 + ln(theta (1 - theta)) nats in every trial, so T
+is the same for every trial on the same rows; R = L - T is the part the
+trial controls. It prints, per row set, T and a table per coordinate (the
+shares past the bound, the part of T, the edge zone in physical units from
+the bank's sidecar); per trial L, T, R and whether the ledger's nll equals L;
+and the pass line `PERROW CHECK OK: ...; nothing was written`. The pull of
+step 1 changes no module the running sequencer or the trial jobs use. The
+lines, after step 1:
+
+```
+# P0. its test; pass line: -- 4 pass, 0 fail, 0 error, 2 skip (5 pass, 1 skip where torch, sbi and zuko import)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_perrow.py 2>&1 | tail -1
+
+# P1. read-only, both runs (the first one set aside); pass line: PERROW CHECK OK: <k> trial(s) read, <s> skipped, <m> without a per-row file; <r> row set(s); T = <t> nats/row; nothing was written
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/perrow_check.py --config hpc/pipeline/projects/giulia/giulia.json --campaign-dir /davinci-1/home/ldellamea/tune_joint_giulia/S-A1_set_aside_2026-10-19T161735Z 2>&1 | tee ~/perrow_check_giulia.txt
+
+# P2. the bound of the trials' flows (read-only); expected: sbi 0.27.0 zuko 1.6.0 bound 5.0 -- another bound: P1 with --bound <it>; another sbi: the bound sbi passes was read at 0.27.0
+~/.conda/envs/sbi_env/bin/python -c "import inspect, sbi, zuko; from zuko.transforms import MonotonicRQSTransform as M; print('sbi', sbi.__version__, 'zuko', zuko.__version__, 'bound', inspect.signature(M.__init__).parameters['bound'].default)"
+```
+
 A `STOP: stage search failed: budget gate: ...` line names the projected
 trial time and memory against `search.trial.walltime` and `mem`: raise them
 (or narrow the space) in `projects/giulia/giulia.json`, then submit again
@@ -395,6 +421,7 @@ python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, n
 python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults, checkpoints and unreadable records, block 1's stop and retry guard, about 9 min, the same
 python3 hpc/pipeline/tests/test_smoke_report.py        # tools/search_report.py, a few seconds, stdlib
 python3 hpc/pipeline/tests/test_smoke_reset.py         # tools/search_reset.py, about 20 s, stdlib and the fake PBS
+python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, a few seconds, numpy (with torch, sbi and zuko also the real-flow oracle)
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 ```
 
@@ -421,5 +448,5 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
 | 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |
 | 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch` | built 2026-10-15, smoke-tested |
-| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py` | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`) |
+| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py`; the read-only `tools/perrow_check.py` (the NLL split L = T + R) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`); 2026-10-20 (`test_smoke_perrow.py`) |
 | 8 | end to end on the stand-in (the real bank tools, tuner and runner; 11 jobs; the sequencer stopped and re-run); the davinci lines above | rehearsed 2026-10-16 |
