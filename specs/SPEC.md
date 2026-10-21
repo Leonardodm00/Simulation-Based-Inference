@@ -1909,6 +1909,16 @@ fixture, not part of the pipeline.
     three (epochs 5, 6 and 1 of 0-7: none the last), the record's history
     equal to the checkpoint's `[SANDBOX 2026-10-20, rehearse_curves.py,
     not in the repository]`. Not yet run on davinci's records.]
+    [2026-10-21 14:12, davinci `[CLUSTER, the user's paste]`, at
+    `164ef07`, both runs: `TRAINING CURVES: best epoch the last in 13 of
+    50 trial(s), in the last 5 in 39; median gain of the last 5 epochs
+    0.0992 nats/row (0 without a curve)`; `PERROW CHECK OK: 50 trial(s)
+    read, 0 skipped, 34 without a per-row file; 1 row set(s); T = 3.9821
+    nats/row`. Read from the paste `[computed]`: 36 of 50 best epochs in
+    18-20, 11 at 15 or earlier (2, 2 and 6 for the three worst by L);
+    after the best epoch the 37 others rose by a median 0.15 nats/row;
+    p_eff 2.52-3.07 in the 40 best by L. The label "plateaued or rising
+    after it" also covers best epochs 18 and 19 after a descent.]
   - Status: smoke-tested 2026-10-19 (`test_smoke_block7b.py` 6 pass, 1 skip,
     about 4 minutes -- `unreadable_units` and `unreadable_record` run in
     `test_edge_cases`; the mutation `unreadable` makes `unreadable_record`
