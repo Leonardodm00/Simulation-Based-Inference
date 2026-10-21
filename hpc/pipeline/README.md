@@ -243,6 +243,30 @@ D-089) and writes `<paths.runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`.
 The pipeline's own JSON files and the tuner's ledger records are fsynced
 before their rename (2026-10-19).
 
+**The avoid list (D-102, 2026-10-21).** A node that keeps killing jobs is
+avoided by the pipeline itself: a host with 3 node faults in the search's
+run (or in the best fit's) is appended to `<paths.work_root>/avoid_nodes.txt`
+-- `search: host <node> has 3 node fault(s) in this run: added to the avoid
+list ... (D-102)` -- one host per line, as `hostname` prints it, with a
+comment above each. A trial or member job that starts on a listed host runs
+nothing: its log says `RUN_ARGV AVOID: host <node> is on the avoid list ...;
+holding this slot for 600 s, then exiting 94`, it holds the slot 10 minutes
+(so the scheduler does not put the next queued job on the same node at
+once) and exits 94, and the sequencer submits the trial again at once --
+`search: trial <id> landed on <node>, which is on the avoid list (D-102):
+its job <id> held the slot and exited; submitted again at once (not a
+resubmission)` -- without counting a resubmission (`max_resubmits`
+untouched). The file is yours to read (`cat`) and to clear: delete a host's
+line, or the file, and the pipeline logs `host <node> is no longer on the
+avoid list ... (cleared by hand); its node faults are counted again from
+now` and lists it again only after 3 more faults; it never removes a host
+by itself. The threshold and the hold are constants
+(`PIPELINE_AVOID_NODE_FAULTS`, `PIPELINE_AVOID_HOLD_S` in the sequencer's
+environment), not configuration keys, so a running chain picks the rule up
+at its next hand-over after the pull with no `--accept-config-change`.
+Not covered: the gate's probes, the bank's verification job, S1, S2 and the
+bank tasks (short jobs; the bank quarantines bad shards, D-095).
+
 `tools/search_report.py --config <file> [--qstat] [--trial <id>]` reads
 (never writes) the state, the ledger, the pending specs, the run folders and
 the job logs and prints, per trial, what the stage's next poll does with it
@@ -433,7 +457,7 @@ python3 hpc/pipeline/tests/test_smoke_block1c.py       # block 1's core cap (D-0
 python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 2 min, needs the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 7 s, the same
 python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
-python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults, checkpoints and unreadable records, block 1's stop and retry guard, about 9 min, the same
+python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults, checkpoints, unreadable records and the avoid list, block 1's stop and retry guard, about 10 min, the same
 python3 hpc/pipeline/tests/test_smoke_report.py        # tools/search_report.py, a few seconds, stdlib
 python3 hpc/pipeline/tests/test_smoke_reset.py         # tools/search_reset.py, about 20 s, stdlib and the fake PBS
 python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, a few seconds, numpy (with torch, sbi and zuko also the real-flow oracle)
@@ -463,5 +487,5 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
 | 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |
 | 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch` | built 2026-10-15, smoke-tested |
-| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py`; the read-only `tools/perrow_check.py` (the NLL split L = T + R) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`); 2026-10-20 (`test_smoke_perrow.py`) |
+| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py`; the read-only `tools/perrow_check.py` (the NLL split L = T + R); the bad-node avoid list (D-102) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`); 2026-10-20 (`test_smoke_perrow.py`); 2026-10-21 (the avoid list: `test_smoke_block7b.py` `avoid_units`, `avoid_list`) |
 | 8 | end to end on the stand-in (the real bank tools, tuner and runner; 11 jobs; the sequencer stopped and re-run); the davinci lines above | rehearsed 2026-10-16 |

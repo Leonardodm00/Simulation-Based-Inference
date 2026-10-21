@@ -42,6 +42,12 @@ While the file FAKE_PBS_QSTAT_FAIL_FILE names exists, every qstat prints
 compute node of 2026-10-21, whose qstat answered that for every id (block
 1, amended 2026-10-21 (f)).
 
+FAKE_PBS_HOSTS=<h1>,<h2>,... gives every job a node name: the k-th job
+submitted (by job number) runs with a `hostname` that prints h_k, the last
+entry for every later job -- a stub `hostname` first on the job's PATH, so
+`$(hostname)` in a job script and the pipeline's `RUN_ARGV: host` line see
+it (block 7's avoid list, D-102).
+
 With FAKE_PBS_ENFORCE_WALLTIME=1 a non-array job whose `-l walltime=` has
 elapsed is killed (its process group, SIGKILL) and finishes with
 Exit_status 271, as PBS Pro reports a job killed at its walltime (block 7's
@@ -68,6 +74,7 @@ FAIL_ONCE = set(x.strip() for x in os.environ.get("FAKE_PBS_FAIL_ONCE", "").spli
                 if x.strip())
 SERVER = "fake"
 QSTAT_FAIL_FILE = os.environ.get("FAKE_PBS_QSTAT_FAIL_FILE", "")
+HOSTS = [h.strip() for h in os.environ.get("FAKE_PBS_HOSTS", "").split(",") if h.strip()]
 QSELECT_SUFFIX = os.environ.get("FAKE_PBS_QSELECT_SUFFIX", "")
 QSELECT_HISTORY = os.environ.get("FAKE_PBS_QSELECT_HISTORY", "0") == "1"
 
@@ -230,11 +237,30 @@ def _wait_dependency(dep, kind="afterok", self_num=None):
         time.sleep(0.1)
 
 
+def _host_stub(num):
+    """A directory holding a `hostname` that prints the job's node name
+    (FAKE_PBS_HOSTS), or None."""
+    if not HOSTS:
+        return None
+    host = HOSTS[min(num, len(HOSTS)) - 1]
+    d = os.path.join(_spool(), "hostbin_%d" % num)
+    if not os.path.isdir(d):
+        os.makedirs(d)
+    p = os.path.join(d, "hostname")
+    with open(p, "w") as fh:
+        fh.write("#!/bin/sh\necho '%s'\n" % host)
+    os.chmod(p, 0o755)
+    return d
+
+
 def _run_one(rec, index):
     env = dict(os.environ)
     env.update(rec["vars"])
     env["PBS_JOBID"] = rec["id"] if index is None else "%d[%d].%s" % (rec["num"], index, SERVER)
     env["PBS_O_WORKDIR"] = rec["cwd"]
+    stub = _host_stub(rec["num"])
+    if stub:
+        env["PATH"] = stub + os.pathsep + env.get("PATH", "")
     if index is not None:
         env["PBS_ARRAY_INDEX"] = str(index)
     out = rec["out"] or os.path.join(_spool(), "%d.o" % rec["num"])

@@ -315,6 +315,9 @@ def next_action(cfg, f):
             return "final failure (search.resubmit_node_faults false)"
         nll = rec.get("nll")
         return "marked %s%s" % (rs, (" nll %.6f" % float(nll)) if nll is not None else "")
+    if at_job_end and CM.held_off_node({"exit_status": f.get("job_exit")}):
+        return ("held off an avoided node (exit %d): submitted again at once, not a resubmission"
+                % CM.AVOID_EXIT)
     if at_job_end:
         return "ended without a record: " + _after_no_record(cfg, f, True)
     return ("no ledger record any more: %s" % ("queued again" if f["pending"]

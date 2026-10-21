@@ -19,7 +19,11 @@ NLL (block 7; D-089; specs/SPEC.md sec. 2.3).
               exists but cannot be read is read again for RECORD_GRACE_S
               (at the stage's start: at once), then set aside as
               `<name>.unreadable<k>` and taken as no record (amended
-              2026-10-19)
+              2026-10-19); a host with AVOID_FAULTS node faults in this run
+              is written to the work root's avoid list, a member job that
+              lands there holds its slot and exits AVOID_EXIT, and the
+              member is submitted again at once, not counted as a
+              resubmission (D-102, amended 2026-10-21)
     ensemble  `tools/ensemble_nll.py` over the members' per-row files:
               L_bar = -(1/n) sum_i [logsumexp_m(-l_{m,i}) - log M]
     artefact  `<runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`
@@ -140,7 +144,7 @@ class BestFitStage(Stage):
         log_path = os.path.join(dirs["jobs"], "member_seed%d.%d.log" % (int(seed), n))
         line = CM.qsub_line(cfg, "bf_%s_s%d" % (cfg.data["dataset"][:6], int(seed)), b["queue"],
                             b["ncpus"], b["mem"], b["walltime"], log_path, argv_file,
-                            CM.paths_of(cfg)["stage4"])
+                            CM.paths_of(cfg)["stage4"], avoid_file=CM.avoid_file(cfg))
         job_id = pbs.submit(line, role="member seed %d%s" % (int(seed), " resume" if resume else ""),
                             log_path=log_path)
         m["jobs"].append(job_id)
@@ -173,6 +177,29 @@ class BestFitStage(Stage):
             # amended 2026-10-19: read again for RECORD_GRACE_S, then set aside
             if self._member_unreadable(cfg, st, seed, rec, problem, log, job=job):
                 return
+        if CM.held_off_node(job):
+            # D-102: the job started on a listed host, held its slot and exited:
+            # submitted again at once, not a resubmission; --resume as the held job had it
+            text = CM.read_log_tail(job.get("log"))
+            host = CM.host_of_log(text) or "?"
+            held_resume = False
+            try:
+                held_resume = "--resume" in CM.read_argv_file(m.get("argv_file") or "")
+            except OSError:
+                pass
+            m.setdefault("avoid_holds", []).append({"host": host, "job": job["id"],
+                                                    "utc": CM.utc_now()})
+            if pbs.fits(int(b["ncpus"])):
+                self._submit_member(cfg, st, pbs, seed, resume=held_resume)
+                how = "submitted again at once (not a resubmission)"
+            else:
+                m["status"] = "waiting"
+                if held_resume:
+                    m["resume_next"] = True
+                how = "queued again (not a resubmission): it starts when the cores allow (D-099)"
+            log("best_fit: member seed %d landed on %s, which is on the avoid list (D-102): its job "
+                "%s held the slot and exited; %s" % (int(seed), host, job["id"], how))
+            return
         if b["resubmit_node_faults"]:
             # D-096 applied to the members: a node fault is not a refusal
             text = CM.read_log_tail(job.get("log"))
@@ -181,6 +208,7 @@ class BestFitStage(Stage):
                 host = CM.host_of_log(text) or "?"
                 m.setdefault("node_faults", []).append({"host": host, "why": why, "job": job["id"],
                                                         "utc": CM.utc_now()})
+                CM.note_node_fault(st["sub"], host, why, "best_fit", log, CM.avoid_file(cfg))
                 if m["resubmits"] < int(b["max_resubmits"]):
                     m["resubmits"] += 1
                     self._resubmit_member(cfg, st, pbs, seed)
@@ -352,6 +380,8 @@ class BestFitStage(Stage):
                 job = by_id.get(m["jobs"][-1])
                 if job is not None and job.get("finished"):
                     self._finish_member_job(cfg, st, pbs, seed, job, log)
+            # D-102: a host cleared from the avoid list by hand is counted again from now
+            CM.sync_avoid_list(sub, CM.avoid_file(cfg), log, "best_fit")
             self._submit_waiting(cfg, st, pbs)
             statuses = [sub["members"][str(s)]["status"] for s in b["member_seeds"]]
             if any(s_ in ("running", "waiting") for s_ in statuses):
@@ -389,7 +419,8 @@ class BestFitStage(Stage):
         sim, real = CM.shard_globs(cfg)
         q = CM.qsub_line(cfg, "bf_<tag>_s<k>", b["queue"], b["ncpus"], b["mem"], b["walltime"],
                          os.path.join(dirs["jobs"], "member_seed<k>.<n>.log"),
-                         os.path.join(dirs["jobs"], "member_seed<k>.<n>.argv"), p["stage4"])
+                         os.path.join(dirs["jobs"], "member_seed<k>.<n>.argv"), p["stage4"],
+                         avoid_file=CM.avoid_file(cfg))
         q[2] = "bf_%s_s<k>" % d["dataset"][:6]
         return ["cores (D-099): at most %s member(s) at once -- the cap leaves room for %s of %d "
                 "cores each" % (CM.cap_room(cfg, b["ncpus"], len(b["member_seeds"])),
@@ -414,6 +445,10 @@ class BestFitStage(Stage):
                 % ("a member failed of SIGBUS or a file-system error is resubmitted with --resume "
                    "(within max_resubmits)" if b["resubmit_node_faults"]
                    else "off (best_fit.resubmit_node_faults false): such a member fails the stage"),
+                "avoid list (D-102): %s; a host with >= %d node faults in this run is added; a "
+                "member that lands there holds its slot %d s and is submitted again at once (not a "
+                "resubmission); delete its line to lift the ban"
+                % (CM.avoid_file(cfg), CM.AVOID_FAULTS, CM.AVOID_HOLD_S),
                 "ensemble: %s --members <M per-row files> -> %s (L_bar, D-089)"
                 % (p["ensemble_tool"], dirs["ensemble"]),
                 "artefact: %s" % dirs["complete"]]

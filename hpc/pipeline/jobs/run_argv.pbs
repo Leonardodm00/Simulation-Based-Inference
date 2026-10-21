@@ -14,13 +14,22 @@
 #               envs.train for the trials and the members)
 #   WORKDIR     the directory to run in
 #   SKIP_CONDA  1 = run under the shell's own python (the tests)
+#   AVOID_FILE  the pipeline's avoid list (D-102; the trials and the
+#               members): one host per line, as `hostname` prints it; blank
+#               lines and `#` comments ignored. On a listed host the job
+#               prints `RUN_ARGV AVOID: ...`, holds its slot AVOID_HOLD_S
+#               seconds (so the scheduler does not refill the node at once)
+#               and exits 94 without running the command; the sequencer
+#               submits it again, not counted as a resubmission.
+#   AVOID_HOLD_S  the seconds of that hold (600 from the sequencer)
 #
 # The conda activation is the proven block of the Stage 1/3 job scripts:
 # `set -u` off across the hook AND the activate (third-party deactivate.d
 # scripts are not -u clean on davinci), on again after. Exit 97 = the hook
 # failed, 98 = the activation failed, 90 = WORKDIR unreachable, 91 = no
-# ARGV_FILE; the command's own exit status otherwise, echoed as the last
-# line `RUN_ARGV EXIT: <n>` (the pass line of a job is its command's).
+# ARGV_FILE, 94 = held off a listed host; the command's own exit status
+# otherwise, echoed as the last line `RUN_ARGV EXIT: <n>` (the pass line of
+# a job is its command's).
 #
 # Pure ASCII, LF only.
 
@@ -30,11 +39,24 @@ set -u
 : "${WORKDIR:=${PBS_O_WORKDIR:-$PWD}}"
 : "${ENV_NAME:=}"
 : "${SKIP_CONDA:=0}"
+: "${AVOID_FILE:=}"
+: "${AVOID_HOLD_S:=600}"
 
 cd "$WORKDIR" || exit 90
 if [ ! -f "$ARGV_FILE" ]; then
     echo "RUN_ARGV: no argv file at $ARGV_FILE" >&2
     exit 91
+fi
+
+# D-102: a listed host is not computed on; the slot is held, then freed
+if [ -n "$AVOID_FILE" ] && [ -f "$AVOID_FILE" ]; then
+    host=$(hostname)
+    if grep -v '^[[:space:]]*#' "$AVOID_FILE" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -qxF -- "$host"; then
+        echo "RUN_ARGV AVOID: host $host is on the avoid list $AVOID_FILE (D-102); holding this slot for ${AVOID_HOLD_S} s, then exiting 94"
+        sleep "$AVOID_HOLD_S"
+        echo "RUN_ARGV EXIT: 94"
+        exit 94
+    fi
 fi
 
 if [ "$SKIP_CONDA" != "1" ]; then

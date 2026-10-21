@@ -6,7 +6,11 @@ fail are moved aside; a running sequencer stops on request; --retry is
 refused while the stage's jobs run; and block 7's amendment of 2026-10-19
 (an unreadable record, davinci's driver 1852795): a ledger or member record
 left empty or as zeros by a node that went down is read again, set aside
-and taken as no record, never a crash of the sequencer.
+and taken as no record, never a crash of the sequencer; and block 7's
+amendment of 2026-10-21 (D-102, the bad-node avoid list): a host with
+AVOID_FAULTS node faults is listed, a trial or member job that lands there
+holds its slot and exits 94, and the stage submits it again at once without
+counting a resubmission.
 
 The trial jobs run the real tuner and, behind `fault_runner.py`, the real
 runner, in a copy of hpc/ (the copy's `stage3/run_joint_arms.py` is the
@@ -17,7 +21,10 @@ Checks (SPEC block 7, "Node faults and corrupt checkpoints", Test oracles)
                         lines that are not node faults; checkpoint_problem on
                         a good, a flipped, a truncated and an unreadable file;
                         try_read_json on an object, an empty file, NUL bytes,
-                        a list, a missing file
+                        a list, a missing file; avoid_units: the avoid list's
+                        read, append, the listing at the third fault, a host
+                        cleared by hand counted again, the report's reading
+                        of a held job
     test_reference      the committed Giulia configuration (v7) has both
                         keys on, and its dry run names the rule
     test_convergence    not a discretisation: skipped
@@ -34,11 +41,19 @@ Checks (SPEC block 7, "Node faults and corrupt checkpoints", Test oracles)
                         records: unreadable_units (the stage's methods on a
                         hand-made folder, no scheduler) and unreadable_record
                         (end to end: trials `empty_record` and `nul_record`,
-                        member seed 1 `empty_record`, each then ok)
+                        member seed 1 `empty_record`, each then ok), and the
+                        avoid list avoid_list (end to end, FAKE_PBS_HOSTS:
+                        trial 1 SIGBUS three times on nodeX lists it; trial
+                        2's and member seed 1's first jobs land there, hold
+                        2 s, exit 94 and are submitted again at once, not
+                        counted)
     MUTATION=<name>     (environment) re-runs one check against a disabled
                         piece of the code, which must then FAIL: signature,
                         sweep, guard, retry_guard, unreadable (the read that
-                        raises restored: unreadable_record)
+                        raises restored: unreadable_record), avoid_add (no
+                        host ever listed: avoid_list), avoid_hold (a held job
+                        taken as a kill: avoid_list), avoid_sync (a clear by
+                        hand never seen: avoid_units, patched in process)
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block7b.py
@@ -47,7 +62,8 @@ Run
     python3 hpc/pipeline/tests/test_smoke_block7b.py test_contract
         One check (any check names on the line; the parts of
         test_edge_cases by their own names: checkpoint_guard,
-        stop_and_retry, unreadable_units, unreadable_record).
+        stop_and_retry, unreadable_units, unreadable_record, avoid_list;
+        of test_known_answer: avoid_units).
 
 Pure ASCII, LF only.
 """
@@ -170,6 +186,10 @@ _PATCHES = {
     "retry_guard": "P._unfinished_jobs = lambda st, pbs_module: []",
     # unreadable_record: the read of 2026-10-19 morning, which raised on an empty record
     "unreadable": "CM.try_read_json = lambda p: (CM.read_json(p), None)",
+    # the avoid list (D-102): no host ever listed; a held job taken as a kill; a clear never seen
+    "avoid_add": "CM.add_to_avoid_list = lambda *a, **k: False",
+    "avoid_hold": "CM.held_off_node = lambda job: False",
+    "avoid_sync": "CM.sync_avoid_list = lambda *a, **k: []",
 }
 
 
@@ -192,7 +212,12 @@ _MUT_DIR, _MUT_BOOT = _mutation_boot()
 
 
 def _env(spool, **kw):
-    return B7._env(spool, **kw)
+    env = B7._env(spool, **kw)
+    # the fake PBS runs every job on this machine: a node name per job, so no
+    # host reaches AVOID_FAULTS in a test that does not plan it (D-102)
+    env.setdefault("FAKE_PBS_HOSTS", ",".join("node%02d" % k for k in range(1, 61)))
+    env.setdefault("PIPELINE_AVOID_HOLD_S", "2")
+    return env
 
 
 # ---------------------------------------------------------------- checks ---
@@ -232,9 +257,113 @@ def _known_answer_records():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _avoid_units():
+    """The avoid list's functions on a scratch folder (D-102): read, append,
+    the listing at the third fault, `?` never listed, a host listed by hand
+    noted, a clear by hand seen and counted again from its base; the
+    report's reading of a job that exited 94."""
+    import stages.common as CM
+    sys.path.insert(0, os.path.join(_PIPE, "tools"))
+    import search_report as SR
+    if MUTATION == "avoid_sync":
+        CM.sync_avoid_list = lambda *a, **k: []      # the mutation, in this process
+    root = tempfile.mkdtemp(prefix="b7b_avoid_")
+    try:
+        path = os.path.join(root, "work", CM.AVOID_FILE_NAME)
+        assert CM.read_avoid_list(path) == []
+        with open(os.path.join(root, "hand.txt"), "w") as fh:
+            fh.write("# header\n\n# note\nnodeX  \n  nodeZ\n")
+        assert CM.read_avoid_list(os.path.join(root, "hand.txt")) == ["nodeX", "nodeZ"]
+        # append: the header once, a host once, nothing rewritten, `?` never
+        assert CM.add_to_avoid_list(path, "nodeA", "first") is True
+        first = open(path, "rb").read()
+        assert first.startswith(b"# avoid list of the pipeline (D-102)") and \
+            first.endswith(b"# first\nnodeA\n"), first
+        assert CM.add_to_avoid_list(path, "nodeA", "again") is False
+        assert CM.add_to_avoid_list(path, "?", "x") is False and \
+            CM.add_to_avoid_list(path, " ", "x") is False
+        assert open(path, "rb").read() == first
+        assert CM.add_to_avoid_list(path, "nodeB", "second") is True
+        assert open(path, "rb").read().startswith(first) and CM.read_avoid_list(path) == \
+            ["nodeA", "nodeB"]
+        # the count per host, the listing at AVOID_FAULTS (3), `?` counted and never listed
+        lines = []
+        sub = {}
+        for k in (1, 2):
+            n, listed = CM.note_node_fault(sub, "nodeC", "SIGBUS", "search", lines.append, path)
+            assert (n, listed) == (k, False) and CM.read_avoid_list(path) == ["nodeA", "nodeB"]
+        n, listed = CM.note_node_fault(sub, "nodeC", "SIGBUS: runner exited -7", "search",
+                                       lines.append, path)
+        assert (n, listed) == (3, True) and CM.read_avoid_list(path) == ["nodeA", "nodeB", "nodeC"]
+        assert sub["node_fault_hosts"] == {"nodeC": 3} and sub["avoided"]["nodeC"]["written"] and \
+            sub["avoided"]["nodeC"]["faults"] == 3, sub
+        assert lines == ["search: host nodeC has 3 node fault(s) in this run: added to the avoid "
+                         "list %s (D-102); a job that lands there holds its slot %d s and is "
+                         "submitted again; delete its line from that file to lift the ban"
+                         % (path, CM.AVOID_HOLD_S)], lines
+        text = open(path).read()
+        assert "search: 3 node fault(s) in this run, the last: SIGBUS: runner exited -7\nnodeC\n" \
+            in text, text
+        n, listed = CM.note_node_fault(sub, "nodeC", "EIO", "search", lines.append, path)
+        assert (n, listed) == (4, False) and len(lines) == 1, "listed once"
+        for k in range(1, 6):
+            n, listed = CM.note_node_fault(sub, "?", "x", "search", lines.append, path)
+            assert (n, listed) == (k, False)
+        assert "?" not in CM.read_avoid_list(path) and len(lines) == 1
+        # a host listed by hand (or by the other stage): noted, not written twice
+        n, listed = CM.note_node_fault({"node_fault_hosts": {"nodeA": 2}}, "nodeA", "x", "best_fit",
+                                       lines.append, path)
+        assert (n, listed) == (3, True) and CM.read_avoid_list(path) == ["nodeA", "nodeB", "nodeC"]
+        assert lines[-1] == "best_fit: host nodeA has 3 node fault(s) in this run; it is on the " \
+                            "avoid list %s already" % path, lines
+        # nothing to sync while every listed host is in the file
+        assert CM.sync_avoid_list(sub, path, lines.append, "search") == []
+        # the user deletes nodeC's line: seen at the next sync, counted again from the base (4)
+        with open(path, "w") as fh:
+            fh.write(text.replace("nodeC\n", ""))
+        assert CM.read_avoid_list(path) == ["nodeA", "nodeB"]
+        cleared = CM.sync_avoid_list(sub, path, lines.append, "search")
+        assert cleared == ["nodeC"], (cleared, "mutation avoid_sync: the clear is never seen")
+        assert sub["avoid_base"] == {"nodeC": 4} and "nodeC" not in sub["avoided"], sub
+        assert lines[-1] == ("search: host nodeC is no longer on the avoid list %s (cleared by "
+                             "hand); its node faults are counted again from now" % path), lines
+        for k in (5, 6):
+            n, listed = CM.note_node_fault(sub, "nodeC", "x", "search", lines.append, path)
+            assert (n, listed) == (k, False) and CM.read_avoid_list(path) == ["nodeA", "nodeB"], \
+                (k, CM.read_avoid_list(path))
+        n, listed = CM.note_node_fault(sub, "nodeC", "x", "search", lines.append, path)
+        assert (n, listed) == (7, True) and CM.read_avoid_list(path) == ["nodeA", "nodeB", "nodeC"]
+        assert sub["avoided"]["nodeC"]["faults"] == 7, sub
+        # held_off_node: the exit status alone, 94 and nothing else
+        assert CM.held_off_node({"exit_status": 94}) and CM.held_off_node({"exit_status": "94"})
+        for e in (0, 1, 93, 135, 271, None, "x"):
+            assert not CM.held_off_node({"exit_status": e}), e
+        # the report's reading of a trial whose last job exited 94 without a record
+        cfg = _Cfg(root)
+        f = {"status": "running", "fault_checked": False, "resume_next": False, "qstat": None,
+             "job_finished": True, "log_exit": 94, "job_exit": 94, "record_exists": False,
+             "record": None, "last_job": "4.fake", "pending": True, "resubmits": 0,
+             "node_fault": None, "unreadable_before": 0}
+        assert SR.next_action(cfg, f) == ("held off an avoided node (exit 94): submitted again at "
+                                          "once, not a resubmission"), SR.next_action(cfg, f)
+        f["job_exit"] = f["log_exit"] = 137
+        assert SR.next_action(cfg, f).startswith("ended without a record: "), SR.next_action(cfg, f)
+        # the qsub line carries the file and the hold for the trials and the members only
+        cfg.data["paths"].update({"sbi_dir": root, "work_root": os.path.join(root, "work")})
+        cfg.data["envs"] = {"train": "t"}
+        line = CM.qsub_line(cfg, "t_x", "q", 1, "1gb", "00:01:00", "/l", "/a", "/w",
+                            avoid_file=CM.avoid_file(cfg))
+        assert ("AVOID_FILE=%s,AVOID_HOLD_S=%d" % (path, CM.AVOID_HOLD_S)) in line[line.index("-v") + 1]
+        line = CM.qsub_line(cfg, "t_x", "q", 1, "1gb", "00:01:00", "/l", "/a", "/w")
+        assert "AVOID" not in line[line.index("-v") + 1]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_known_answer():
     import stages.common as CM
     _known_answer_records()
+    _avoid_units()
     # the davinci lines of 2026-10-18 (trial logs 16641a4d79ce, 4006d8ff495f), verbatim
     fault_lines = [
         "BrokenPipeError: [Errno 108] Cannot send after transport endpoint shutdown: "
@@ -757,11 +886,88 @@ def _test_unreadable_record():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _test_avoid_list():
+    """D-102 end to end: nodeX kills trial 1 three times and is listed; trial
+    2's first job and member seed 1's first job land there, hold their slot
+    2 s, exit 94 and are submitted again at once, not counted; the rest runs
+    on nodeY."""
+    root = B7._tmp()
+    try:
+        plan = {"trials": [["sigbus", "sigbus", "sigbus"], ["ok"], ["ok"], ["ok"]],
+                "members": {"member_seed1": ["ok"], "member_seed2": ["ok"]}}
+        path, c = _fault_project(root, plan, search={"max_concurrent_trials": 1})
+        camp = _seed_probes(c)
+        spool = os.path.join(root, "spool")
+        env = _env(spool)
+        # jobs 1-3 trial 1 (nodeX), 4 trial 2 held on nodeX, 5 trial 2 on nodeY, 6-7 the GP
+        # round's trials, 8 member seed 1 held on nodeX, 9 member seed 2, 10 member seed 1 again
+        env["FAKE_PBS_HOSTS"] = "nodeX,nodeX,nodeX,nodeX,nodeY,nodeY,nodeY,nodeX,nodeY"
+        env["PIPELINE_AVOID_HOLD_S"] = "2"
+        avoid = os.path.join(c["paths"]["work_root"], "avoid_nodes.txt")
+        rc, out = _run(root, path, [], env, timeout=1500)
+        assert rc == 0 and "PIPELINE DONE" in out and "Traceback" not in out, out[-6000:]
+        import stages.common as CM
+        assert CM.read_avoid_list(avoid) == ["nodeX"], \
+            (CM.read_avoid_list(avoid), os.path.isfile(avoid), "mutation avoid_add: nothing listed")
+        text = open(avoid).read()
+        assert text.startswith("# avoid list of the pipeline (D-102)") and \
+            "search: 3 node fault(s) in this run, the last: SIGBUS: runner exited -7\nnodeX\n" in text
+        assert ("search: host nodeX has 3 node fault(s) in this run: added to the avoid list %s "
+                "(D-102); a job that lands there holds its slot 2 s and is submitted again; delete "
+                "its line from that file to lift the ban" % avoid) in out, out[-6000:]
+        order = _order(c)
+        assert len(order) == 4, order
+        t0, t1 = order[:2]
+        st = json.load(open(os.path.join(c["paths"]["work_root"], "state.json")))
+        trials = st["stages"]["search"]["sub"]["trials"]
+        assert trials[t0]["status"] == "killed" and trials[t0]["resubmits"] == 2 and \
+            trials[t0]["jobs"] == ["1.fake", "2.fake", "3.fake"], trials[t0]
+        tr1 = trials[t1]
+        assert tr1["status"] == "ok" and tr1["resubmits"] == 0 and \
+            tr1["jobs"] == ["4.fake", "5.fake"], (tr1, "mutation avoid_hold: the hold counted")
+        assert tr1["avoid_holds"] == [{"host": "nodeX", "job": "4.fake",
+                                        "utc": tr1["avoid_holds"][0]["utc"]}], tr1
+        assert "search: trial %s landed on nodeX, which is on the avoid list (D-102): its job 4.fake " \
+               "held the slot and exited; submitted again at once (not a resubmission)" % t1[:12] in out
+        jl = open(os.path.join(camp, "jobs", t1 + ".0.log")).read()
+        assert ("RUN_ARGV AVOID: host nodeX is on the avoid list %s (D-102); holding this slot for "
+                "2 s, then exiting 94\nRUN_ARGV EXIT: 94\n" % avoid) in jl and \
+            "RUN_ARGV: host" not in jl and "evaluate" not in jl, jl
+        assert "RUN_ARGV: host nodeY" in open(os.path.join(camp, "jobs", t1 + ".1.log")).read()
+        for n in (0, 1):
+            assert "--resume" not in open(os.path.join(camp, "jobs", "%s.%d.argv" % (t1, n))).read()
+        assert st["stages"]["search"]["sub"]["node_fault_hosts"] == {"nodeX": 3}
+        assert st["stages"]["search"]["sub"]["avoided"]["nodeX"]["faults"] == 3
+        recs = _records(camp)
+        assert recs[t0]["status"] == "killed" and "after 2 resubmission(s)" in recs[t0]["error"]
+        assert all(recs[t]["status"] == "ok" for t in order[1:]), recs
+        sc = json.load(open(os.path.join(camp, "SEARCH_COMPLETE.json")))
+        assert sc["n_trials"] == {"ok": 3, "failed": 0, "killed": 1, "running": 0, "waiting": 0}, sc
+        # the member held on nodeX, then ok on nodeY; seed 2 straight through
+        m1 = st["stages"]["best_fit"]["sub"]["members"]["1"]
+        assert m1["status"] == "ok" and m1["resubmits"] == 0 and m1["jobs"] == ["8.fake", "10.fake"] \
+            and m1["avoid_holds"][0]["host"] == "nodeX" and m1["avoid_holds"][0]["job"] == "8.fake", m1
+        assert st["stages"]["best_fit"]["sub"]["members"]["2"]["jobs"] == ["9.fake"]
+        assert "best_fit: member seed 1 landed on nodeX, which is on the avoid list (D-102): its job " \
+               "8.fake held the slot and exited; submitted again at once (not a resubmission)" in out
+        best = os.path.join(c["paths"]["runs_root"], "synth_best")
+        ml = open(os.path.join(best, "jobs", "member_seed1.0.log")).read()
+        assert "RUN_ARGV AVOID: host nodeX" in ml and "RUN_ARGV EXIT: 94" in ml, ml
+        bf = json.load(open(os.path.join(best, "BEST_FIT_COMPLETE.json")))
+        assert sorted(m["seed"] for m in bf["members"]) == [1, 2]
+        # submissions: trials 3 + 2 + 1 + 1, members 2 + 1; the hold is no node fault
+        assert B7._n_submitted(spool) == 10, B7._n_submitted(spool)
+        assert "NODE FAULT" not in out[out.index("landed on nodeX"):], "a hold counted as a fault"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_edge_cases():
     _test_checkpoint_guard()
     _test_stop_and_retry()
     _test_unreadable_units()
     _test_unreadable_record()
+    _test_avoid_list()
 
 
 # ------------------------------------------------------------------ main ---
@@ -772,7 +978,8 @@ CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_refe
           ("test_edge_cases", test_edge_cases),
           ("checkpoint_guard", _test_checkpoint_guard), ("stop_and_retry", _test_stop_and_retry),
           ("unreadable_units", _test_unreadable_units),
-          ("unreadable_record", _test_unreadable_record)]
+          ("unreadable_record", _test_unreadable_record),
+          ("avoid_units", _avoid_units), ("avoid_list", _test_avoid_list)]
 
 
 def main():
@@ -785,7 +992,7 @@ def main():
         return 0
     wanted = [a for a in sys.argv[1:] if not a.startswith("-")]
     checks = [(n, f) for n, f in CHECKS if (n in wanted if wanted else not n.startswith(
-        ("checkpoint", "stop_", "unreadable")))]
+        ("checkpoint", "stop_", "unreadable", "avoid_")))]
     if MUTATION:
         print("MUTATION=%s: the named piece is disabled; the checks run must FAIL" % MUTATION)
     rows, bad = [], 0

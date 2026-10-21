@@ -38,7 +38,11 @@ another search refused:
                again for `RECORD_GRACE_S`, then set aside
                (`<id>.json.unreadable<k>`) and taken as no record; a trial
                with no pending spec left is recorded `killed` (amended
-               2026-10-19);
+               2026-10-19); a host with AVOID_FAULTS node faults in this
+               run is written to the work root's avoid list, a trial job
+               that lands there holds its slot and exits AVOID_EXIT, and the
+               trial is submitted again at once, not counted as a
+               resubmission (D-102, amended 2026-10-21);
                before any submission a checkpoint whose zip CRCs fail is
                moved aside (`.corrupt<k>`, D-097); a round is complete when
                every trial of it is ok, failed or killed; the clock (D-090, elapsed) starts
@@ -375,7 +379,7 @@ class SearchStage(Stage):
         log_path = os.path.join(dirs["jobs"], "%s.%d.log" % (tid, n))
         line = CM.qsub_line(cfg, "t_" + tid[:12], s["trial"]["queue"], s["trial"]["ncpus"],
                             s["trial"]["mem"], s["trial"]["walltime"], log_path, argv_file,
-                            CM.paths_of(cfg)["stage4"])
+                            CM.paths_of(cfg)["stage4"], avoid_file=CM.avoid_file(cfg))
         job_id = pbs.submit(line, role="trial %s%s" % (tid[:12], " resume" if resume else ""),
                             log_path=log_path)
         tr["jobs"].append(job_id)
@@ -510,6 +514,11 @@ class SearchStage(Stage):
                                            (" nll %.6f" % tr["nll"]) if tr.get("nll") is not None
                                            else ""))
             return
+        if CM.held_off_node(job):
+            # D-102: the job started on a listed host, held its slot and exited:
+            # submitted again at once, not a resubmission; --resume as the held job had it
+            self._after_hold(cfg, st, pbs, tid, job, log)
+            return
         if not os.path.isfile(os.path.join(self._dirs(cfg)["pending"], tid + ".json")):
             # the tuner reads the configuration there: a resubmission would fail at its start
             self._write_killed_record(cfg, st, tid, "killed: the job ended without a record and no "
@@ -540,6 +549,35 @@ class SearchStage(Stage):
         self._write_killed_record(cfg, st, tid, why)
         tr["status"] = "killed"
         log("search: trial %s recorded killed after %d resubmission(s)" % (tid[:12], tr["resubmits"]))
+
+    # ---------------------------------------- the avoid list (D-102) ---
+
+    def _after_hold(self, cfg, st, pbs, tid, job, log):
+        """The trial's job ended with AVOID_EXIT and no record: it landed on
+        a listed host, held its slot and exited. Submitted again at once
+        when it fits, else `waiting`; `resubmits` unchanged; `--resume`
+        exactly when the held job's argv had it."""
+        s = cfg.data["search"]
+        tr = st["sub"]["trials"][tid]
+        text = CM.read_log_tail(job.get("log"))
+        host = CM.host_of_log(text) or "?"
+        held_resume = False
+        try:
+            held_resume = "--resume" in CM.read_argv_file(tr.get("argv_file") or "")
+        except OSError:
+            pass
+        tr.setdefault("avoid_holds", []).append({"host": host, "job": job["id"], "utc": CM.utc_now()})
+        tr.pop("nll", None)
+        if pbs.fits(int(s["trial"]["ncpus"])):
+            self._submit_trial(cfg, st, pbs, tid, resume=held_resume)
+            how = "submitted again at once (not a resubmission)"
+        else:
+            tr["status"] = "waiting"
+            if held_resume:
+                tr["resume_next"] = True
+            how = "queued again (not a resubmission): it starts when the cores allow (D-099)"
+        log("search: trial %s landed on %s, which is on the avoid list (D-102): its job %s held the "
+            "slot and exited; %s" % (tid[:12], host, job["id"], how))
 
     # ------------------------------------------- node faults (D-096) ---
 
@@ -626,10 +664,9 @@ class SearchStage(Stage):
         tr.setdefault("node_faults", []).append({"host": host, "why": why,
                                                  "record": os.path.basename(aside),
                                                  "jobs": list(tr["jobs"]), "utc": CM.utc_now()})
-        sub.setdefault("node_fault_hosts", {})
-        sub["node_fault_hosts"][host] = sub["node_fault_hosts"].get(host, 0) + 1
+        # the count per host, and the avoid list at AVOID_FAULTS (D-102)
+        n_host, _ = CM.note_node_fault(sub, host, why, "search", log, CM.avoid_file(cfg))
         tr.pop("nll", None)
-        n_host = sub["node_fault_hosts"][host]
         if tr["resubmits"] < int(s["trial"]["max_resubmits"]):
             tr["resubmits"] += 1
             tr["status"] = "waiting"
@@ -814,6 +851,8 @@ class SearchStage(Stage):
             # D-096: failed trials awaiting their log, and failed trials never examined
             if s["resubmit_node_faults"]:
                 self._sweep_failed(cfg, st, log)
+            # D-102: a host cleared from the avoid list by hand is counted again from now
+            CM.sync_avoid_list(sub, CM.avoid_file(cfg), log, "search")
             # the throttle: fill the free slots with waiting trials, earliest round first
             # (a revived trial of an earlier round after a --retry comes first)
             running = sum(1 for tr in sub["trials"].values() if tr["status"] == "running")
@@ -878,7 +917,8 @@ class SearchStage(Stage):
 
         def line_of(name, log, argv_file):
             q = CM.qsub_line(cfg, name, s["trial"]["queue"], s["trial"]["ncpus"], s["trial"]["mem"],
-                             s["trial"]["walltime"], log, argv_file, p["stage4"])
+                             s["trial"]["walltime"], log, argv_file, p["stage4"],
+                             avoid_file=CM.avoid_file(cfg) if name.startswith("t_") else None)
             q[2] = name            # the placeholder, not its sanitised form
             return " ".join(q)
 
@@ -920,6 +960,10 @@ class SearchStage(Stage):
                  % ("a trial failed of SIGBUS or a file-system error is queued again with --resume "
                     "(within max_resubmits), its record set aside" if s["resubmit_node_faults"]
                     else "off (search.resubmit_node_faults false): a failed trial is final"),
+                 "avoid list (D-102): %s; a host with >= %d node faults in this run is added; a "
+                 "trial that lands there holds its slot %d s and is submitted again at once (not a "
+                 "resubmission); delete its line to lift the ban"
+                 % (CM.avoid_file(cfg), CM.AVOID_FAULTS, CM.AVOID_HOLD_S),
                  "clock: elapsed from round 0's first submission, cap %s h (D-090)"
                  % (s["max_total_walltime_h"],),
                  "end: finalists --top-k 1 -> %s; artefact %s" % (dirs["finalists"], dirs["complete"])]

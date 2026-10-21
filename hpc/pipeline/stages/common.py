@@ -5,7 +5,11 @@ JSON helpers and the clock; since 2026-10-18 the node-fault signature
 (D-096) and the checkpoint check (D-097) that the trials and the members
 share; since 2026-10-19 the reading of a record a node fault may have
 left without its bytes (`try_read_json`, `unreadable_record`) and durable
-writes (`write_json` fsyncs before its rename).
+writes (`write_json` fsyncs before its rename); since 2026-10-21 the
+bad-node avoid list (D-102): a host with AVOID_FAULTS node faults in a
+stage's run is written to `<work_root>/avoid_nodes.txt`, a job that lands
+there holds its slot AVOID_HOLD_S seconds and exits AVOID_EXIT, and the
+stage submits it again without counting a resubmission.
 
 Nothing here names a project (D-091): every path and value comes from the
 configuration.
@@ -31,7 +35,10 @@ __all__ = ["paths_of", "tuner_common_args", "shard_globs", "run_tuner", "qsub_li
            "write_argv_file", "read_argv_file", "read_json", "try_read_json", "write_json",
            "set_aside", "utc_now", "utc_to_epoch", "elapsed_hours", "mem_to_gb", "job_name",
            "ToolError", "node_fault", "read_log_tail", "host_of_log", "checkpoint_problem",
-           "set_aside_bad_checkpoints", "unreadable_record", "LOG_GRACE_S", "RECORD_GRACE_S"]
+           "set_aside_bad_checkpoints", "unreadable_record", "LOG_GRACE_S", "RECORD_GRACE_S",
+           "AVOID_FAULTS", "AVOID_HOLD_S", "AVOID_EXIT", "AVOID_FILE_NAME", "avoid_file",
+           "read_avoid_list", "add_to_avoid_list", "note_node_fault", "sync_avoid_list",
+           "held_off_node"]
 
 
 class ToolError(RuntimeError):
@@ -119,16 +126,20 @@ def job_name(text, limit=15):
 
 
 def qsub_line(cfg, name, queue, ncpus, mem, walltime, log_path, argv_file, workdir,
-              env_name=None):
+              env_name=None, avoid_file=None):
     """The complete qsub command line of one run_argv.pbs job, in the
     environment `env_name` (default the configuration's envs.train: the
     trials, the probes and the members; the bank's verification job passes
-    envs.extract)."""
+    envs.extract). With `avoid_file` (the trials and the members, D-102)
+    the job reads the avoid list at its start and, on a listed host, holds
+    its slot AVOID_HOLD_S seconds and exits AVOID_EXIT."""
     p = paths_of(cfg)
     skip = "1" if E.skip_conda() else "0"
     variables = "ARGV_FILE=%s,ENV_NAME=%s,WORKDIR=%s,SKIP_CONDA=%s" % (
         argv_file, env_name or cfg.data["envs"]["train"], workdir, skip)
-    for v in (argv_file, workdir):
+    if avoid_file:
+        variables += ",AVOID_FILE=%s,AVOID_HOLD_S=%d" % (avoid_file, int(AVOID_HOLD_S))
+    for v in (argv_file, workdir, avoid_file or ""):
         if "," in v:
             raise ValueError("a path with a comma cannot be passed through qsub -v: %r" % v)
     return ["qsub", "-N", job_name(name), "-q", str(queue),
@@ -365,7 +376,7 @@ _FS_TEXTS = ("Input/output error", "Transport endpoint is not connected",
              "Could not chdir to home directory", "Bus error")
 _RUNNER_EXITED = re.compile(r"^runner exited (-?[0-9]+)$")
 _RUN_ARGV_EXIT = re.compile(r"^RUN_ARGV EXIT: ([0-9]+)\s*$", re.M)
-_RUN_ARGV_HOST = re.compile(r"^RUN_ARGV: host ([^,\s]+)", re.M)
+_RUN_ARGV_HOST = re.compile(r"^RUN_ARGV(?: AVOID)?: host ([^,\s]+)", re.M)
 
 
 def _line_at(text, i):
@@ -416,7 +427,8 @@ def read_log_tail(path, max_bytes=262144):
 
 
 def host_of_log(text):
-    """The node a run_argv.pbs job ran on, from its `RUN_ARGV: host` line."""
+    """The node a run_argv.pbs job ran on, from its `RUN_ARGV: host` line
+    (or its `RUN_ARGV AVOID: host` line, a job held off a listed node)."""
     m = _RUN_ARGV_HOST.search(text or "")
     return m.group(1) if m else None
 
@@ -460,3 +472,132 @@ def set_aside_bad_checkpoints(run_dir, log, stage, who):
             "from epoch 0" % (stage, who, os.path.basename(p), why, os.path.basename(dst)))
         moved.append(dst)
     return moved
+
+
+# ---------------------------------------------------------------------------
+# The bad-node avoid list (D-102; SPEC block 7, amended 2026-10-21)
+# ---------------------------------------------------------------------------
+
+# A host with this many node faults in a stage's run (since its base, which a
+# clear by hand resets) is written to the avoid list; the environment
+# overrides are for the tests. No configuration key: the configuration's
+# digest does not change, a running chain needs no --accept-config-change.
+AVOID_FAULTS = int(os.environ.get("PIPELINE_AVOID_NODE_FAULTS", "3"))
+# Seconds a job holds its slot on a listed host before it exits, so that the
+# scheduler does not refill the node with the next queued job at once.
+AVOID_HOLD_S = int(os.environ.get("PIPELINE_AVOID_HOLD_S", "600"))
+# The exit code of such a job (jobs/run_argv.pbs); reserved: the tuner exits
+# 0-3, the runner 0-2, a signal 129-255, the script's own refusals 90-98.
+AVOID_EXIT = 94
+AVOID_FILE_NAME = "avoid_nodes.txt"
+AVOID_HEADER = ("# avoid list of the pipeline (D-102): one host per line, as `hostname` prints\n"
+                "# it on the node. A trial or member job that starts on a listed host holds\n"
+                "# its slot %d s and exits %d; the pipeline submits it again at once. The\n"
+                "# pipeline appends a host after %d node faults in a stage's run and never\n"
+                "# removes one: delete a host's line (or this file) to lift its ban.\n")
+
+
+def avoid_file(cfg):
+    """`<work_root>/avoid_nodes.txt`."""
+    return os.path.join(cfg.data["paths"]["work_root"], AVOID_FILE_NAME)
+
+
+def read_avoid_list(path):
+    """The listed hosts, in file order: one per line, stripped; blank lines
+    and lines starting with `#` ignored; `[]` when the file is absent or
+    cannot be read."""
+    try:
+        with open(path, "rb") as fh:
+            lines = fh.read().decode("ascii", "replace").splitlines()
+    except OSError:
+        return []
+    hosts = []
+    for line in lines:
+        s = line.strip()
+        if s and not s.startswith("#"):
+            hosts.append(s)
+    return hosts
+
+
+def add_to_avoid_list(path, host, note):
+    """Append `host` (with a comment line `# <note>` above it) unless it is
+    listed already; the header is written when the file is new. Returns
+    True when the host was written. Never rewrites or removes a line."""
+    host = str(host).strip()
+    if not host or host == "?" or host.startswith("#"):
+        return False
+    if host in read_avoid_list(path):
+        return False
+    d = os.path.dirname(path)
+    if d and not os.path.isdir(d):
+        os.makedirs(d)
+    new = not os.path.isfile(path)
+    with open(path, "a") as fh:
+        if new:
+            fh.write(AVOID_HEADER % (AVOID_HOLD_S, AVOID_EXIT, AVOID_FAULTS))
+        fh.write("# %s\n%s\n" % (str(note).replace("\n", " "), host))
+        fh.flush()
+        os.fsync(fh.fileno())
+    return True
+
+
+def note_node_fault(sub, host, why, stage, log, path):
+    """Count a node fault on `host` in the stage's run (`sub["node_fault_
+    hosts"]`, which the log lines print) and, at AVOID_FAULTS faults since
+    the host's base, list it: returns (faults on the host in all, listed
+    now). A host already listed (by the other stage, or by hand) is noted
+    as the stage's, so that a clear by hand is seen; `?` (no host read) is
+    counted and never listed."""
+    hosts = sub.setdefault("node_fault_hosts", {})
+    hosts[host] = hosts.get(host, 0) + 1
+    n = hosts[host]
+    if host == "?":
+        return n, False
+    base = sub.setdefault("avoid_base", {})
+    avoided = sub.setdefault("avoided", {})
+    since = n - int(base.get(host, 0))
+    if since < AVOID_FAULTS or host in avoided:
+        return n, False
+    note = "%s %s: %d node fault(s) in this run, the last: %s" % (utc_now(), stage, n,
+                                                                  str(why)[:120])
+    written = add_to_avoid_list(path, host, note)
+    avoided[host] = {"faults": n, "utc": utc_now(), "written": written}
+    if written:
+        log("%s: host %s has %d node fault(s) in this run: added to the avoid list %s (D-102); a "
+            "job that lands there holds its slot %d s and is submitted again; delete its line from "
+            "that file to lift the ban" % (stage, host, n, path, AVOID_HOLD_S))
+    else:
+        log("%s: host %s has %d node fault(s) in this run; it is on the avoid list %s already"
+            % (stage, host, n, path))
+    return n, True
+
+
+def sync_avoid_list(sub, path, log, stage):
+    """Every poll: a host the stage listed that is no longer in the file was
+    cleared by hand -- its base is set to its count (the next AVOID_FAULTS
+    faults list it again) and the clear is logged once. Returns the hosts
+    cleared."""
+    avoided = sub.get("avoided") or {}
+    if not avoided:
+        return []
+    listed = set(read_avoid_list(path))
+    cleared = []
+    for host in sorted(avoided):
+        if host in listed:
+            continue
+        sub.setdefault("avoid_base", {})[host] = int(sub.get("node_fault_hosts", {}).get(host, 0))
+        del sub["avoided"][host]
+        cleared.append(host)
+        log("%s: host %s is no longer on the avoid list %s (cleared by hand); its node faults are "
+            "counted again from now" % (stage, host, path))
+    return cleared
+
+
+def held_off_node(job):
+    """True when a run_argv.pbs job (a sequencer job record) ended by the
+    avoid list: exit status AVOID_EXIT from the scheduler (its log, when it
+    has landed, says `RUN_ARGV AVOID:` and gives the host)."""
+    try:
+        return int(job.get("exit_status")) == AVOID_EXIT
+    except (TypeError, ValueError):
+        return False

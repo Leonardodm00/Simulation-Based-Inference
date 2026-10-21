@@ -1993,6 +1993,139 @@ fixture, not part of the pipeline.
     submission. Not in the sandbox: davinci's file system (whether its lost
     writes leave zero bytes or zeros: both are tested), the cost of an fsync
     there.
+- The bad-node avoid list [amended 2026-10-21; D-102, the user's "Avoid this
+  for the next timesss" and the card's "Build it as proposed"]. By 2026-10-21
+  15:30 `dvnode012` had killed 13 trial attempts and 2 trials (`killed` after
+  `max_resubmits`) since 2026-10-18; the node stays in service, PBS Pro gives
+  a user no way to exclude it in `select`, and D-100 had left it unhandled.
+  The pipeline now avoids such a node itself: a job that lands there spends
+  a short hold instead of hours, and the trial loses nothing.
+  - Constants (`stages/common.py`; environment overrides for the tests, no
+    configuration key, so the configuration's digest does not change and a
+    running chain needs no `--accept-config-change`): `AVOID_FAULTS` = 3
+    (`PIPELINE_AVOID_NODE_FAULTS`), the node faults a host accumulates in a
+    stage's run before it is listed; `AVOID_HOLD_S` = 600
+    (`PIPELINE_AVOID_HOLD_S`), the seconds a job holds its slot on a listed
+    host; `AVOID_EXIT` = 94, the exit code of such a job (reserved: the
+    tuner exits 0-3, the runner 0-2, a signal 129-255); `AVOID_FILE_NAME` =
+    `avoid_nodes.txt`, the list, in the configuration's `paths.work_root`
+    (`common.avoid_file(cfg)`).
+  - The file: plain text, one host per line, as `hostname` prints it on the
+    node (the `RUN_ARGV: host <h>` line of every job log); a line that is
+    blank or starts with `#` is ignored (the pipeline writes a header and,
+    above each host, a comment with the date, the stage and the fault
+    count). The user reads it as it is and clears it by deleting a host's
+    line or the file; the pipeline appends, never rewrites or removes.
+    `common.read_avoid_list(path) -> [hosts]` (absent or unreadable: `[]`);
+    `common.add_to_avoid_list(path, host, note)` appends (a host already
+    listed is not written twice).
+  - The rule of the stages (the search's campaign and the best fit each
+    keep their own counts in their state, `sub["node_fault_hosts"]`;
+    `common.note_node_fault(sub, host, why, stage, log, path)` is called at
+    every heal, D-096): when a host's faults since its base reach
+    `AVOID_FAULTS` and it is not listed, it is appended and logged
+    `<stage>: host <h> has <n> node fault(s) in this run: added to the avoid
+    list <path> (D-102); a job that lands there holds its slot <s> s and is
+    submitted again; delete its line from that file to lift the ban`; a host
+    already listed (by the other stage, or by hand) is only noted. The host
+    `?` (no `RUN_ARGV: host` line read) is never listed. At every poll
+    (`common.sync_avoid_list(sub, path, log, stage)`) a host the stage listed
+    that is no longer in the file was cleared by the user: logged `<stage>:
+    host <h> is no longer on the avoid list <path> (cleared by hand); its
+    node faults are counted again from now`, and the host's base is set to
+    its count, so the next `AVOID_FAULTS` faults list it again.
+  - The job (`jobs/run_argv.pbs`; variables `AVOID_FILE` and `AVOID_HOLD_S`
+    through `qsub -v`, passed by `common.qsub_line(..., avoid_file=<path>)`;
+    the trials and the members only -- not the gate's probes, the bank's
+    verification job or the driver, whose stages do not read the exit):
+    after `cd WORKDIR` and before the conda activation, when `AVOID_FILE`
+    names a file and `hostname` matches a line of it exactly, the job prints
+    `RUN_ARGV AVOID: host <h> is on the avoid list <path> (D-102); holding
+    this slot for <s> s, then exiting 94`, sleeps `AVOID_HOLD_S` seconds (the
+    scheduler does not refill the node with the next queued job at once),
+    prints `RUN_ARGV EXIT: 94` and exits 94. No conda, no python, no
+    command: the check is `grep -qxF` on the file.
+  - The search: a trial whose last job ended with exit status 94 and no
+    ledger record (the exit status from the scheduler; the log, when it has
+    landed, gives the host: `common.host_of_log` reads the `RUN_ARGV AVOID:
+    host <h>` line as it reads `RUN_ARGV: host <h>`) is submitted again at
+    once when it fits under
+    the cap, else `waiting` for the throttle -- NOT a resubmission
+    (`resubmits` unchanged; `max_resubmits` untouched; the pending spec
+    untouched), the next argv carrying `--resume` exactly when the held
+    job's did; the hold recorded in the trial's `avoid_holds` (host, job,
+    utc) and logged `search: trial <id12> landed on <host>, which is on the
+    avoid list (D-102): its job <id> held the slot and exited; submitted
+    again at once (not a resubmission)`. A job that exited 94 WITH a record
+    is decided by the record, as any job.
+  - The best fit: a member's job that ended with exit 94 and no record,
+    likewise (`best_fit: member seed <k> landed on <host>, which is on the
+    avoid list (D-102): ...`), before the node-fault and refusal rules;
+    `resubmits` unchanged.
+  - `tools/search_report.py`: a trial whose last job exited 94 without a
+    record reads `held off an avoided node (exit 94): submitted again at
+    once, not a resubmission`. The dry runs print `avoid list (D-102):
+    <path>; a host with >= <k> node faults in this run is added; a trial
+    [member] that lands there holds its slot <s> s and is submitted again at
+    once (not a resubmission); delete its line to lift the ban`.
+  - Not changed: the tuner and the runner; the hold is not a node fault
+    (never counted); S1, S2 and the bank stages do not read the list (their
+    tasks are short, and D-095 quarantines their outputs); a listed host is
+    never removed by the pipeline; the fake PBS gains
+    `FAKE_PBS_HOSTS=<h1>,<h2>,...`: the k-th job submitted runs with a
+    `hostname` that prints h_k (the last entry for every later job), through
+    a `hostname` stub first on the job's PATH.
+  - Test oracles (`tests/test_smoke_block7b.py`):
+    - known answer (`avoid_units`, no scheduler): `read_avoid_list` on an
+      absent file, a file with a header, blanks and two hosts; `add_to_
+      avoid_list` appends once (a second call does not duplicate; the first
+      host's line is kept byte for byte); `note_node_fault` lists a host at
+      its third fault and not before, never lists `?`, notes a host already
+      listed; a fourth fault on the listed host is counted, not listed
+      again; `sync_avoid_list` after the host's line is deleted by hand: the
+      clear logged, the base set to 4, the fifth and sixth faults do not
+      list it again, the seventh does; `held_off_node` on 94 (int or text)
+      and on 0, 1, 93, 135, 271, None; the report's `next_action` on a job
+      that exited 94 without a record, and on one that exited 137; the qsub
+      line with and without `avoid_file`.
+    - contract (`avoid_list`, end to end on the fault fixture, the throttle
+      at 1, `PIPELINE_AVOID_HOLD_S` 2, `FAKE_PBS_HOSTS` nodeX for the first
+      four jobs then nodeY): trial 1 SIGBUS three times on nodeX (killed
+      after 2 resubmissions, the third fault lists nodeX); trial 2's first
+      job lands on nodeX, holds 2 s, exits 94 and is submitted again at once
+      (its state: `resubmits` 0, one `avoid_holds` entry; its second argv
+      without `--resume`; its record `ok`); trial 3 ok; member seed 1's first
+      job on nodeX likewise held, then ok on nodeY, `resubmits` 0; member
+      seed 2 ok; the file holds `nodeX` once, with the pipeline's comment;
+      the log lines above; `PIPELINE DONE`; 6 trial and 3 member
+      submissions; the job log of a held job has `RUN_ARGV AVOID:` and
+      `RUN_ARGV EXIT: 94` and no `RUN_ARGV: <command>` line.
+    - mutations: `avoid_add` (`add_to_avoid_list` disabled): no host is ever
+      listed, trial 2 is not held -> the contract check FAILS; `avoid_hold`
+      (the stages take exit 94 as a job that ended without a record): the
+      hold counts as a resubmission -> FAILS; `avoid_sync` (`sync_avoid_list`
+      disabled, patched in the test's own process since the known answer
+      runs no sequencer): the clear is never seen -> the known answer FAILS.
+    - the other checks of the suite run with `FAKE_PBS_HOSTS` set to sixty
+      distinct names (one per job), as a cluster spreads jobs over nodes, so
+      no host of theirs reaches `AVOID_FAULTS`; `PIPELINE_AVOID_HOLD_S` 2
+      throughout.
+  - Status: smoke-tested 2026-10-21 (`test_smoke_block7b.py` 6 pass, 1
+    skip, 462 s; `avoid_units` and `avoid_list` 64 s; the three mutations
+    each make their check FAIL: `avoid_add` and `avoid_hold` -> `avoid_list`
+    (nothing listed; `resubmits` 1), `avoid_sync` -> `avoid_units`; the
+    regression: blocks 1 6 pass 1 skip, 1b 6 pass 1 skip, 1c 7 pass 1 skip
+    (with `SBIX_CLONE`), 2 12 pass 1 skip, 3 7 pass 1 skip, 7 7 pass 1 skip,
+    8 1 pass 1 skip, report 5 pass 1 skip (its mutation `classify` caught),
+    reset 5 pass 1 skip, perrow 5 pass 1 skip; the job script by hand with a
+    `hostname` stub: a listed host held and 94, a prefix, a suffix and an
+    unlisted host run, an absent list runs; vermin 3.6, pyflakes, ASCII, LF
+    `[SANDBOX 2026-10-21]`). Not in the sandbox: davinci's `hostname` on a
+    compute node (the `RUN_ARGV: host` lines of its logs print the short
+    name the faults are counted under, so the two agree), its PBS passing
+    `-v` values with no comma (as every other variable), and whether a
+    10-minute hold keeps the scheduler from refilling a node at once (the
+    hold's length is the user's to change through `PIPELINE_AVOID_HOLD_S`).
 
 ### Block 8: end to end on the stand-in and the delivery
 
