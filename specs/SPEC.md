@@ -709,6 +709,64 @@ fixture, not part of the pipeline.
   `SYNTH_CRASH_ONCE`): one `raised`, no `REFUSE`, `PIPELINE DONE`, the
   state's digest the file's; mutation `early_save` (the save removed) -> the
   check FAILS.
+- Amended 2026-10-21 (f) (found on davinci 2026-10-21: driver 1854083 on
+  dvnode001 lost the scheduler at 11:59 -- `cannot run qstat: [Errno 12]
+  Cannot allocate memory`, then `qstat: illegally formed job identifier`
+  at every tick, the node's fault, the node offline by 15:30 -- and sat
+  through 105 failing ticks, every finished trial unrecorded and its slot
+  idle, until the user's `qdel` at 15:11; the user's "Solve this";
+  Claude's design, `[proposed]`): a driver that cannot reach the scheduler
+  hands over to its successor instead of waiting for its budget. (1) `run`
+  counts the ticks in a row in which a running stage's poll raised
+  `SchedulerError`; a tick in which no poll raised resets the count to 0
+  and is the only kind of tick that calls `on_tick` (so clears the unclean
+  count, (5) above: a driver whose every tick fails never clears its
+  predecessors'). (2) When the count reaches SCHEDULER_FAIL_TICKS (10;
+  `PIPELINE_SCHEDULER_FAIL_TICKS` overrides it for the tests -- about 17
+  min on davinci: a failing tick is 3 qstat attempts 20 s apart plus the
+  60 s poll) and the driver's `hand_over()` returns True, `run` ends at
+  that tick boundary with EXIT_BUDGET and `_END["why"] = "scheduler"`
+  (`the scheduler was unreachable for <n> consecutive tick(s) (<last
+  error>); stopping (resumable): the successor driver job continues`),
+  after the stop request is honoured and before the time budget. (3)
+  `hand_over()` is True when a successor is queued, or when one can be
+  submitted now (logged: `its successor <id> was submitted now`); when
+  none can be, it is logged once (`no successor could be submitted (...);
+  this driver keeps trying until its time budget`) and the driver keeps
+  ticking -- it never exits without a successor. A `run` without a
+  `hand_over` (a foreground run, the tests) never ends for this reason.
+  (4) The end is noted as an unclean end (`driver <me>: the scheduler was
+  unreachable for <n> consecutive tick(s); unclean end <k> in a row; the
+  successor <id> continues`, exit 0), so three drivers in a row that hand
+  over without a healthy tick between them end the chain by (3) above
+  (the scheduler itself down, not a node). The successor starts where PBS
+  puts it; the pipeline cannot choose its node. Not covered: a successor
+  that cannot reach the scheduler at its start AND finds the lock of a
+  killed predecessor -- it yields (`cannot tell: do not take it`, exit 4)
+  and the chain ends, as before. (5) `pbs.status` takes its retry wait
+  from `PIPELINE_QSTAT_RETRY_WAIT_S` (default 20) for the tests; the fake
+  PBS's `FAKE_PBS_QSTAT_FAIL_FILE=<path>` makes every `qstat` print
+  `qstat: illegally formed job identifier: <id>` and exit 1 while that
+  file exists (davinci's error, verbatim). Test oracles
+  (`test_smoke_block1b.py`, edge cases, with SCHEDULER_FAIL_TICKS 2 and
+  the retry wait 0.1 s): (a) the scheduler lost while stage A runs: the
+  first driver hands over after 2 failing ticks (its line, `unclean end 1
+  in a row`), the scheduler back for the successor: `PIPELINE DONE`, the
+  unclean count 0 at the end, every stage job once, no two drivers at
+  once; (b) the scheduler never back: 3 drivers hand over, the fourth
+  ends the chain (`the last 3 sequencer jobs ended uncleanly`), count 3,
+  A's job submitted once; the scheduler back and a submission resets the
+  count and finishes. Mutations: `sched_handover` (the threshold never
+  reached) -> (a) FAILS; `sched_unclean` (a hand-over not noted as an
+  unclean end) -> (a) FAILS at its count line and (b) at the chain's end;
+  `sched_clear` (`on_tick` called on failing ticks too) -> (b) FAILS.
+  Status: smoke-tested 2026-10-21 `[SANDBOX]`: `test_smoke_block1b.py` 6
+  pass, 1 skip; the three mutations caught as stated, the eleven earlier
+  ones unchanged; regression blocks 1, 1c, 2, 3, 7, 7b, 8, report and
+  reset pass. Skipped for want of davinci: the real node's failure mode
+  (`Cannot allocate memory`, then every qstat refused) -- the fake PBS
+  models the refusal only -- and the 17-minute scale (the tests use 2
+  ticks of about 1.6 s).
 - Confirmed: yes 2026-10-15 (the user's answers to the build handoff's Q1-Q7
   and the follow-up; D-090..D-093)
 - Status: smoke-tested 2026-10-15 (6 pass, 1 skip: convergence, not a

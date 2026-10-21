@@ -59,7 +59,15 @@ the chain (`unclean end 3 in a row; the chain ends`, or `the last 3
 sequencer jobs ended uncleanly ...`): read their logs in
 `<work_root>/driver/`, fix, submit again (a submission resets the count). A second submission while the
 chain runs is refused (`REFUSE: the sequencer is already queued or
-running`, exit 4).
+running`, exit 4). A job whose node has lost the scheduler (every tick
+`<stage>: scheduler unreachable (...)`, as on 2026-10-21 when a compute
+node ran out of memory and its `qstat` answered `illegally formed job
+identifier` for every id) hands over after 10 such ticks in a row, about
+17 min, instead of waiting for its budget: `driver <id>: the scheduler was
+unreachable for 10 consecutive tick(s); unclean end <n> in a row (3 end
+the chain); the successor <id> continues` -- the successor starts where
+PBS puts it; three such hand-overs in a row with no sound tick between
+them end the chain as above (2026-10-21).
 
 To load new code into a running pipeline: `--stop --wait 180` writes
 `<work_root>/STOP_REQUEST` and deletes the waiting sequencer job; the

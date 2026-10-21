@@ -35,7 +35,8 @@ RUNNING_STATES = ("R", "E", "B")
 _KNOWN_STATES = ("Q", "R", "H", "B", "E", "F", "X", "S", "T", "W", "M")
 
 _QSTAT_RETRIES = 3
-_QSTAT_RETRY_WAIT_S = 20.0
+# the tests shorten the wait (block 1, amended 2026-10-21 (f)); davinci keeps 20 s
+_QSTAT_RETRY_WAIT_S = float(os.environ.get("PIPELINE_QSTAT_RETRY_WAIT_S", "20"))
 
 
 class SubmitError(RuntimeError):

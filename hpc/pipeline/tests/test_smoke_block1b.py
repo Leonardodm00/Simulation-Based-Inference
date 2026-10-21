@@ -32,7 +32,14 @@ Checks (specs/SPEC.md block 1, amended 2026-10-18 (c))
                         old-style sequencer; a configuration change
                         accepted at submission and a first driver that
                         raises in its first tick: the successor goes on
-                        (amendment (e) of 2026-10-19, davinci's 15:31)
+                        (amendment (e) of 2026-10-19, davinci's 15:31);
+                        the scheduler lost while A runs (every qstat
+                        `illegally formed job identifier`, davinci's
+                        dvnode001 of 2026-10-21): the driver hands over
+                        after 2 failing ticks, the successor finishes; the
+                        scheduler never back: three hand-overs, the fourth
+                        driver ends the chain, a submission resets it
+                        (amendment (f) of 2026-10-21)
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block1b.py
@@ -42,7 +49,8 @@ Run
         Re-runs the checks with one piece of the code disabled; the check
         named in _PATCHES must then FAIL: successor, unclean_limit,
         lock_check, prev_fallback, heartbeat, tiebreak, retry_at_submit,
-        adopt, adopt_output, finished_filter, early_save.
+        adopt, adopt_output, finished_filter, early_save, sched_handover,
+        sched_unclean, sched_clear.
 
 Everything runs under the fake PBS (tests/fake_pbs/, first on PATH) in a
 temporary folder, on the synthetic graph A -> B -> C of synthetic_graph.py;
@@ -134,6 +142,20 @@ _PATCHES = {
     # test_edge_cases (accept, then a crash): the accepted change would be
     # lost with the first tick, and the successor would refuse
     "early_save": "P._keep_prepared = lambda state: None\n",
+    # test_edge_cases (the scheduler lost, amendment (f)): the driver would
+    # wait for its budget instead of handing over
+    "sched_handover": "P.SCHEDULER_FAIL_TICKS = 10 ** 6\n",
+    # test_edge_cases (the scheduler never back): a hand-over would not count
+    # as an unclean end, so the chain would never end
+    "sched_unclean": ("_orig_note = P._note_unclean\n"
+                      "def _note(wr, who, why):\n"
+                      "    if 'handed over' in why:\n"
+                      "        return 0\n"
+                      "    return _orig_note(wr, who, why)\n"
+                      "P._note_unclean = _note\n"),
+    # test_edge_cases (the scheduler never back): a failing tick would clear
+    # the unclean count, so the chain would never end
+    "sched_clear": "P._tick_is_full = lambda err: True\n",
 }
 if MUTATION:
     if MUTATION not in _PATCHES:
@@ -860,6 +882,97 @@ def _edge_signal():
         shutil.rmtree(root)
 
 
+def _sched_env(root, **extra):
+    """Amendment (f) under test: a hand-over after 2 failing ticks, qstat's
+    retries 0.1 s apart, and the fake PBS's switch that makes every qstat
+    fail while <root>/qstat_fail exists (davinci's dvnode001, 2026-10-21)."""
+    return _env(root, PIPELINE_SCHEDULER_FAIL_TICKS="2", PIPELINE_QSTAT_RETRY_WAIT_S="0.1",
+                FAKE_PBS_QSTAT_FAIL_FILE=os.path.join(root, "qstat_fail"), **extra)
+
+
+def _edge_scheduler_lost():
+    """(a) the scheduler lost while A runs: the driver hands over after 2
+    failing ticks; its successor, with the scheduler back, finishes."""
+    root = _tmp()
+    path, cfg = _project(root, walltime="00:02:00")
+    env = _sched_env(root, sleep="8")
+    wr = cfg["paths"]["work_root"]
+    fail = os.path.join(root, "qstat_fail")
+    try:
+        rc, out = _pl(root, env, "submit")
+        assert rc == 0, out
+        _wait_for(cfg, "A: running")
+        open(fail, "w").close()
+        log = _wait_for(cfg, "the successor 2.fake continues", timeout=60)
+        os.remove(fail)
+        assert "A: scheduler unreachable (qstat failed 3 times for" in log, log
+        assert "illegally formed job identifier" in log, log
+        assert ("the scheduler was unreachable for 2 consecutive tick(s) (qstat failed 3 times "
+                "for") in log, log
+        assert "stopping (resumable): the successor driver job continues" in log, log
+        assert ("driver 1.fake: the scheduler was unreachable for 2 consecutive tick(s); unclean "
+                "end 1 in a row (3 end the chain); the successor 2.fake continues") in log, log
+        assert "time budget reached" not in log, "the hand-over came before the budget:\n" + log
+        log = _wait_for(cfg, "the chain ends", timeout=120)
+        assert "driver 2.fake on" in log and "PIPELINE DONE" in log, log
+        _wait_quiet(root)
+        for name in ("synth_A", "synth_B", "synth_C"):
+            assert len(_named(root, name)) == 1, (name, _named(root, name))
+        _no_overlap(_named(root, "pl_synth"))
+        assert P._unclean(wr)["count"] == 0, P._unclean(wr)
+        assert P.read_lock(wr) is None, "no lock left"
+    finally:
+        _sweep(root, env)
+        shutil.rmtree(root)
+
+
+def _edge_scheduler_never_back():
+    """(b) the scheduler never back: three drivers hand over, the fourth ends
+    the chain; a submission with the scheduler back resets and finishes."""
+    root = _tmp()
+    path, cfg = _project(root, walltime="00:02:00")
+    env = _sched_env(root, sleep="30")
+    wr = cfg["paths"]["work_root"]
+    fail = os.path.join(root, "qstat_fail")
+    try:
+        rc, out = _pl(root, env, "submit")
+        assert rc == 0, out
+        _wait_for(cfg, "A: running")
+        open(fail, "w").close()
+        log = _wait_for(cfg, "the chain ends here, no successor", timeout=90)
+        time.sleep(2.0)
+        log = _read(_plog(cfg))
+        n = log.count("consecutive tick(s); unclean end")
+        assert n == 3, "%d drivers handed over (want 3):\n%s" % (n, log)
+        # the jobs: drivers 1, 2, 4, 5; A's job is 3
+        assert ("driver 4.fake: the scheduler was unreachable for 2 consecutive tick(s); unclean "
+                "end 3 in a row (3 end the chain); the successor 5.fake continues") in log, log
+        assert ("driver 5.fake: the last 3 sequencer jobs ended uncleanly before completing a tick "
+                "(1.fake the scheduler was unreachable for 2 consecutive tick(s): handed over; "
+                "2.fake the scheduler") in log, log
+        assert "the chain ends here, no successor" in log, log
+        assert P._unclean(wr)["count"] == 3, P._unclean(wr)
+        assert len(_named(root, "synth_A")) == 1, _named(root, "synth_A")
+        drivers = _named(root, "pl_synth")
+        assert len(drivers) == 4, [(j["id"], j["state"]) for j in drivers]
+        os.remove(fail)
+        _sweep(root, env)
+        _wait_quiet(root)
+        env2 = _sched_env(root, sleep="0.3")
+        rc, out = _pl(root, env2, "submit")
+        assert rc == 0 and "ended uncleanly in a row (3) was reset by this submission" in out, out
+        _wait_for(cfg, "PIPELINE DONE", timeout=90)
+        _wait_quiet(root)
+        # A's job was deleted by the sweep above (killed: no artefact), so the new
+        # chain submits it again -- the resume rule, not a duplicate; B and C once
+        assert len(_named(root, "synth_A")) == 2, _named(root, "synth_A")
+        for name in ("synth_B", "synth_C"):
+            assert len(_named(root, name)) == 1, (name, _named(root, name))
+    finally:
+        _sweep(root, env)
+        shutil.rmtree(root)
+
+
 _OLD_STYLE = '''import json, os, sys, time
 # the sequencer of the code before 2026-10-18 as far as the transition sees it:
 # a bare-pid lock, the state written through state.json.tmp after every tick,
@@ -944,7 +1057,7 @@ def test_edge_cases():
     failures = []
     for part in (_edge_drive_without_jobid, _edge_stop_then_submit, _edge_retry_and_config_change,
                  _edge_crash_loop, _edge_two_drivers, _edge_signal, _edge_retire,
-                 _edge_accept_then_crash):
+                 _edge_accept_then_crash, _edge_scheduler_lost, _edge_scheduler_never_back):
         if os.environ.get("ONLY") and os.environ["ONLY"] not in part.__name__:
             continue
         try:

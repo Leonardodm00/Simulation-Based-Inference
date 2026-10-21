@@ -28,7 +28,10 @@ boundary -- after the polls and the state's save, never between a
 submission and its record (STOP_REQUEST). A signal (PBS ending the job: its
 walltime, a qdel) also stops a driver at a tick boundary, but its successor
 continues; three sequencer jobs in a row that end uncleanly before a tick
-end the chain. `--retry <stage>` is refused while that stage's jobs are
+end the chain. A driver that cannot reach the scheduler for
+SCHEDULER_FAIL_TICKS ticks in a row (its node's fault: a compute node that
+lost the scheduler on 2026-10-21) hands over to its successor at once rather than at its budget
+(amended 2026-10-21 (f)). `--retry <stage>` is refused while that stage's jobs are
 still queued or running, since the reset forgets them. A job about to be
 submitted whose name is already queued or running is adopted, not
 submitted twice. `retire` stops a sequencer started on a login node before
@@ -83,6 +86,9 @@ UNCLEAN_FILE = "unclean_ends.json"
 # signal) before one of them completes a tick; the next one ends the chain
 # instead of looping (PIPELINE_DRIVER_MAX_UNCLEAN overrides it: the tests).
 DRIVER_MAX_UNCLEAN = int(os.environ.get("PIPELINE_DRIVER_MAX_UNCLEAN", "3"))
+# ticks in a row with the scheduler unreachable after which a driver hands
+# over to its successor (amended 2026-10-21 (f)); about 17 min on davinci
+SCHEDULER_FAIL_TICKS = int(os.environ.get("PIPELINE_SCHEDULER_FAIL_TICKS", "10"))
 # Seconds a sequencer waits after replacing a stale lock before it reads the
 # lock back: two that replaced it at the same moment, the later write wins.
 LOCK_SETTLE_S = 1.0
@@ -704,14 +710,26 @@ def _keep_prepared(state):
     state.save()
 
 
+def _tick_is_full(sched_err):
+    """A tick counts as complete when the scheduler answered every poll
+    (amended 2026-10-21 (f)): only such a tick clears the unclean count."""
+    return sched_err is None
+
+
 def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
         accept_config_change=False, break_lock=False, pbs_module=PBS,
-        max_ticks=None, log=None, until=None, on_tick=None):
+        max_ticks=None, log=None, until=None, on_tick=None, hand_over=None):
     """Drive the graph; return an exit code (module docstring). `until`
     (epoch seconds) ends the run at the first tick boundary past it with
     EXIT_BUDGET: a driver job's time budget (D-098). `on_tick()` is called
-    at every tick boundary (every stage polled, the state saved). Why the
-    run ended is left in _END["why"] (and a stop's origin in _END["how"])."""
+    at every tick boundary at which the scheduler answered every poll
+    (every stage polled, the state saved). `hand_over()` (amended
+    2026-10-21 (f)) is asked once SCHEDULER_FAIL_TICKS ticks in a row had
+    the scheduler unreachable: True ends the run with EXIT_BUDGET and
+    _END["why"] = "scheduler" (a successor continues), False keeps ticking;
+    without it the run never ends for this reason. Why the run ended is
+    left in _END["why"] (and a stop's origin, or the failing ticks, in
+    _END["how"])."""
     work_root = cfg.data["paths"]["work_root"]
     graph = S.topological_order(graph if graph is not None else S.default_graph(cfg))
     log = log or Log(None if dry_run else os.path.join(work_root, LOG_FILE))
@@ -765,8 +783,10 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                (", until %s" % time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(until)))
                if until else ""))
         ticks = 0
+        sched_fails = 0                  # ticks in a row with the scheduler unreachable
         while True:
             ticks += 1
+            sched_err = None
             for stage in graph:
                 st = state.stage(stage.name)
                 status = st["status"]
@@ -816,6 +836,7 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                     except PBS.SchedulerError as exc:
                         # the scheduler is unreachable: keep the state, try again next tick
                         state.save()
+                        sched_err = exc
                         log("%s: scheduler unreachable (%s); will retry next tick" % (stage.name, exc))
                         continue
                     except CapExceeded as exc:
@@ -861,9 +882,20 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                 _END["why"] = "tick limit"
                 return EXIT_OK
             # a stop is honoured here only: after the polls and the state's save
-            if on_tick is not None:
-                on_tick()
+            sched_fails = 0 if sched_err is None else sched_fails + 1
+            if on_tick is not None and _tick_is_full(sched_err):
+                on_tick()                # a full tick: the scheduler answered every poll
             how = _stop_requested(work_root)
+            # the scheduler unreachable for SCHEDULER_FAIL_TICKS ticks in a row (this
+            # node's fault, most likely): hand over to the successor rather than wait
+            # for the budget -- when there is a successor to hand over to (amendment (f))
+            if how is None and sched_fails >= SCHEDULER_FAIL_TICKS and hand_over is not None \
+                    and hand_over():
+                _END["why"] = "scheduler"
+                _END["how"] = "the scheduler was unreachable for %d consecutive tick(s)" % sched_fails
+                log("%s (%s); stopping (resumable): the successor driver job continues"
+                    % (_END["how"], sched_err))
+                return EXIT_BUDGET
             if how is None and until is not None and time.time() >= until:
                 log("time budget reached; stopping (resumable): the next driver job continues")
                 _END["why"] = "budget"
@@ -1142,12 +1174,12 @@ def cmd_drive(args, graph=None, entry=None):
                os.path.join(work_root, DRIVER_DIR)))
         return EXIT_FAILED
     # 3. the successor, at once: whatever ends this job, the chain goes on
+    box = {"succ": None, "asked": False}
     try:
-        succ, _, succ_log = submit_driver(cfg, depend=me, entry=entry)
+        box["succ"], _, succ_log = submit_driver(cfg, depend=me, entry=entry)
         log("driver %s on %s: started; its successor %s waits for it (afterany), log %s"
-            % (me, host, succ, succ_log))
+            % (me, host, box["succ"], succ_log))
     except (PBS.SubmitError, OSError, ValueError) as exc:
-        succ = None
         log("driver %s on %s: its successor could not be submitted (%s); retried at the end"
             % (me, host, exc))
     # 4. tick until the budget; the first full tick clears the unclean count
@@ -1158,12 +1190,31 @@ def cmd_drive(args, graph=None, entry=None):
             ticked["once"] = True
             _clear_unclean(work_root)
 
+    def hand_over():
+        """Amendment (f): a successor is queued, or can be submitted now --
+        else this driver keeps ticking; it never exits without one."""
+        if box["succ"]:
+            return True
+        try:
+            box["succ"], _, slog = submit_driver(cfg, depend=me, entry=entry)
+            log("driver %s: its successor %s was submitted now (afterany), log %s"
+                % (me, box["succ"], slog))
+            return True
+        except (PBS.SubmitError, OSError, ValueError) as exc:
+            if not box["asked"]:
+                box["asked"] = True
+                log("driver %s: the scheduler is unreachable and no successor could be submitted "
+                    "(%s); this driver keeps trying until its time budget" % (me, exc))
+            return False
+
     try:
         rc = run(cfg, graph=graph, poll_seconds=float(cfg.data["driver"]["poll_seconds"]),
                  retry=args.retry or (), accept_config_change=args.accept_config_change,
                  break_lock=args.break_lock, log=log,
-                 until=time.time() + _driver_budget_s(cfg), on_tick=on_tick)
+                 until=time.time() + _driver_budget_s(cfg), on_tick=on_tick,
+                 hand_over=hand_over)
     except Exception as exc:     # this driver's own failure: its node, a bug
+        succ = box["succ"]
         for line in traceback.format_exc().rstrip().splitlines():
             print("    " + line, flush=True)
         n = _note_unclean(work_root, me, ("".join(traceback.format_exception_only(
@@ -1180,6 +1231,14 @@ def cmd_drive(args, graph=None, entry=None):
             % (me, type(exc).__name__, n, "; its successor %s was deleted" % succ if succ else ""))
         return 1
     why, how = _END.get("why"), _END.get("how")
+    succ = box["succ"]
+    if rc == EXIT_BUDGET and why == "scheduler" and succ:
+        # amendment (f): this node lost the scheduler; the successor goes on where
+        # PBS puts it -- an unclean end, so three such in a row end the chain
+        n = _note_unclean(work_root, me, how + ": handed over")
+        log("driver %s: %s; unclean end %d in a row (%d end the chain); the successor %s "
+            "continues" % (me, how, n, DRIVER_MAX_UNCLEAN, succ))
+        return EXIT_OK
     if rc == EXIT_BUDGET:
         if not succ:
             try:

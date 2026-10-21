@@ -37,6 +37,10 @@ does, which the sequencer must not mistake for live jobs.
 `qstat -x -f <id>` prints a PBS-like record: job_state (Q, H, R, B, F),
 Exit_status when finished, resources_used.walltime, array_state_count for
 arrays. An unknown id prints `qstat: Unknown Job Id <id>` and exits 153.
+While the file FAKE_PBS_QSTAT_FAIL_FILE names exists, every qstat prints
+`qstat: illegally formed job identifier: <id>` and exits 1 -- a davinci
+compute node of 2026-10-21, whose qstat answered that for every id (block
+1, amended 2026-10-21 (f)).
 
 With FAKE_PBS_ENFORCE_WALLTIME=1 a non-array job whose `-l walltime=` has
 elapsed is killed (its process group, SIGKILL) and finishes with
@@ -63,6 +67,7 @@ DROP_DEPENDENTS = os.environ.get("FAKE_PBS_DROP_DEPENDENTS", "0") == "1"
 FAIL_ONCE = set(x.strip() for x in os.environ.get("FAKE_PBS_FAIL_ONCE", "").split(",")
                 if x.strip())
 SERVER = "fake"
+QSTAT_FAIL_FILE = os.environ.get("FAKE_PBS_QSTAT_FAIL_FILE", "")
 QSELECT_SUFFIX = os.environ.get("FAKE_PBS_QSELECT_SUFFIX", "")
 QSELECT_HISTORY = os.environ.get("FAKE_PBS_QSELECT_HISTORY", "0") == "1"
 
@@ -424,6 +429,9 @@ def cmd_qstat(argv):
         sys.stderr.write("fake qstat: give a job id\n")
         return 2
     job_id = args[0]
+    if QSTAT_FAIL_FILE and os.path.exists(QSTAT_FAIL_FILE):
+        sys.stderr.write("qstat: illegally formed job identifier: %s\n" % job_id)
+        return 1
     try:
         num = int(job_id.split("[")[0].split(".")[0])
         rec = _load(num)
