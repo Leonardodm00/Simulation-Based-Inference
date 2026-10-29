@@ -254,6 +254,91 @@ case "$MODE" in plan|test|array|gate) ;; *) echo "usage"; exit 2 ;; esac
 [ -f "$COHORT_MANIFEST" ] || { echo "ABORT: cohort manifest not found: $COHORT_MANIFEST"; exit 2; }
 [ -f "$COHORT_MANIFEST.sha256" ] || { echo "ABORT: $COHORT_MANIFEST has no .sha256 sidecar; refusing to freeze an unchecked copy"; exit 3; }
 mkdir -p out "$COHORT_TAG"
+if [ "${STUB_TRACK:-0}" = "1" ]; then
+    # D-113's tests: STUB_N_TASKS tasks whose completion is a file in
+    # $OUT_ROOT/stub_tasks; the jobs start through the pipeline's job protocol
+    # when PIPELINE_JOBS_DIR is set, as the real job scripts do. STUB_NEVER_START
+    # (a list of tasks) exit 96 before any work, every time; STUB_FAIL_TASK=<i>:<k>
+    # fails task i in its first k runs after it started. The gate refuses as
+    # sim_reextract_gate.py does, one block per bad task.
+    T="${STUB_N_TASKS:-3}"
+    D="$OUT_ROOT/stub_tasks"
+    mkdir -p "$D"
+    todo=()
+    for i in $(seq 0 $((T - 1))); do
+        if [ "${RESUME:-0}" = "1" ] && [ -f "$D/task_$i.done" ]; then continue; fi
+        todo+=("$i")
+    done
+    N=${#todo[@]}
+    [ "${RESUME:-0}" = "1" ] && echo "[plan] tasks complete  : $((T - N)) kept as done (--resume)"
+    echo "[plan] tasks to run    : $N (array 0-$((N - 1)))"
+    [ "$MODE" = "plan" ] && { echo "[launch] plan only: $N task(s) in tasks.tsv; nothing submitted"; exit 0; }
+    PROTO='if [ -n "${PIPELINE_JOBS_DIR:-}" ]; then
+    source "$PIPELINE_JOBS_DIR/stage_job.sh" || exit 2
+    pipeline_stage_job_start "${ENV_NAME:-sbi_export}" || exit $?
+    trap pipeline_stage_job_end EXIT
+fi'
+    printf '%s\n' "${todo[@]}" > "out/stub_todo_${COHORT_TAG}.txt"
+    cat > "out/stub_track_task_${COHORT_TAG}.sh" <<EOS
+#!/bin/bash
+$PROTO
+if [ -n "\${PBS_ARRAY_INDEX:-}" ]; then
+    i=\$(sed -n "\$((PBS_ARRAY_INDEX + 1))p" "$PWD/out/stub_todo_${COHORT_TAG}.txt")
+else
+    i="\${STUB_TASK:-\$(sed -n 1p "$PWD/out/stub_todo_${COHORT_TAG}.txt")}"
+fi
+case ",\${STUB_NEVER_START:-}," in *",\$i,"*) echo "RUN_ARGV ENV FAULT: host \$(hostname): stub"; exit 96 ;; esac
+echo started > "$D/task_\$i.env"
+n=\$(cat "$D/task_\$i.runs" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$D/task_\$i.runs"
+case "\${STUB_FAIL_TASK:-}" in "\$i":*) if [ "\$n" -le "\${STUB_FAIL_TASK#*:}" ]; then echo "[mea] task \$i failed (stub, run \$n)"; exit 1; fi ;; esac
+touch "$D/task_\$i.done"
+echo "[mea] task \$i: 12/12 iters processed (stub)"
+EOS
+    cat > "out/stub_track_gate_${COHORT_TAG}.sh" <<EOS
+#!/bin/bash
+$PROTO
+mkdir -p "$OUT_ROOT"
+bad=0
+for i in \$(seq 0 $((T - 1))); do
+    [ -f "$D/task_\$i.done" ] && continue
+    bad=\$((bad + 1))
+    echo "[gate] FAIL campaign_x/sweep_cpu_task000\$i"
+    echo "[gate]      - no mea_manifest.json (the task did not finish)"
+    [ -f "$D/task_\$i.env" ] || echo "[gate]      - no mea_env.json (the job script that ran did not write one)"
+done
+if [ "\$bad" -gt 0 ]; then
+    echo "[gate] read 0 mea_iter_*.npz file(s) across $T task(s); \$bad task(s) bad"
+    echo "[gate] REFUSED -- \$bad bad task(s), nothing written. Re-run those tasks (plan --resume, then the array) and run this gate again."
+    echo "[job] sim_reextract_gate_exit=1 finished=now"
+    exit 1
+fi
+printf '{"record": "sim_reextraction", "stub": true, "tasks": $T}\n' > "$OUT_ROOT/REEXTRACTION_RECORD.json"
+h=\$(sha256sum "$OUT_ROOT/REEXTRACTION_RECORD.json" | cut -c1-64)
+echo "\$h  REEXTRACTION_RECORD.json" > "$OUT_ROOT/REEXTRACTION_RECORD.json.sha256"
+echo "wrote $OUT_ROOT/REEXTRACTION_RECORD.json  sha256 \${h:0:16}"
+echo "[job] sim_reextract_gate_exit=0 finished=now"
+EOS
+    DEP=()
+    if [ "$MODE" = "test" ]; then
+        [ -n "${WALLTIME:-}" ] || { echo "ABORT: WALLTIME=hh:mm:ss is required"; exit 3; }
+        j=$(qsub -N "g2_test" -l "walltime=${WALLTIME}" -o "out/stub_test_${COHORT_TAG}.log" -v "STUB_TASK=${todo[0]}" "out/stub_track_task_${COHORT_TAG}.sh") || { echo "ABORT: qsub failed"; exit 2; }
+        echo "  job   : $j"; exit 0
+    fi
+    if [ "$MODE" = "array" ]; then
+        [ "$N" -ge 1 ] || { echo "ABORT: tasks.tsv is empty (every task complete?); nothing to submit"; exit 3; }
+        [ -n "${WALLTIME:-}" ] || { echo "ABORT: WALLTIME=hh:mm:ss is required"; exit 3; }
+        if [ "$N" -gt 1 ]; then
+            j=$(qsub -J "0-$((N - 1))%${CONCURRENCY}" -N "g2_mea" -l "walltime=${WALLTIME}" -o "out/stub_mea_${COHORT_TAG}_^array_index^.log" "out/stub_track_task_${COHORT_TAG}.sh") || { echo "ABORT: qsub failed"; exit 2; }
+        else
+            j=$(qsub -N "g2_mea" -l "walltime=${WALLTIME}" -o "out/stub_mea_${COHORT_TAG}_0.log" "out/stub_track_task_${COHORT_TAG}.sh") || { echo "ABORT: qsub failed"; exit 2; }
+        fi
+        echo "  job   : $j"
+        DEP=(-W "depend=afterok:${j}")
+    fi
+    g=$(qsub ${DEP[@]+"${DEP[@]}"} -N "g2_gate" -o "out/sim_reextract_gate_${COHORT_TAG}.log" "out/stub_track_gate_${COHORT_TAG}.sh") || { echo "ABORT: the gate's qsub failed"; exit 2; }
+    echo "  gate  : $g"
+    exit 0
+fi
 N=2
 if [ "${RESUME:-0}" = "1" ]; then
     echo "[plan] tasks complete  : 1 kept as done (--resume)"
@@ -296,6 +381,23 @@ EOS
 gate=$(qsub ${DEP[@]+"${DEP[@]}"} -N "g2_gate" -o "out/sim_reextract_gate_${COHORT_TAG}.log" "out/stub_gate_${COHORT_TAG}.sh") || { echo "ABORT: the gate's qsub failed"; exit 2; }
 echo "  gate  : $gate"
 '''
+
+
+def fake_env_folder(folder, name, python):
+    """A conda-like environment folder for the job protocol's tests (D-111,
+    D-113): conda-meta/, bin/python (`python`, unless `hostname` is in
+    FAKE_ENV_BROKEN_HOSTS: then it exits 1, an environment that cannot start
+    on that node). As test_smoke_block7c's own helper."""
+    p = os.path.join(folder, name)
+    for d in ("conda-meta", "bin"):
+        os.makedirs(os.path.join(p, d), exist_ok=True)
+    with open(os.path.join(p, "bin", "python"), "w") as fh:
+        fh.write("#!/bin/bash\nh=$(hostname 2>/dev/null)\n"
+                 "case \",${FAKE_ENV_BROKEN_HOSTS:-},\" in *\",$h,\"*) "
+                 "echo \"python: cannot start on $h\" >&2; exit 1 ;; esac\n"
+                 "exec %s \"$@\"\n" % python)
+    os.chmod(os.path.join(p, "bin", "python"), 0o755)
+    return p
 
 
 def stub_launchers(sbix, tag="synth"):

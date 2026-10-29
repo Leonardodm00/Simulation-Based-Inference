@@ -1,5 +1,5 @@
 {
-  "_comment": "The LindDUP data set's pipeline configuration, v1 (2026-10-29; decisions D-104..D-109 of claude/SBI_decisions_and_ideas_log.md v1.90, project knowledge). LindDUP (D-104, the user's name): the joint DSN+NPE stack trained on the MEAMA in silico campaign campaign_meama_rho1600_n01 (ANN/Phenomenological/MEAMA) and the DUP15HD recordings (Deep_bio DATA_C control and DATA_P DUP, the cohort of record extracted_v2). Run by configuration (D-105): every value below is LindDUP's; the code is the pipeline's and Sbi-extractor's, with the two generic tool changes D-107 (the contact gate stoa_gate_p as a topology axis) and D-108 (a campaign without _v<N> has batch 0): the Sbi-extractor commit of 2026-10-29 on feat/real-arm-parity whose tree is 413e707a (git rev-parse HEAD^{tree}; its hash depends on who applies it). Values not yet read on the data are marked [to verify]: tools/inputs_check.py reads them on davinci before the first submission. Every key is required; a key starting with '_' documents the key after it and is ignored. Where a value is Giulia's (giulia.json v10), it says so.",
+  "_comment": "The LindDUP data set's pipeline configuration, v2 (2026-10-29; decisions D-104..D-109 and D-112..D-114 of claude/SBI_decisions_and_ideas_log.md, project knowledge; v1 of 14:36 had no sim.plan_args and gp_seed 0, max_concurrent_trials 4). LindDUP (D-104, the user's name): the joint DSN+NPE stack trained on the MEAMA in silico campaign campaign_meama_rho1600_n01 (ANN/Phenomenological/MEAMA) and the DUP15HD recordings (Deep_bio DATA_C control and DATA_P DUP, the cohort of record extracted_v2). Run by configuration (D-105): every value below is LindDUP's; the code is the pipeline's and Sbi-extractor's, with the generic tool changes D-107 (the contact gate stoa_gate_p as a topology axis), D-108 (a campaign without _v<N> has batch 0), D-112 (S2's plan leaves out the tasks still being written, --quiet-hours) and D-113 (every job the pipeline submits starts through its job protocol, jobs/stage_job.sh): the two Sbi-extractor commits of 2026-10-29 on feat/real-arm-parity (the trees are named in the README's LindDUP run sheet: git rev-parse HEAD^{tree}; a commit's hash depends on who applies it). Values not yet read on the data are marked [to verify]: tools/inputs_check.py reads them on davinci before the first submission. Every key is required; a key starting with '_' documents the key after it and is ignored. Where a value is Giulia's (giulia.json v10), it says so.",
   "config_version": 10,
   "dataset": "linddup",
 
@@ -23,13 +23,13 @@
     "extract_root": "/davinci-1/home/ldellamea/Deep Summary Network/Deep_bio/extracted_v2"
   },
 
-  "_sim": "S2, the re-detection of the MEAMA campaign at the DUP15HD probe (n_side 3 and fs 10110.09 from the manifest, pitch 60 um D-021, edge 25 um D-024: the profile). One campaign, one label contract: no plan_args. No MEAMA job may still be writing the campaign when S2 plans (D-060, D-073): its arrays were queued on 2026-09-16 and 2026-10-16 [to verify: inputs_check reads the campaign's last change and lists the queue]. Walltimes: Giulia's G2 ran 0.48 s per iteration per worker at one electrode; a 9-electrode probe costs more per iteration [estimate], so 6 h for the test task and for each array task, against MEAMA tasks of 40 topologies per worker [the launcher's default; to verify]; a task killed at its walltime is re-run by the array's RESUME. concurrency 4: what the core cap leaves (D-109: (200 - 4) / 48).",
+  "_sim": "S2, the re-detection of the MEAMA campaign at the DUP15HD probe (n_side 3 and fs 10110.09 from the manifest, pitch 60 um D-021, edge 25 um D-024: the profile). One campaign, one label contract. The campaign is still being written (the user, 2026-10-29 17:37: 'we will run on the available simulations', D-112): plan_args --quiet-hours 6 makes S2's plan leave out every task changed less than 6 h before it (its folder, its topo_* folders, its JSON), named in the plan and the record, and plan again at each round, so a task that has gone quiet joins a later round; a task being written that already has detections is refused (D-060, D-073). inputs_check lists the tasks left out and the pace of the iteration files. Walltimes: Giulia's G2 ran 0.48 s per iteration per worker at one electrode; a 9-electrode probe costs more per iteration [estimate], so 6 h for the test task and for each array task, against MEAMA tasks of 40 topologies per worker [the launcher's default; to verify]; a task killed at its walltime is re-run by the array's RESUME. concurrency 4: what the core cap leaves (D-109: (200 - 4) / 48).",
   "sim": {
     "sim_main": "/davinci-1/home/ldellamea/ANN/Phenomenological/MEAMA",
     "campaign_glob": "campaign_meama_rho1600_n01",
     "out_root": "/davinci-1/home/ldellamea/ANN/MEA_analysis/mea_out_linddup",
     "tools": "/davinci-1/home/ldellamea/ANN/MEA_analysis",
-    "plan_args": "",
+    "plan_args": "--quiet-hours 6",
     "test_walltime": "06:00:00",
     "walltime": "06:00:00",
     "ncpus": 48,
@@ -92,11 +92,11 @@
     "_gp_rounds": "Giulia's (D-088): 20 rounds of 10.",
     "gp_rounds": 20,
     "trials_per_round": 10,
-    "_max_concurrent_trials": "4: what the 200-core cap holds beside the sequencer (D-109: (200 - 4) / 48); Giulia's 25 would be cut to 4 by the cap anyway.",
-    "max_concurrent_trials": 4,
+    "_max_concurrent_trials": "Giulia's 25 (D-114: the optimisation and training values are Giulia's); the 200-core cap (D-109) holds 4 trials of 48 at once beside the sequencer's 4, so 4 run at once.",
+    "max_concurrent_trials": 25,
 
-    "_seeds": "gp_seed 0: LindDUP's first design (Giulia's 1 was a restart, D-101); train_seed 0: one donor split for the whole search.",
-    "gp_seed": 0,
+    "_seeds": "Giulia's (D-114): gp_seed 1 (Giulia's restart value, D-101; v1 had 0); train_seed 0: one donor split for the whole search.",
+    "gp_seed": 1,
     "train_seed": 0,
     "_gp_noise_sigma": "Estimated from the data (the code's default).",
     "gp_noise_sigma": null,

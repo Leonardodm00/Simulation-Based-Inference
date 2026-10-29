@@ -36,6 +36,20 @@ Checks (specs/SPEC.md block 3, "Test oracles")
                         own) exceeds the share; S1 recorded (4 cores, the
                         aggregation after it), then S2 refused at its start
                         when its gate (8 cores) can never fit
+    test_env_rounds     D-113, S2 on the stub's tracking mode (3 tasks, the
+                        jobs through jobs/stage_job.sh, the fake conda absent
+                        on host broken): (a) the test task's first job and
+                        the first gate land on broken (exit 96): submitted
+                        again, free, counted as node faults; an array element
+                        that PBS never starts: the gate names it never
+                        started, a free round runs it, PIPELINE DONE, 7 jobs;
+                        the launcher got the job protocol's variables;
+                        (b) a task that fails every time it starts: rerun
+                        rounds 1 and 2, then STOP (a one-task round is a
+                        plain job, so its failed job leaves its gate unrun:
+                        the gate alone, no node fault); (c) a task whose job
+                        never starts: free rounds until the stall guard stops
+                        the stage after 3
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block3.py [check ...]
@@ -134,7 +148,9 @@ class Standin(object):
         env["PIPELINE_SKIP_CONDA"] = "1"
         env["PYTHONPATH"] = _PIPE + os.pathsep + env.get("PYTHONPATH", "")
         for k in ("DRYRUN", "WALLTIME", "TEST_INDEX", "RESUME", "COHORT_TAG", "STUB_REFUSE",
-                  "STUB_ONE_TASK"):
+                  "STUB_ONE_TASK", "STUB_TRACK", "STUB_N_TASKS", "STUB_NEVER_START", "STUB_FAIL_TASK",
+                  "SKIP_CONDA", "PIPELINE_JOBS_DIR", "WORK_ROOT", "CHAIN_NAME", "AVOID_FILE",
+                  "AVOID_HOLD_S"):
             env.pop(k, None)
         env.update(extra)
         return env
@@ -408,10 +424,85 @@ def test_cores():
 
 # ------------------------------------------------------------------ main ---
 
+def test_env_rounds():
+    """D-113: S2's jobs that cannot start cost no round; its rounds."""
+    fake_conda = os.path.join(_HERE, "fake_conda")
+    # (a) faults on host broken; an array element PBS never starts
+    s = Standin(keep=("real_extraction", "label_freeze"))
+    try:
+        envs = os.path.join(s.root, "conda_envs")
+        ST.fake_env_folder(envs, "sbi_export", PYTHON)
+        home = os.path.join(s.root, "home")
+        os.makedirs(home)
+        env_path = os.pathsep.join([_FAKE, fake_conda, s.fakebin, os.environ.get("PATH", "")])
+        rc, out = s.run([], timeout=600, STUB_TRACK="1", STUB_N_TASKS="3", PATH=env_path, HOME=home,
+                        FAKE_CONDA_ENVS=envs, FAKE_CONDA_ABSENT_HOSTS="broken",
+                        FAKE_ENV_BROKEN_HOSTS="broken", FAKE_PBS_HOSTS="goodnode",
+                        FAKE_PBS_HOST_BY_NAME="g2_test:1=broken,g2_gate:1=broken",
+                        FAKE_PBS_FAIL_ONCE="1", PIPELINE_AVOID_HOLD_S="0")
+        assert rc == 0 and "PIPELINE DONE" in out, out[-3000:]
+        want = ["sim_redetection: the test task (job 1.fake) could not start on broken (",
+                "an environment fault, not the stage's (D-113); submitted again; 1 node fault(s) on broken",
+                "sim_redetection: the gate (job 4.fake) could not start on broken (",
+                "2 node fault(s) on broken so far",
+                "sim_redetection: recorded re-detection gate alone -> 5.fake",
+                "sim_redetection: the gate refused (job 5.fake): 1 task(s) never started (no mea_env.json",
+                "campaign_x/sweep_cpu_task0002; a free round (1), not counted against the 2 rerun round(s)",
+                "sim_redetection: recorded re-detection array (round 1) -> 6.fake",
+                "sim_redetection: wrote "]
+        miss = [w for w in want if w not in out]
+        assert not miss, (miss, out[-4000:])
+        assert s.n_submitted() == 7, s.n_submitted()     # 2 tests, 2 arrays, 3 gates
+        st = json.load(open(os.path.join(s.cfg["paths"]["work_root"], "state.json")))
+        sub = st["stages"]["sim_redetection"]["sub"]
+        assert sub["free_rounds"] == 1 and not sub.get("rerun_rounds") and sub["round"] == 1, sub
+        assert sub["node_fault_hosts"] == {"broken": 2}, sub
+        # the launcher's environment carried the job protocol (D-113): its jobs say so
+        tlog = open(os.path.join(s.sbix, "sim_reextract", "out", "stub_test_synth.log")).read()
+        assert "(the pipeline's job protocol, D-113)" in tlog and "RUN_ARGV: host goodnode" in tlog, tlog
+        prefix = os.path.join(s.cfg["paths"]["work_root"], "envs", "sbi_export.prefix")
+        assert open(prefix).read().strip() == os.path.join(envs, "sbi_export"), "the prefix was not recorded"
+    finally:
+        s.close()
+    # (b) a task that fails every time it starts: two rerun rounds, then STOP
+    s = Standin(keep=("real_extraction", "label_freeze"))
+    try:
+        rc, out = s.run([], timeout=600, STUB_TRACK="1", STUB_N_TASKS="3", STUB_FAIL_TASK="2:99")
+        assert rc != 0, out[-2000:]
+        want = ["sim_redetection: the gate refused (job 3.fake): 1 task(s) started and failed "
+                "(campaign_x/sweep_cpu_task0002), 0 never started; rerun round 1 of at most 2",
+                # a one-task array is a plain job: its gate (afterok) never runs when it fails
+                "sim_redetection: the gate 5.fake never ran (exit -1, no record, no log of its own",
+                "the gate alone (1 of at most 3, D-113)",
+                "rerun round 2 of at most 2",
+                "STOP: stage sim_redetection failed: after 2 rerun round(s), 1 task(s) still bad (job 9.fake;",
+                "campaign_x/sweep_cpu_task0002: no mea_manifest.json (the task did not finish)"]
+        miss = [w for w in want if w not in out]
+        assert not miss, (miss, out[-3000:])
+        assert "could not start on" not in out, out[-3000:]     # a dependency, not a node's fault
+        assert s.n_submitted() == 9, s.n_submitted()     # the test, 3 arrays, 3 gates, 2 gates alone
+    finally:
+        s.close()
+    # (c) a task whose job never starts: free rounds until the stall guard
+    s = Standin(keep=("real_extraction", "label_freeze"))
+    try:
+        rc, out = s.run([], timeout=600, STUB_TRACK="1", STUB_N_TASKS="2", STUB_NEVER_START="1")
+        assert rc != 0, out[-2000:]
+        for k in (1, 2, 3):
+            assert "a free round (%d), not counted" % k in out, (k, out[-3000:])
+        assert "a free round (4)" not in out, out[-3000:]
+        assert ("STOP: stage sim_redetection failed: 1 task(s) still could not start after 3 free rounds "
+                "in a row, no fewer each round (D-113)") in out, out[-3000:]
+        assert s.n_submitted() == 13, s.n_submitted()    # the test, 4 arrays, 4 gates, 4 gates alone
+    finally:
+        s.close()
+
+
 CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_reference),
           ("test_convergence", test_convergence), ("test_invariants", test_invariants),
           ("test_contract", test_contract), ("test_determinism", test_determinism),
-          ("test_edge_cases", test_edge_cases), ("test_cores", test_cores)]
+          ("test_edge_cases", test_edge_cases), ("test_cores", test_cores),
+          ("test_env_rounds", test_env_rounds)]
 
 
 def main():

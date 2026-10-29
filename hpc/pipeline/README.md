@@ -304,6 +304,23 @@ node. Every trial and member runs with `--resume`, so a job PBS runs again
 continues from its checkpoint; a checkpoint that cannot be loaded is moved
 aside (`<name>.corrupt<k>`) and the run starts from epoch 0.
 
+**Every job of the pipeline (D-113, 2026-10-29).** The same holds for the jobs
+the input and bank stages submit through Sbi-extractor's launchers, whatever
+the data set: the stages give the launchers `PIPELINE_JOBS_DIR` (this
+checkout's `jobs/`), `WORK_ROOT`, `CHAIN_NAME`, `AVOID_FILE` and
+`AVOID_HOLD_S`, which Sbi-extractor's `env.sh` passes to every job with qsub
+-v, and every job script (S1's extraction array and aggregation, S2's tasks
+through `run_mea_task.pbs` around ANN's `submit_mea_array.sh`, S2's gate, the
+bank's tasks and gate) starts through `jobs/stage_job.sh`: the avoid list
+(exit 94), the activation above (exit 96 when nothing starts, after holding
+the slot), the chain's watchdog at its end. S2 and S5 submit again, free, a
+test task, a gate or a verification job that could not start, and run free
+rounds (not counted against their rerun rounds) for the tasks their gate or
+verifier finds never started; three free rounds in a row with no fewer such
+tasks stop the stage. S2's tasks that started and failed get two rerun rounds.
+S1 has no rounds: a well whose job could not start stops it at the
+aggregation (SPEC sec. 8).
+
 `tools/search_report.py --config <file> [--qstat] [--trial <id>]` reads
 (never writes) the state, the ledger, the pending specs, the run folders and
 the job logs and prints, per trial, what the stage's next poll does with it
@@ -337,6 +354,12 @@ MEAMA campaign `campaign_meama_rho1600_n01` against the DUP15HD recordings (`ext
 DATA_C / DATA_P), S-A1 (D-106), the contact gate `stoa_gate_p` in theta (D-107: p = 34),
 `resources.max_cores` 200 (D-109); its other values Giulia's, each `_` key saying which.
 Values not yet read on the data carry `[to verify]`: `tools/inputs_check.py` reads them.
+v2 of the same day (17:37): `sim.plan_args` `--quiet-hours 6` -- the campaign is still
+being written, and S2 runs on the simulations already written, leaving out every task
+changed in the last 6 h (D-112); the search's `gp_seed` 1 and `max_concurrent_trials`
+25, Giulia's (D-114: the optimisation and training values are Giulia's; the cap still
+runs 4 trials at once). Every job the pipeline submits, Sbi-extractor's and ANN's
+included, starts through the job protocol `jobs/stage_job.sh` (D-113).
 
 ## Layout
 
@@ -353,6 +376,8 @@ stages/bank.py     S4-S6 (block 2)
 stages/search.py   S7 (block 7)
 stages/best_fit.py S8 (block 7)
 jobs/run_argv.pbs  one job = one command line from an argv file
+jobs/activate_env.sh, chain.sh  the activation's fallback, the chain's replacement and watchdog (D-111)
+jobs/stage_job.sh  the job protocol of the other repositories' job scripts (D-113)
 tools/             bank_split_hash.py, ensemble_nll.py, bank_verify.py (run by the stages); probe_compute_qsub.pbs;
                    read-only: search_report.py, perrow_check.py, inputs_check.py (block 9: a data set's inputs before its first submission)
 run_pipeline.sh    the one command (conda; submit, --dry-run, --status, --stop, --retire-login-sequencer)
@@ -494,47 +519,62 @@ tick that raises no longer leaves its successor refusing (2026-10-19).
 
 ### LindDUP: the first submission (2026-10-29)
 
-The same discipline: one line at a time, each read before the next. Before
-L1, the Sbi-extractor commit of 2026-10-29 (D-107, D-108, `profiles/linddup.sh`)
-must be on GitHub (D-062: pushed from the laptop); its tree is `413e707a`.
-[2026-10-29, after D-111 (`66e18ef`): the commands are unchanged. L1's pull
-brings D-111 too (davinci's checkout has it since the Giulia line 1 of 17:00),
-L4 and L5 print its lines, and two cautions are added: the campaign may still
-be being written (L3, before L5), and S2's and the bank's own jobs are outside
-D-111 (L6).]
+The same discipline: one line at a time, each read before the next. [2026-10-29 19:30,
+D-112..D-114: L0 is new (the two Sbi-extractor commits of the day, through the laptop);
+L1-L6 keep their commands with new pass lines; S2 runs on a campaign still being
+written (D-112) and every job of S1, S2 and S5 runs under the job protocol (D-113). The
+version of 17:30 is in git history.]
 
 ```
-# L1. this code and its cluster-side check: step 1 above; pass lines: `66e18ef` or later from git log, PIPELINE CODE OK
+# L0. on the laptop (Git Bash), once: the two Sbi-extractor commits of 2026-10-29 (D-062), from
+#     the two files sent in the chat, saved in Downloads. The working clone is ~/Sbi-extractor
+#     (C:\Users\leona\Sbi-extractor); ~/repos/ holds only the retired one (HPC_PATHS sec. L).
+#     The line picks the file from the clone's tree: at e9aeb55 (tree dc10065f) both commits,
+#     sbix_linddup_d107_to_d113.mbox; at the D-107 commit (tree 413e707a) the second only,
+#     sbix_d112_d113.patch; any other state applies nothing and prints UNEXPECTED HEAD (paste it).
+#     Pass line: the tree 9d8ea296cfa6bc5bed557cb707bee1431f216608; then the push.
+cd ~/Sbi-extractor && git checkout feat/real-arm-parity && git pull --ff-only && case "$(git rev-parse HEAD^{tree})" in dc10065fc25a35c7ac0a84d237530cbb5c68e537) git am ~/Downloads/sbix_linddup_d107_to_d113.mbox ;; 413e707addd88ce37bda8c4b11d4fd91aea0d285) git am ~/Downloads/sbix_d112_d113.patch ;; *) echo "UNEXPECTED HEAD: $(git log -1 --format='%h %s')"; false ;; esac && git rev-parse HEAD^{tree}
+git push origin feat/real-arm-parity
 
-# L2. the Sbi-extractor pull, its tree and its suites; pass lines, in order: the tree 413e707a..., then
-#     -- 8 pass, 0 fail, 0 error, 0 todo, 2 skip / -- 41 pass, 0 fail, ... 2 skip / -- 17 pass, 0 fail, ... 2 skip / ALL 35 CHECKS PASSED
-cd ~/repos/Sbi-extractor && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin feat/real-arm-parity && git rev-parse HEAD^{tree} && source env.sh && python3 smoke_test_topology_axes.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_plan.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_export.py 2>&1 | tail -1 && python3 sim_reextract/smoke_test_sim_reextract.py 2>&1 | tail -1
+# L1. this code and its cluster-side check: step 1 above, then the job protocol's units; pass lines:
+#     the D-112..D-114 commit or later from git log, PIPELINE CODE OK, then
+#     "3 of 3 checks pass" (activate_units, job_units, stage_job_units: bash and stdlib).
+#     The pull also updates the running Giulia chain at its next tick: nothing it runs changed
+#     (blocks 2, 3 and 9 and new helpers only; giulia.json's digest unchanged).
+cd ~/SBI && python3 hpc/pipeline/tests/test_smoke_block7c.py activate_units job_units stage_job_units 2>&1 | tail -1
 
-# L3. the inputs check (read-only; block 9); pass line: INPUTS CHECK: 0 FAIL, <w> WARN -- read every WARN (above
-#     all `campaign`: a MEAMA job may still be writing the campaign) and the qstat lines; paste it whole.
-#     Before L5: no `meama_campaign` job (`meama_cam*`) left in the qstat lines (Q, H, R or B; at 17:02 on
-#     2026-10-29 `1544754[]` was B) and no WARN on `campaign`. Otherwise wait for the array to end, or leave
-#     the tasks it is writing out by name (`sim.plan_args` `--exclude-task CAMPAIGN/SWEEP`, D-060) -- the
-#     user's call; S2 must not plan a campaign being written (D-104, D-073)
+# L2. the Sbi-extractor pull, its tree and its suites (SBI_HPC_DIR -> ~/SBI/hpc, pulled in L1);
+#     pass lines, in order: the tree 9d8ea296..., then
+#     -- 8 pass, 0 fail, 0 error, 0 todo, 2 skip / -- 41 pass, 0 fail, ... 2 skip /
+#     -- 18 pass, 0 fail, ... 2 skip / ALL 40 CHECKS PASSED / ALL STAGE-D JOB CHECKS PASSED
+cd ~/repos/Sbi-extractor && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin feat/real-arm-parity && git rev-parse HEAD^{tree} && source env.sh && python3 smoke_test_topology_axes.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_plan.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_export.py 2>&1 | tail -1 && ANN_TOOLS=~/ANN/MEA_analysis python3 sim_reextract/smoke_test_sim_reextract.py 2>&1 | tail -1 && (cd extractor && python3 smoke_test_stage_d_jobs.py 2>&1 | tail -1)
+
+# L3. the inputs check (read-only; block 9); pass line: INPUTS CHECK: 0 FAIL, <w> WARN. Read the rows
+#     `being written` (the tasks S2's plan leaves out now: changed in the last 6 h, D-112; a FAIL if
+#     every task is), `pace` (a WARN means 6 h is short for this campaign's pace: say so before L5),
+#     `plan option`, `protocol (SBI)` and `protocol (Sbi-extractor)` (both OK: D-113), and the qstat
+#     lines (a `meama_cam*` array may still run: D-112 handles it). Paste it whole.
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/inputs_check.py --project linddup --json ~/inputs_check_linddup.json 2>&1 | tee ~/inputs_check_linddup.txt
 
-# L4. the dry run; pass: exit 0, no REFUSE or STOP line, real_extraction "would be skipped" (extracted_v2 is
-#     done), sim_redetection and label_freeze "would run", "at most 4 trial(s) at once", two
-#     "environment faults (D-111): ..." lines (the search's, the best fit's), the sequencer pl_linddup
-cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --dry-run 2>&1 | tee ~/pipeline_linddup_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|cores|exit|D-111" ; echo "exit ${PIPESTATUS[0]}"
+# L4. the dry run; pass: exit 0, no REFUSE or STOP line, real_extraction "would be skipped", sim_redetection
+#     and label_freeze "would run", "at most 4 trial(s) at once -- max_concurrent_trials 25", two
+#     "environment faults (D-111)" lines, three "job protocol (D-113)" lines (S1, S2, S5), S2's
+#     "rounds (D-113)" and S5's "jobs that cannot start (D-113)", the sequencer pl_linddup
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --dry-run 2>&1 | tee ~/pipeline_linddup_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|cores|exit|D-111|D-113" ; echo "exit ${PIPESTATUS[0]}"
 
 # L5. the run; pass lines, in order: environment sbi_export: <prefix> (recorded for nodes without conda,
-#     D-111), the same for sbi_env (both prefixes expected under /davinci-1/home/ldellamea/.conda/envs, which
-#     a node without /archive still reaches), then SUBMITTED the sequencer: job <id> (pl_linddup)
+#     D-111), the same for sbi_env (both under /davinci-1/home/ldellamea/.conda/envs), then SUBMITTED the
+#     sequencer: job <id> (pl_linddup)
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup
 
-# L6. any time: the status and the log (S2's test task, then its array and gate, S3, the plan's estimates, ...).
-#     S2's test task, array and gate and the bank's test task, array and gate run Sbi-extractor's and ANN's
-#     job scripts, which keep their own conda activation (outside D-111): a node without conda fails them.
-#     The bank's array tasks heal through its rerun rounds (D-094) and a bank gate that never ran is run
-#     alone once; otherwise such a failure is a STOP that ends the chain on purpose (--status: "chain: ended
-#     on purpose ..."): read the STOP line and the job's log, then the dry run and the submission, each with
-#     --retry <stage>
+# L6. any time: the status and the log. Expected in the log: "sim_redetection: [plan] being written : <n>
+#     task(s) changed less than 6 h before the plan, left out (D-112)"; S2's and S5's jobs print
+#     "RUN_ARGV: host <h>, job <id>, env sbi_export (the pipeline's job protocol, D-113)" in their own logs.
+#     A job that cannot start costs no round (D-113): "could not start on <host> (...): ... submitted
+#     again", "a free round (<k>), not counted ...". STOPs that remain: a task failing after its rerun
+#     rounds (S2 2, S5 bank.max_rerun_rounds 2), 12 environment faults in a row on 3 nodes, 3 free rounds
+#     with no fewer unstarted tasks, a refusal no rerun fixes; each ends the chain on purpose: read the
+#     STOP line and the job's log, then the dry run and the submission with --retry <stage>
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project linddup --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/linddup/pipeline.log
 ```
 
@@ -544,11 +584,11 @@ bash ~/SBI/hpc/pipeline/run_pipeline.sh --project linddup --status; tail -n 12 /
 python3 hpc/pipeline/tests/test_smoke_pipeline.py      # block 1, about 25 s, stdlib
 python3 hpc/pipeline/tests/test_smoke_block1b.py       # block 1's sequencer jobs (D-098), about 3 min, stdlib
 python3 hpc/pipeline/tests/test_smoke_block1c.py       # block 1's core cap (D-099), about 2 min, stdlib (SBIX_CLONE for its launcher check)
-python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 2 min, needs the Sbi-extractor checkout (SBIX_CLONE)
-python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 7 s, the same
+python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 2 min, needs the Sbi-extractor checkout (SBIX_CLONE) at or after D-113
+python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 30 s, the same
 python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
 python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults, checkpoints, unreadable records and the avoid list, block 1's stop and retry guard, about 10 min, the same
-python3 hpc/pipeline/tests/test_smoke_block7c.py       # D-111: the environment's fallback, environment faults, the driver's replacement, the watchdog, about 3 min, the same
+python3 hpc/pipeline/tests/test_smoke_block7c.py       # D-111: the environment's fallback, environment faults, the driver's replacement, the watchdog; D-113's stage_job_units; about 3 min, the same
 python3 hpc/pipeline/tests/test_smoke_report.py        # tools/search_report.py, a few seconds, stdlib
 python3 hpc/pipeline/tests/test_smoke_reset.py         # tools/search_reset.py, about 20 s, stdlib and the fake PBS
 python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, a few seconds, numpy (with torch, sbi and zuko also the real-flow oracle)
@@ -574,11 +614,11 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | block | what | status |
 |---|---|---|
 | 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4; the sequencer as a chain of PBS jobs on compute nodes, the lock and the state hardened, adoption, the transition (D-098, config v8); the core cap (D-099, config v9); the prepared state saved before the first tick (2026-10-19 (e)); a driver that loses the scheduler hands over (2026-10-21 (f)); an environment fault never ends the chain: the driver's replacement, the stage jobs' watchdog, the deliberate end (D-111, 2026-10-29 (g)) | built 2026-10-15, smoke-tested; amended 2026-10-18 (`test_smoke_block1b.py`) and 2026-10-19 (`test_smoke_block1c.py`; (e) in `test_smoke_block1b.py`); on davinci 2026-10-19: the probe passed (a compute node drives jobs), the three block-1 tests pass |
-| 2 | the bank stages S4-S6 through `launch_bank.sh` (the profile from the configuration; the chain line BC as phases; a gate that never ran is run alone; the self-healing simulated bank: the verification job, the quarantine, the reruns, the certificate; config v6) | built 2026-10-16, smoke-tested on the stand-in; amended 2026-10-16 (the dropped gate), 2026-10-18 (D-094, D-095) and 2026-10-19 (D-099: the cap, the launcher's NCPUS passed; `test_cores`) |
-| 3 | the input stages S1-S3 through `launch_stage_d.sh`, `launch_sim_reextract.sh`, `preflight_label_axes.py` | built 2026-10-16, smoke-tested (S3 on the real tool; S1-S2 on stubs of the launchers); amended 2026-10-19 (D-099: the cap; `test_cores`) |
+| 2 | the bank stages S4-S6 through `launch_bank.sh` (the profile from the configuration; the chain line BC as phases; a gate that never ran is run alone; the self-healing simulated bank: the verification job, the quarantine, the reruns, the certificate; config v6); the job protocol, and the jobs that cannot start cost no round or try (D-113) | built 2026-10-16, smoke-tested on the stand-in; amended 2026-10-16 (the dropped gate), 2026-10-18 (D-094, D-095), 2026-10-19 (D-099: the cap, the launcher's NCPUS passed; `test_cores`) and 2026-10-29 (b) (D-113: `test_env_faults`, `test_env_decisions`) |
+| 3 | the input stages S1-S3 through `launch_stage_d.sh`, `launch_sim_reextract.sh`, `preflight_label_axes.py`; the job protocol for S1 and S2 (D-113); S2's free resubmissions, free rounds and rerun rounds (D-113); the plan's `--quiet-hours` through `sim.plan_args` (D-112) | built 2026-10-16, smoke-tested (S3 on the real tool; S1-S2 on stubs of the launchers); amended 2026-10-19 (D-099: the cap; `test_cores`) and 2026-10-29 (b) (D-113: `test_env_rounds`) |
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
 | 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |
 | 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch`; the checkpoint fsynced, a damaged one moved aside on resume (D-111) | built 2026-10-15, smoke-tested; amended 2026-10-29 (`smoke_test_blocks_4_6.py` B6c) |
 | 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py`; the read-only `tools/perrow_check.py` (the NLL split L = T + R); the bad-node avoid list (D-102); environment faults and reruns: the activation's fallback, free resubmissions, the guard, `--resume` on every trial and member (D-111) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`); 2026-10-20 (`test_smoke_perrow.py`); 2026-10-21 (the avoid list: `test_smoke_block7b.py` `avoid_units`, `avoid_list`); 2026-10-29 (D-111: `test_smoke_block7c.py`) |
 | 8 | end to end on the stand-in (the real bank tools, tuner and runner; 11 jobs; the sequencer stopped and re-run); the davinci lines above | rehearsed 2026-10-16 |
-| 9 | the inputs check `tools/inputs_check.py` (read-only, any data set; LindDUP's first, 2026-10-29) | built 2026-10-29, smoke-tested (`test_smoke_inputs_check.py`; 12 mutations, each caught); not run on davinci |
+| 9 | the inputs check `tools/inputs_check.py` (read-only, any data set; LindDUP's first, 2026-10-29); the plan's `--quiet-hours`, the tasks being written, the pace, the job protocol's two sides (D-112, D-113) | built 2026-10-29, smoke-tested (`test_smoke_inputs_check.py`; 12 mutations, each caught); amended 2026-10-29 (b) (`test_being_written`; 5 more mutations); not run on davinci |

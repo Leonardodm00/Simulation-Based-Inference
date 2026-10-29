@@ -8,7 +8,14 @@ Checks (specs/SPEC.md block 9, "Test oracles")
     test_known_answer   the consistent tree: 0 FAIL, 0 WARN at quiet hours 0;
                         1 campaign, 2 tasks, 5 topologies, 10 iteration
                         files; stoa_gate_p's 5 distinct sampled values;
-                        exit 0 and the last line
+                        the plan's --quiet-hours 6 (linddup.json's
+                        sim.plan_args, D-112) leaves nothing out; the job
+                        protocol's files on both sides (D-113); exit 0 and
+                        the last line
+    test_being_written  D-112: one task changed just now is named as left
+                        out, not sampled (3 files, its gate values absent),
+                        no WARN; iteration files 10 h apart give the pace
+                        WARN against --quiet-hours 6
     test_reference      read_scalars equals numpy.load's own 0-d members on a
                         file holding arrays too; the counts equal an os.walk
                         count of iter_*.npz
@@ -24,7 +31,10 @@ Checks (specs/SPEC.md block 9, "Test oracles")
     test_determinism    two runs give the same rows (but the age text) and
                         the same sample; the sample is round-robin
     test_edge_cases     each mutation of the block's list makes its named
-                        check FAIL and no other
+                        check FAIL and no other (D-112: every task being
+                        written, a plan without --quiet-hours, an unreadable
+                        plan_args; D-113: SBI's stage_job.sh absent, a job
+                        script of Sbi-extractor not under the protocol)
 
 Run
     python3 hpc/pipeline/tests/test_smoke_inputs_check.py
@@ -141,12 +151,24 @@ def build_template():
     if clone is None or not os.path.isfile(os.path.join(clone, "sim_reextract", "profiles",
                                                         "linddup.sh")):
         raise unittest.SkipTest("no Sbi-extractor checkout with profiles/linddup.sh (SBIX_CLONE)")
+    if not os.path.isfile(os.path.join(clone, "sim_reextract", "run_mea_task.pbs")):
+        raise unittest.SkipTest("the Sbi-extractor checkout %s is before D-113 (no "
+                                "sim_reextract/run_mea_task.pbs)" % clone)
     root = tempfile.mkdtemp(prefix="inputs_check_tpl_")
     sbix = os.path.join(root, "sbix")
     os.makedirs(os.path.join(sbix, "sim_reextract", "profiles"))
     shutil.copy2(os.path.join(clone, "sbi_labels.py"), sbix)
     shutil.copy2(os.path.join(clone, "sim_reextract", "profiles", "linddup.sh"),
                  os.path.join(sbix, "sim_reextract", "profiles"))
+    # D-112's plan option and D-113's side of the job protocol, as the checkout has them
+    for rel in ("env.sh", "sim_reextract/sim_reextract_plan.py") + IC.SBIX_PROTOCOL_SCRIPTS:
+        dst = os.path.join(sbix, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(os.path.join(clone, rel), dst)
+    jobs = os.path.join(root, "sbi", "hpc", "pipeline", "jobs")
+    os.makedirs(jobs)
+    for f in ("stage_job.sh", "activate_env.sh", "chain.sh"):
+        shutil.copy2(os.path.join(_PIPE, "jobs", f), jobs)
     sim_main = os.path.join(root, "MEAMA")
     os.makedirs(sim_main)
     names, bounds = _write_registry(sim_main)
@@ -235,6 +257,46 @@ def test_known_answer():
         assert rows["batches"]["text"] == "%s 0" % CAMP
         assert rows["registry"]["status"] == "OK" and rows["window"]["text"].endswith("W 20000")
         assert rows["cohort manifest"]["status"] == "OK" and rows["S2 profile"]["status"] == "OK"
+        # D-112: linddup.json's plan_args --quiet-hours 6; the month-old tree: nothing left out
+        assert s["plan_quiet_hours"] == 6.0 and s["being_written"] == [], s
+        assert rows["being written"]["status"] == "OK" and "S2 plans all 2" in rows["being written"]["text"]
+        assert rows["plan option"]["status"] == "OK", rows["plan option"]
+        assert rows["pace"]["status"] == "NOTE" and "95% under 0.00 h" in rows["pace"]["text"], rows["pace"]
+        # D-113: both sides of the job protocol
+        assert rows["protocol (SBI)"]["status"] == "OK", rows["protocol (SBI)"]
+        assert "none yet (the submission records them" in rows["protocol (SBI)"]["text"]
+        assert rows["protocol (Sbi-extractor)"]["status"] == "OK", rows["protocol (Sbi-extractor)"]
+    finally:
+        cleanup(root)
+
+
+def test_being_written():
+    root = fresh()
+    try:
+        young = os.path.join(root, "MEAMA", CAMP, TASKS[1][0])
+        os.utime(os.path.join(young, "topo_00001"), None)        # a file written there just now
+        rc, out, doc = run(root)
+        rows = dict((r["check"], r) for r in doc["checks"])
+        s = doc["summary"]
+        name = "%s/%s" % (CAMP, TASKS[1][0])
+        assert rc == 0 and not fails(doc) and not [r for r in doc["checks"] if r["status"] == "WARN"], doc
+        assert s["being_written"] == [name] and s["sampled"] == 3, s
+        bw = rows["being written"]
+        assert bw["status"] == "NOTE" and bw["text"].startswith("1 of 2 task(s) changed less than 6 h ago") \
+            and name in bw["text"], bw
+        assert s["members"]["stoa_gate_p"] == {"files": 3, "nan": 0, "distinct": 3}, s["members"]
+        # the pace: task 0's files written 10 h apart (a month ago), against the plan's 6 h
+        base = time.time() - 30 * 86400.0
+        files = sorted(os.path.join(dp, f) for dp, _d, fns in os.walk(os.path.join(root, "MEAMA", CAMP,
+                                                                                   TASKS[0][0]))
+                       for f in fns if f.startswith("iter_"))
+        for j, f in enumerate(files):
+            os.utime(f, (base + j * 36000.0, base + j * 36000.0))
+        rc, out, doc = run(root)
+        warn = [r for r in doc["checks"] if r["status"] == "WARN"]
+        assert rc == 0 and [r["check"] for r in warn] == ["pace"], warn
+        assert "the longest 10.00 h (in %s/%s)" % (CAMP, TASKS[0][0]) in warn[0]["text"], warn
+        assert "--quiet-hours 6 is not longer than most gaps" in warn[0]["text"], warn
     finally:
         cleanup(root)
 
@@ -283,6 +345,10 @@ def test_invariants():
         for n, (sw, nt, seed) in enumerate(TASKS):
             write_task(sim, CAMP, sw, nt, seed, n, _TEMPLATE["names"], _TEMPLATE["bounds"],
                        kernel_nan=True)
+        old = time.time() - 30 * 86400.0      # written a month ago, as the template (D-112)
+        for dp, dns, fns in os.walk(os.path.join(sim, CAMP)):
+            for n in dns + fns:
+                os.utime(os.path.join(dp, n), (old, old))
         rc, out, doc = run(root)
         warn = sorted(r["check"] for r in doc["checks"] if r["status"] == "WARN")
         assert rc == 0 and not fails(doc), fails(doc)
@@ -408,12 +474,37 @@ def _m_manifest_sha(root):
         fh.write("\n")
 
 
+def _m_all_written(root):
+    for sw, _n, _s in TASKS:
+        os.utime(os.path.join(root, "MEAMA", CAMP, sw), None)
+
+
+def _m_plan_option(root):
+    with open(os.path.join(root, "sbix", "sim_reextract", "sim_reextract_plan.py"), "w") as fh:
+        fh.write("# a plan before D-112\n")
+
+
+def _m_plan_args(root):
+    edit_json(os.path.join(root, "linddup.json"), lambda d: d["sim"].update(plan_args="--quiet-hours soon"))
+
+
+def _m_protocol_sbi(root):
+    os.remove(os.path.join(root, "sbi", "hpc", "pipeline", "jobs", "stage_job.sh"))
+
+
+def _m_protocol_sbix(root):
+    with open(os.path.join(root, "sbix", "sim_reextract", "run_mea_task.pbs"), "w") as fh:
+        fh.write("#!/bin/bash\n# a job script before D-113\n")
+
+
 MUTATIONS = ((_m_simtime, "simtime"), (_m_wsize, "window"), (_m_ne, "n_e"),
              (_m_width, "label width"), (_m_onbox, "on axis"), (_m_rule, "conn_rule"),
              (_m_gate_absent, "topology axis stoa_gate_p"), (_m_gate_hi, "topology axis stoa_gate_p"),
              (_m_unknown_axis, "topology axis gate_x"), (_m_exclude, "freeze exclude p0_conn"),
              (_m_batches, "batches"), (_m_profile, "S2 profile"),
-             (_m_manifest_sha, "cohort manifest"))
+             (_m_manifest_sha, "cohort manifest"), (_m_all_written, "being written"),
+             (_m_plan_option, "plan option"), (_m_plan_args, "plan args"),
+             (_m_protocol_sbi, "protocol (SBI)"), (_m_protocol_sbix, "protocol (Sbi-extractor)"))
 
 
 def test_edge_cases():
@@ -430,7 +521,8 @@ def test_edge_cases():
     assert not bad, "\n".join(bad)
 
 
-CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_reference),
+CHECKS = [("test_known_answer", test_known_answer), ("test_being_written", test_being_written),
+          ("test_reference", test_reference),
           ("test_convergence", test_convergence), ("test_invariants", test_invariants),
           ("test_contract", test_contract), ("test_determinism", test_determinism),
           ("test_edge_cases", test_edge_cases)]

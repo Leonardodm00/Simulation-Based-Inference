@@ -51,6 +51,21 @@ never ran gets the gate alone (`launch_bank.sh gate`, no dependency), once
 shards were not zip files though their markers existed: hence the job that
 re-reads every shard from another node (2026-10-18).
 
+The launcher's jobs start through the pipeline's job protocol (D-113: the
+stage gives the launcher PIPELINE_JOBS_DIR, WORK_ROOT, CHAIN_NAME,
+AVOID_FILE, AVOID_HOLD_S, which env.sh passes on with qsub -v). A job that
+could not start its command -- held off a listed node (exit 94), an
+environment fault (exit 96, the protocol's `RUN_ARGV ENV FAULT` line) or
+PBS's start failure -- costs no round and no try: the test task is
+submitted again, a gate that could not start is taken as one that never
+ran (the gate alone after the verification, again as often as it cannot
+start), the verification job is submitted again without counting a try,
+and a round whose bad tasks all never started (no marker, no file, and a
+log that shows no start in this round) is free, not counted against
+bank.max_rerun_rounds (FREE_ROUND_STALL free rounds in a row with no fewer
+stop the stage). Environment faults count as node faults of their hosts
+(D-102) and in D-111's guard.
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
@@ -146,6 +161,18 @@ def grace_over(sub, job_id):
     return (now - t0) >= grace
 
 
+def _bank_protocol_line(cfg):
+    """The dry run's line for the job protocol (D-113)."""
+    try:
+        v = CM.stage_job_protocol(cfg)
+    except ValueError as exc:
+        return "job protocol (D-113): %s -- the stage would stop on it" % exc
+    return ("job protocol (D-113): the launcher's jobs get %s through qsub -v (Sbi-extractor's env.sh): "
+            "each starts through %s/stage_job.sh -- the avoid list, conda or else the environment's own "
+            "folder, exit 94 / 96 when it cannot start, the chain's watchdog at its end"
+            % (" ".join("%s=%s" % (k, v[k]) for k in CM.PROTOCOL_VARS), v["PIPELINE_JOBS_DIR"]))
+
+
 class _BankBase(Stage):
     """What the three stages share: the launcher's location, the profile,
     the environment and a login-node call."""
@@ -181,7 +208,7 @@ class _BankBase(Stage):
         d = cfg.data
         env = dict(os.environ)
         for k in ("DRYRUN", "WALLTIME", "TEST_INDEX", "PROFILE", "QUEUE", "CONCURRENCY", "NCPUS",
-                  "GATE_NCPUS"):
+                  "GATE_NCPUS") + CM.PROTOCOL_VARS:
             env.pop(k, None)
         task, gate = self._launcher_cores(cfg)
         env.update({"PROFILE": self._profile_path(cfg), "ENV_NAME": d["envs"]["extract"],
@@ -190,6 +217,7 @@ class _BankBase(Stage):
                     # the DSN tree the Sbi-extractor tools import (env.sh defaults it
                     # to artifacts/sbi_hpc, a per-machine symlink): the configuration knows it
                     "SBI_HPC_DIR": os.path.join(d["paths"]["sbi_dir"], "hpc")})
+        env.update(CM.stage_job_protocol(cfg))       # D-113: every job through stage_job.sh
         env.update(extra)
         return env
 
@@ -409,6 +437,8 @@ class SimBankStage(_BankBase):
         for job in st["jobs"]:
             if not job.get("finished"):
                 js = pbs.status(job["id"])
+                if getattr(js, "exec_host", None):
+                    job["host"] = js.exec_host          # D-111: the node it ran on
                 if js.finished:
                     job["finished"] = True
                     job["exit_status"] = js.exit_status
@@ -416,6 +446,37 @@ class SimBankStage(_BankBase):
                     job["state"] = js.state
             finished[job["id"]] = bool(job.get("finished"))
         return finished, dict((j["id"], j) for j in st["jobs"])
+
+    def _env_fault_counted(self, cfg, sub, pbs, host, why):
+        """An environment fault of one of the stage's jobs (D-111, D-113): a
+        node fault of `host` (D-102) and one more in the guard's streak.
+        Returns the guard's stop reason or None."""
+        _, stop = CM.note_env_fault(sub, host or "?", why, self.name, pbs.log, CM.avoid_file(cfg))
+        return stop
+
+    def _never_started(self, cfg, sub, key, b):
+        """D-113: a bad task of the verifier's report whose job never started
+        its command in this round -- no marker and no file on disk, and its
+        log `logs/bank_task_<i>.log` absent, older than this round's array,
+        without the job script's `[job] host=` line, or showing the job
+        protocol's `RUN_ARGV ENV FAULT` / `RUN_ARGV AVOID` line. Returns
+        (True or False, the host and the fault's line when the log names
+        them)."""
+        if b.get("files") or not any("no marker" in p for p in b.get("problems", [])):
+            return False, None, None
+        path = os.path.join(self._log_dir(cfg), "bank_task_%d.log" % int(key))
+        stat = file_stat(path)
+        if stat is None:
+            return True, None, None
+        t0 = sub.get("array_submitted")
+        if t0 is not None and stat[1] < float(t0) - 60.0:
+            return True, None, None                    # a log of an earlier round
+        text = read_log(path, limit=200000)
+        host = CM.host_of_log(text)
+        fault = CM.env_fault({"exit_status": None}, text)
+        if fault is not None or "RUN_ARGV AVOID" in text:
+            return True, host, fault
+        return ("[job] host=" not in text), host, None
 
     def _task_failed_line(self, cfg, index):
         """The last `FAILED:` line of a task's log, else its last line."""
@@ -522,7 +583,7 @@ class SimBankStage(_BankBase):
             sub.pop(k, None)
         sub.update(array_job=jobs["job"], gate_job=jobs["gate"], gate_log=gate_log,
                    gate_log_stat=before, record_stat=record_before, verify_try=0,
-                   round=r, phase="gate")
+                   round=r, phase="gate", array_submitted=time.time())
 
     def _start_gate_alone(self, cfg, st, pbs):
         """`launch_bank.sh gate`: the gate with no dependency, after a verified
@@ -596,6 +657,21 @@ class SimBankStage(_BankBase):
             except ValueError:
                 rep = None
         if rep is None:
+            job = by_id.get(job_id) or {}
+            vtext = CM.read_log_tail(sub.get("verify_log"))
+            held = CM.held_off_node(job)
+            fault = None if held else CM.env_fault(job, vtext)
+            if held or fault is not None:
+                # D-111 / D-113: it could not start its environment on its node: not a try
+                host = CM.host_of_log(vtext) or job.get("host") or "?"
+                if fault is not None:
+                    stop = self._env_fault_counted(cfg, sub, pbs, host, fault)
+                    if stop is not None:
+                        return self._fail(sub, stop)
+                sub["verify_try"] = max(0, int(sub.get("verify_try", 1)) - 1)
+                pbs.log("sim_bank: the verification job %s could not start on %s (%s): submitted again, "
+                        "not counted as a try (D-113)" % (job_id, host, fault or "held off a listed node"))
+                return self._submit_verify(cfg, st, pbs)
             if not grace_over(sub, job_id):
                 return "running"
             es = by_id[job_id].get("exit_status")
@@ -609,6 +685,7 @@ class SimBankStage(_BankBase):
                     % (job_id, es, tail))
             return self._submit_verify(cfg, st, pbs)
         sub["last_report"] = path
+        CM.clear_env_fault_streak(sub)                    # the job ran (D-111)
         return self._act_on_report(cfg, st, pbs, rep, path)
 
     def _act_on_report(self, cfg, st, pbs, rep, path):
@@ -624,6 +701,12 @@ class SimBankStage(_BankBase):
             if self._record_fresh(cfg, sub):
                 return self._certify(cfg, st, pbs, path)
             if sub.get("gate_outcome") == "never_ran":
+                if (sub.get("gate_not_started") or {}).get("job") == sub.get("gate_job"):
+                    pbs.log("sim_bank: every task verified and no record (the gate could not start, D-113): "
+                            "the gate alone")
+                    self._start_gate_alone(cfg, st, pbs)
+                    return "running" if sub.get("phase") in ("gate_alone", "gate_alone_waiting") \
+                        else "finished"
                 if not sub.get("gate_alone_unrun_of"):
                     pbs.log("sim_bank: every task verified and no record (the gate never ran): the gate alone")
                     self._start_gate_alone(cfg, st, pbs)
@@ -655,7 +738,43 @@ class SimBankStage(_BankBase):
             pbs.log("sim_bank: VERIFY BAD task %s (%s): %s" % (k, bad[k].get("name"),
                                                                "; ".join(bad[k].get("problems", [])[:4])))
         max_r = int(cfg.data["bank"]["max_rerun_rounds"])
-        if r >= max_r:
+        # D-113: a round whose bad tasks all never started is free
+        unstarted = {}
+        for k in keys:
+            never, host, fault = self._never_started(cfg, sub, k, bad[k])
+            if never:
+                unstarted[k] = (host, fault)
+        if keys and len(unstarted) == len(keys):
+            CM.clear_env_fault_streak(sub)       # the verification job ran; the faults count below
+            for k in sorted(unstarted, key=int):
+                host, fault = unstarted[k]
+                if fault is not None:
+                    stop = self._env_fault_counted(cfg, sub, pbs, host, fault)
+                    if stop is not None:
+                        return self._fail(sub, stop)
+            stop = CM.free_round(sub, len(unstarted), self.name)
+            if stop is not None:
+                return self._fail(sub, "%s (the last report: %s)" % (stop, path))
+            moved = [rel for rel in ("BANK_RECORD.json", "BANK_RECORD.json.sha256", "BANK_VERIFIED.json",
+                                     "BANK_VERIFIED.json.sha256")
+                     if os.path.lexists(os.path.join(self._bank_root(cfg), rel))]
+            if moved:
+                try:
+                    self._quarantine(cfg, st, pbs, {"bad_tasks": {}}, path)
+                except OSError as exc:
+                    return self._fail(sub, "the quarantine could not move a file (%s); the moves made are "
+                                           "listed in its QUARANTINE.json; nothing was deleted" % exc)
+            sub["round"] = r + 1
+            pbs.log("sim_bank: %d task(s) never started (no marker, no file, and their logs show no start in "
+                    "this round: their jobs could not start -- an environment fault, a hold off a listed node "
+                    "or PBS, D-113): %s; a free round (%d), not counted against bank.max_rerun_rounds %d: the "
+                    "array again (finished tasks skip on their markers)"
+                    % (len(unstarted), ", ".join(sorted(unstarted, key=int)[:12]),
+                       int(sub["free_rounds"]), max_r))
+            self._start_array(cfg, st, pbs)
+            return "running" if sub.get("phase") in ("gate", "array_waiting") else "finished"
+        counted = r - int(sub.get("free_rounds", 0))
+        if counted >= max_r:
             parts = []
             for k in keys:
                 line = self._task_failed_line(cfg, k)
@@ -663,15 +782,16 @@ class SimBankStage(_BankBase):
                                                     "; ".join(bad[k].get("problems", [])[:3]),
                                                     (" [log: %s]" % line) if line else ""))
             return self._fail(sub, "after %d rerun round(s), %d task(s) still bad (%s): %s"
-                              % (r, len(keys), path, " | ".join(parts[:20])))
+                              % (counted, len(keys), path, " | ".join(parts[:20])))
         try:
             self._quarantine(cfg, st, pbs, rep, path)
         except OSError as exc:
             return self._fail(sub, "the quarantine could not move a file (%s); the moves made are listed in "
                                    "its QUARANTINE.json; nothing was deleted" % exc)
         sub["round"] = r + 1
+        CM.counted_round(sub)
         pbs.log("sim_bank: rerun round %d of at most %d: the array again (finished tasks skip on their "
-                "markers)" % (r + 1, max_r))
+                "markers)" % (counted + 1, max_r))
         self._start_array(cfg, st, pbs)
         return "running" if sub.get("phase") in ("gate", "array_waiting") else "finished"
 
@@ -770,6 +890,7 @@ class SimBankStage(_BankBase):
     def poll(self, cfg, st, pbs):
         sub = st["sub"]
         finished, by_id = self._refresh_jobs(st, pbs)
+        CM.sync_avoid_list(sub, CM.avoid_file(cfg), pbs.log, self.name)
         phase = sub.get("phase")
         # the waiting phases (D-099): the job that did not fit, again
         if phase == "test_waiting":
@@ -790,10 +911,28 @@ class SimBankStage(_BankBase):
             text = read_log(sub["test_log"])
             ok_lines = re.findall(r"(?m)^TASK \d+ OK.*$", text)
             if self._test_marker_ok(cfg):
+                CM.clear_env_fault_streak(sub)            # the job ran (D-111)
                 pbs.log("sim_bank: test task passed: %s (its marker is this plan's)"
                         % (ok_lines[-1].strip() if ok_lines else "no log line yet"))
                 self._start_array(cfg, st, pbs)
                 return "running" if sub.get("phase") in ("gate", "array_waiting") else "finished"
+            job = by_id[job_id]
+            held = CM.held_off_node(job)
+            fault = None if held else CM.env_fault(job, text)
+            if held or fault is not None:
+                # D-113: it could not start its command on its node -- not the task's failure
+                host = CM.host_of_log(text) or job.get("host") or "?"
+                if held:
+                    pbs.log("sim_bank: the test task (job %s) landed on %s, which is on the avoid list "
+                            "(D-102): it held its slot and exited 94; submitted again (D-113)" % (job_id, host))
+                else:
+                    stop = self._env_fault_counted(cfg, sub, pbs, host, fault)
+                    if stop is not None:
+                        return self._fail(sub, stop)
+                    pbs.log("sim_bank: the test task (job %s) could not start on %s (%s): an environment "
+                            "fault, not the task's (D-113); submitted again" % (job_id, host, fault))
+                self._start_test(cfg, st, pbs)
+                return "running" if sub.get("phase") in ("test", "test_waiting") else "finished"
             # no marker of this plan: the task failed -- unless the marker or
             # the log is still on its way (the log says OK, or it lacks the
             # job script's end line): wait, at most the grace period
@@ -819,10 +958,18 @@ class SimBankStage(_BankBase):
                 return "running"
             sub["gate_outcome"] = outcome
             es = by_id[job_id].get("exit_status")
+            ns = sub.get("gate_not_started") or {}
             if outcome == "passed":
                 pbs.log("sim_bank: " + sub["gate_said"])
             elif outcome == "refused":
                 pbs.log("sim_bank: the gate %s refused (exit %s): %s" % (job_id, es, sub["gate_said"]))
+            elif ns.get("job") == job_id:
+                if ns.get("why"):
+                    stop = self._env_fault_counted(cfg, sub, pbs, ns.get("host"), ns["why"])
+                    if stop is not None:
+                        return self._fail(sub, stop)
+                pbs.log("sim_bank: the gate %s %s; taken as a gate that never ran (D-113)"
+                        % (job_id, sub["gate_said"]))
             else:
                 pbs.log("sim_bank: the gate %s never ran (finished with exit %s, no record, no log at %s; "
                         "the array %s has ended)" % (job_id, es, sub["gate_log"], array_id or "-"))
@@ -843,6 +990,17 @@ class SimBankStage(_BankBase):
                 pbs.log("sim_bank: " + sub["gate_said"])
                 return self._certify(cfg, st, pbs, sub["last_report"])
             if outcome == "never_ran":
+                ns = sub.get("gate_not_started") or {}
+                if ns.get("job") == job_id:
+                    # D-113: it could not start its command on its node: again
+                    if ns.get("why"):
+                        stop = self._env_fault_counted(cfg, sub, pbs, ns.get("host"), ns["why"])
+                        if stop is not None:
+                            return self._fail(sub, stop)
+                    pbs.log("sim_bank: the gate alone %s %s: again (D-113)" % (job_id, sub["gate_said"]))
+                    self._start_gate_alone(cfg, st, pbs)
+                    return "running" if sub.get("phase") in ("gate_alone", "gate_alone_waiting") \
+                        else "finished"
                 return self._fail(sub, "the gate did not run (jobs %s and %s finished with no record and no "
                                        "log at %s; exit %s): read qstat -x -f %s"
                                   % (sub.get("gate_alone_unrun_of"), job_id, sub["gate_log"], es, job_id))
@@ -864,6 +1022,19 @@ class SimBankStage(_BankBase):
             sub["gate_said"] = (wrote[-1].strip() if wrote
                                 else "%s written (its sidecar matches)" % self._record_path(cfg))
             return "passed"
+        job = next((j for j in st.get("jobs", []) if j.get("id") == job_id), {})
+        held = CM.held_off_node(job)
+        fault = None if held else CM.env_fault(job, text)
+        if CM.unrun_dependent(job, fresh):
+            return "never_ran"          # its array failed it, or PBS: no node's fault (D-113)
+        if held or fault is not None:
+            # D-113: it could not start its command on its node (no wait for its log)
+            host = CM.host_of_log(text) or job.get("host") or "?"
+            sub["gate_not_started"] = {"job": job_id, "host": host, "why": fault}
+            sub["gate_said"] = ("could not start on %s (%s)" % (host, fault) if fault
+                                else "landed on %s, which is on the avoid list (D-102): it held its slot "
+                                     "and exited 94" % host)
+            return "never_ran"
         ended = job_exit_line(text, "bank_gate")
         if (wrote or ended is None) and not grace_over(sub, job_id):
             return "wait"
@@ -904,6 +1075,12 @@ class SimBankStage(_BankBase):
                                     int(d["bank"]["max_rerun_rounds"])),
                 "a gate that never runs (no record, no log of its own): once the round verifies, bash "
                 "%s/launch_bank.sh gate -> the gate alone" % ld,
+                _bank_protocol_line(cfg),
+                "jobs that cannot start (D-113): the test task, a gate (the gate alone, again) and the "
+                "verification job are submitted again free (%d environment faults in a row on %d node(s) "
+                "stop the stage); a round whose bad tasks all never started is free, not counted against "
+                "bank.max_rerun_rounds (%d free rounds in a row with no fewer stop it)"
+                % (CM.ENV_FAULT_STREAK, CM.ENV_FAULT_HOSTS, CM.FREE_ROUND_STALL),
                 "pass lines: 'sim_bank: VERIFY OK on <host>: ...' and 'sim_bank: VERIFIED: ...'; artefact "
                 "BANK_RECORD.json + .sha256 and BANK_VERIFIED.json + .sha256 in %s" % self._bank_root(cfg)]
 

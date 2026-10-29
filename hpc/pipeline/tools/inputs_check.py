@@ -16,7 +16,14 @@ profile and sbi_labels. Writes nothing (but --json).
 Every check prints one line, OK / FAIL / WARN / NOTE: a FAIL means a stage
 would refuse, or run on inputs the configuration does not describe; a WARN
 is for the user to read (above all: the campaign changed recently, so a job
-may still be writing it -- D-060, D-073). The last line:
+may still be writing it -- D-060, D-073). When sim.plan_args gives S2's plan
+--quiet-hours H (D-112), the tasks changed less than H hours ago are the
+ones the plan leaves out: listed, kept out of the sample, and every task so
+young is a FAIL (the plan refuses); the pace of the iteration files (the
+gaps between two files of one task) says whether H is long enough. The job
+protocol (D-113): the SBI checkout's jobs/stage_job.sh and the Sbi-extractor
+checkout's side of it (env.sh's sbix_pipeline_v, run_mea_task.pbs, the job
+scripts) must be there. The last line:
 
     INPUTS CHECK: <f> FAIL, <w> WARN
 
@@ -34,6 +41,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -55,6 +63,11 @@ ITER_RE = re.compile(r"^iter_(\d+)\.npz$")
 CAMPAIGN_RE = re.compile(r"_v(\d+)$")
 BOX_RTOL = 1e-12            # float64 roundoff on a JSON-read bound (the bank plan's)
 EXIT_FAIL, EXIT_USAGE = 1, 2
+GAP_FILES_CAP = 20000       # iteration files whose times the pace reads, at most
+# D-113: the Sbi-extractor job scripts that start through the job protocol
+SBIX_PROTOCOL_SCRIPTS = ("export_windows/run_bank_task.pbs", "export_windows/run_bank_gate.pbs",
+                         "sim_reextract/run_sim_reextract_gate.pbs", "sim_reextract/run_mea_task.pbs",
+                         "extractor/run_extractor_array_mea.pbs", "extractor/run_cohort_manifest.pbs")
 
 
 class Findings(object):
@@ -118,6 +131,59 @@ def scan_campaign(sim_main, campaign_glob):
                           "manifest": _read_json(mf_p) if os.path.isfile(mf_p) else None,
                           "topo": topo, "newest": max(t for t in times if t is not None)})
     return [os.path.basename(c) for c in camps], tasks
+
+
+def plan_quiet_hours(plan_args):
+    """S2's --quiet-hours from sim.plan_args: (hours, None), (0.0, None)
+    when absent, or (None, the reason) when it cannot be read (D-112)."""
+    try:
+        words = shlex.split(plan_args or "")
+    except ValueError as exc:
+        return None, "sim.plan_args cannot be split: %s" % exc
+    value = None
+    for i, w in enumerate(words):
+        if w == "--quiet-hours":
+            if i + 1 >= len(words):
+                return None, "--quiet-hours without a value"
+            value = words[i + 1]
+        elif w.startswith("--quiet-hours="):
+            value = w.split("=", 1)[1]
+    if value is None:
+        return 0.0, None
+    try:
+        h = float(value)
+    except ValueError:
+        return None, "--quiet-hours %r is not a number" % value
+    if not (math.isfinite(h) and h >= 0):
+        return None, "--quiet-hours %r: a positive number of hours, or 0" % value
+    return h, None
+
+
+def iteration_gaps(tasks, cap=GAP_FILES_CAP):
+    """The pace of the iteration files: the gaps (hours) between two files
+    of one task written one after the other, by modification time, over
+    the tasks in order until `cap` files are read. Returns (gaps, the
+    longest gap's task, the number of files read)."""
+    gaps, worst, worst_gap, n = [], None, -1.0, 0
+    for t in tasks:
+        times = []
+        for k in sorted(t["topo"]):
+            for i in t["topo"][k]:
+                if n >= cap:
+                    break
+                tm = _mtime(os.path.join(t["dir"], "topo_%05d" % k, "iter_%05d.npz" % i))
+                n += 1
+                if tm is not None:
+                    times.append(tm)
+        times.sort()
+        for a, b in zip(times, times[1:]):
+            g = (b - a) / 3600.0
+            gaps.append(g)
+            if g > worst_gap:
+                worst_gap, worst = g, "%s/%s" % (t["campaign"], t["sweep"])
+        if n >= cap:
+            break
+    return gaps, worst, n
 
 
 def sample_files(tasks, max_files):
@@ -207,6 +273,11 @@ def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
     camps, tasks = scan_campaign(s["sim_main"], s["campaign_glob"])
     n_topo = sum(len(t["topo"]) for t in tasks)
     n_iter = sum(len(v) for t in tasks for v in t["topo"].values())
+    plan_q, why_q = plan_quiet_hours(s["plan_args"])
+    now = time.time()
+    active = [t for t in tasks if plan_q and (now - t["newest"]) / 3600.0 < plan_q]
+    if why_q is not None:
+        F.add("FAIL", "plan args", "%s (sim.plan_args %r)" % (why_q, s["plan_args"]))
     if not tasks:
         F.add("FAIL", "campaign", "no sweep task under %s matching %s"
               % (s["sim_main"], s["campaign_glob"]))
@@ -214,16 +285,49 @@ def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
         F.add("NOTE", "campaign", "%d campaign(s) %s: %d task(s), %d topologies, %d iteration files"
               % (len(camps), ", ".join(camps), len(tasks), n_topo, n_iter))
         newest = max(t["newest"] for t in tasks)
-        age_h = (time.time() - newest) / 3600.0
+        age_h = (now - newest) / 3600.0
         last = [t for t in tasks if t["newest"] == newest][0]
         text = ("last change %.1f h ago (%s), in %s/%s"
                 % (age_h, time.strftime("%Y-%m-%d %H:%M", time.localtime(newest)),
                    last["campaign"], last["sweep"]))
-        if age_h < quiet_hours:
+        planned_young = [t for t in tasks if t not in active and (now - t["newest"]) / 3600.0 < quiet_hours]
+        if planned_young:
             F.add("WARN", "campaign", text + ": younger than %g h -- a job may still be writing "
-                  "it; S2 must not plan a campaign being written (D-060, D-073)" % quiet_hours)
+                  "it; S2 must not plan a campaign being written (D-060, D-073)%s"
+                  % (quiet_hours, ("; the plan leaves out only the tasks changed within %g h "
+                                   "(sim.plan_args --quiet-hours, D-112): %d task(s) younger than "
+                                   "%g h are planned" % (plan_q, len(planned_young), quiet_hours))
+                     if plan_q else ""))
+        elif age_h < quiet_hours:
+            F.add("NOTE", "campaign", text + ": younger than %g h, and S2's plan leaves out every task "
+                  "changed within %g h (sim.plan_args --quiet-hours, D-112)" % (quiet_hours, plan_q))
         else:
             F.add("OK", "campaign", text)
+        if plan_q:
+            names = ["%s/%s" % (t["campaign"], t["sweep"]) for t in active]
+            if active and len(active) == len(tasks):
+                F.add("FAIL", "being written", "every task (%d) changed less than %g h ago: S2's plan "
+                      "refuses (no runnable task); wait, or lower --quiet-hours in sim.plan_args"
+                      % (len(tasks), plan_q))
+            elif active:
+                F.add("NOTE", "being written", "%d of %d task(s) changed less than %g h ago: S2's plan "
+                      "leaves them out (D-112), they are not sampled here: %s%s"
+                      % (len(active), len(tasks), plan_q, ", ".join(names[:8]),
+                         " ..." if len(names) > 8 else ""))
+            else:
+                F.add("OK", "being written", "no task changed within %g h (sim.plan_args "
+                      "--quiet-hours, D-112): S2 plans all %d" % (plan_q, len(tasks)))
+        gaps, worst, n_files = iteration_gaps(tasks)
+        if gaps:
+            srt = sorted(gaps)
+            p95 = srt[min(len(srt) - 1, int(math.ceil(0.95 * len(srt))) - 1)]
+            text = ("the gaps between two iteration files of one task: 95%% under %.2f h, the longest "
+                    "%.2f h (in %s), from %d file(s)" % (p95, srt[-1], worst, n_files))
+            if plan_q and p95 >= plan_q:
+                F.add("WARN", "pace", text + ": --quiet-hours %g is not longer than most gaps, so a "
+                      "task still running may look finished (D-112)" % plan_q)
+            else:
+                F.add("NOTE", "pace", text)
     missing = ["%s/%s" % (t["campaign"], t["sweep"]) for t in tasks
                if t["job_args"] is None or t["manifest"] is None]
     if missing:
@@ -327,7 +431,8 @@ def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
         F.add("FAIL", "conn_rule", "the tasks hold %r, freeze.require_conn_rule is %r" % (rules, want))
 
     # --- the sampled iteration files ----------------------------------------
-    picks = sample_files(tasks, max_files)
+    quiet = [t for t in tasks if t not in active] or tasks
+    picks = sample_files(quiet, max_files)
     stats, unreadable = {}, []
     for n, k, path in picks:
         try:
@@ -428,6 +533,56 @@ def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
         F.add("OK", "S2 profile", profile)
     elif not _sha_ok(rec):
         F.add("FAIL", "S2 profile", "%s absent: S2 refuses (pull Sbi-extractor)" % profile)
+    if plan_q:
+        plan_py = os.path.join(d["paths"]["sbix_dir"], "sim_reextract", "sim_reextract_plan.py")
+        try:
+            has = "--quiet-hours" in open(plan_py).read()
+        except OSError:
+            has = False
+        if has:
+            F.add("OK", "plan option", "%s takes --quiet-hours (D-112)" % plan_py)
+        else:
+            F.add("FAIL", "plan option", "%s has no --quiet-hours, which sim.plan_args gives it: pull "
+                  "Sbi-extractor (D-112)" % plan_py)
+
+    # --- the job protocol (D-113) ----------------------------------------------
+    jobs_dir = os.path.join(d["paths"]["sbi_dir"], "hpc", "pipeline", "jobs")
+    miss = [f for f in ("stage_job.sh", "activate_env.sh", "chain.sh")
+            if not os.path.isfile(os.path.join(jobs_dir, f))]
+    bad_v = []
+    for k, v in (("work_root", d["paths"]["work_root"]), ("sbi_dir", d["paths"]["sbi_dir"])):
+        if "," in v or any(c.isspace() for c in v):
+            bad_v.append("paths.%s %r" % (k, v))
+    if miss or bad_v:
+        F.add("FAIL", "protocol (SBI)", "%s%s" % (
+            ("%s lacks %s: paths.sbi_dir is a checkout before D-113; " % (jobs_dir, ", ".join(miss)))
+            if miss else "",
+            ("qsub -v cannot carry a comma or a blank: %s" % ", ".join(bad_v)) if bad_v else ""))
+    else:
+        recs = [e for e in sorted(set(d["envs"].values()))
+                if os.path.isfile(os.path.join(d["paths"]["work_root"], "envs", e + ".prefix"))]
+        F.add("OK", "protocol (SBI)", "%s/stage_job.sh; environment prefixes recorded under %s/envs: %s"
+              % (jobs_dir, d["paths"]["work_root"],
+                 ", ".join(recs) if recs else "none yet (the submission records them, D-111)"))
+    sbix = d["paths"]["sbix_dir"]
+    lacks = []
+    try:
+        if "sbix_pipeline_v()" not in open(os.path.join(sbix, "env.sh")).read():
+            lacks.append("env.sh's sbix_pipeline_v")
+    except OSError:
+        lacks.append("env.sh")
+    for rel in SBIX_PROTOCOL_SCRIPTS:
+        try:
+            if "pipeline_stage_job_start" not in open(os.path.join(sbix, rel)).read():
+                lacks.append(rel)
+        except OSError:
+            lacks.append(rel + " (absent)")
+    if lacks:
+        F.add("FAIL", "protocol (Sbi-extractor)", "%s lacks %s: a checkout before D-113, whose jobs "
+              "would start without the job protocol -- pull it" % (sbix, ", ".join(lacks)))
+    else:
+        F.add("OK", "protocol (Sbi-extractor)", "env.sh's sbix_pipeline_v and the %d job scripts "
+              "start through the job protocol (D-113)" % len(SBIX_PROTOCOL_SCRIPTS))
 
     # --- the registry ---------------------------------------------------------
     widths = _single([len(m.get("param_names") or []) for m in mfs])
@@ -475,6 +630,8 @@ def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
                          str(st["values"][0])[:12] if st["values"] else "-", "", st["nan"]))
     return F, {"campaigns": camps, "n_tasks": len(tasks), "n_topologies": n_topo,
                "n_iterations": n_iter, "sampled": n_read,
+               "plan_quiet_hours": plan_q, "being_written": sorted("%s/%s" % (t["campaign"], t["sweep"])
+                                                                   for t in active),
                "members": dict((k, {"files": v["files"], "nan": v["nan"],
                                     "distinct": len(set(map(str, v["values"])))})
                                for k, v in stats.items())}
@@ -489,7 +646,8 @@ def build_parser():
     p.add_argument("--max-files", type=int, default=200,
                    help="raw iteration files to open, one per topology (default 200)")
     p.add_argument("--quiet-hours", type=float, default=6.0,
-                   help="WARN when the campaign changed more recently than this (default 6 h)")
+                   help="WARN when a task S2 would plan changed more recently than this (default "
+                        "6 h); the plan's own window is sim.plan_args --quiet-hours (D-112)")
     p.add_argument("--json", default=None, help="write the findings here")
     p.add_argument("--no-qstat", action="store_true", help="do not call qstat")
     return p

@@ -25,7 +25,12 @@ Checks (SPEC block 7, "Environment faults and reruns", Test oracles)
                         chain); a driver job's (a replacement with -a and its
                         backoff; nothing when another job of the chain lives
                         or a stop was asked); a job of a submitter before
-                        D-111 (exit 98, as before); a refusal's deliberate end
+                        D-111 (exit 98, as before); a refusal's deliberate end;
+                        stage_job_units (D-113): jobs/stage_job.sh as another
+                        repository's job script uses it -- conda, the
+                        environment's folder, nothing (held, 96), a host on
+                        the avoid list (held, 94), the command's own exit,
+                        SKIP_CONDA, the watchdog at the job's end
     test_convergence    not a discretisation: skipped
     test_invariants     chain_end: the synthetic graph, drivers as jobs: a
                         stage refusal ends the chain on purpose (CHAIN_END,
@@ -54,7 +59,10 @@ Checks (SPEC block 7, "Environment faults and reruns", Test oracles)
                         replace (the driver's replacement: job_units,
                         chain_replace), watchdog (job_units, watchdog),
                         chain_end (the deliberate end ignored by the
-                        watchdog: watchdog's stop run)
+                        watchdog: watchdog's stop run), stage_avoid
+                        (stage_job.sh ignores the avoid list:
+                        stage_job_units), stage_fault (stage_job.sh lets a
+                        failed activation through: stage_job_units)
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block7c.py
@@ -65,7 +73,7 @@ Run
         scheduler: the fake PBS of tests/fake_pbs/ is first on PATH.
     python3 hpc/pipeline/tests/test_smoke_block7c.py activate_units job_units
         Some checks only, by name (the parts: activate_units, job_units,
-        chain_end, env_faults, chain_replace, watchdog).
+        stage_job_units, chain_end, env_faults, chain_replace, watchdog).
 
 Pure ASCII, LF only.
 """
@@ -123,6 +131,10 @@ _BASH = {
     "chain_end": ("chain.sh", [
         ("    [ -f \"$d/CHAIN_END\" ] && return 0\n", ""),
         (" && [ ! -f \"$d/CHAIN_END\" ]", "")]),
+    # D-113: the job protocol of the other repositories' job scripts
+    "stage_avoid": ("stage_job.sh", [("    if _sj_listed \"$host\"; then\n", "    if false; then\n")]),
+    "stage_fault": ("stage_job.sh", [("    pipeline_activate \"$env\"\n    rc=$?\n",
+                                      "    pipeline_activate \"$env\"\n    rc=0\n")]),
 }
 # exec'd in the sequencer's process (the end-to-end check's bootstrap)
 _PY = {
@@ -567,6 +579,84 @@ def _test_job_units():
         shutil.rmtree(root, ignore_errors=True)
 
 
+# ------------------------------------------------- stage_job_units (D-113) ---
+
+def _stage_job(root, jobs, host, env_extra, cmd="echo HELLO", timeout=120):
+    """A job script of another repository (Sbi-extractor's, D-113) by hand:
+    its start through jobs/stage_job.sh, `cmd`, its end; the fake PBS and the
+    fake conda on PATH, `hostname` printing `host`. (exit, output, seconds)."""
+    script = os.path.join(root, "stage_job_test.sh")
+    with open(script, "w") as fh:
+        fh.write("#!/bin/bash\nset -eo pipefail\nENV_NAME=\"${ENV_NAME:-myenv}\"\n"
+                 "source \"$PIPELINE_JOBS_DIR/stage_job.sh\" || exit 2\n"
+                 "pipeline_stage_job_start \"$ENV_NAME\" || exit $?\n"
+                 "trap 'pipeline_stage_job_end' EXIT\nset -u\n%s\n" % cmd)
+    env = {"HOME": os.path.join(root, "home"),
+           "PATH": os.pathsep.join([_host_bin(root, host), _FAKE, _FAKE_CONDA, "/usr/bin", "/bin"]),
+           "FAKE_PBS_SPOOL": os.path.join(root, "spool"), "FAKE_PBS_DELAY": "0.1",
+           "FAKE_CONDA_ENVS": os.path.join(root, "conda_envs"), "USER": "tester",
+           "ENV_NAME": "myenv", "PIPELINE_JOBS_DIR": jobs, "WORK_ROOT": os.path.join(root, "wr"),
+           "CHAIN_NAME": "pl_t", "AVOID_HOLD_S": "1", "PBS_JOBID": "900.fake",
+           "PIPELINE_CHAIN_QSUB_WAIT_S": "0"}
+    env.update(env_extra)
+    t0 = time.time()
+    p = subprocess.run(["bash", script], env=env, cwd=root, stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, universal_newlines=True, timeout=timeout)
+    return p.returncode, p.stdout, time.time() - t0
+
+
+def _test_stage_job_units():
+    root = tempfile.mkdtemp(prefix="b7c_stage_")
+    try:
+        os.makedirs(os.path.join(root, "home", ".conda", "envs"))
+        wr = os.path.join(root, "wr")
+        os.makedirs(wr)
+        envs_root = _envs_root(root)
+        jobs = os.path.join(_jobs_copy(root), "hpc", "pipeline", "jobs")
+        spool = os.path.join(root, "spool")
+        bad = {"FAKE_CONDA_ABSENT_HOSTS": "broken,noconda", "FAKE_ENV_BROKEN_HOSTS": "broken"}
+        # a good node: conda; the protocol's line; the command; the prefix recorded
+        rc, out, _ = _stage_job(root, jobs, "good", {})
+        assert rc == 0 and out.startswith("RUN_ARGV: host good, job 900.fake, env myenv (the pipeline's "
+                                          "job protocol, D-113)\n") and "HELLO\n" in out, out
+        assert _read(os.path.join(wr, "envs", "myenv.prefix")) == os.path.join(envs_root, "myenv") + "\n"
+        # no conda on the node: the environment's folder, the command
+        rc, out, _ = _stage_job(root, jobs, "noconda", bad)
+        assert rc == 0 and "RUN_ARGV ENV: host noconda: conda unavailable" in out and "HELLO\n" in out, out
+        # nothing starts: held, 96, the command not run
+        rc, out, dt = _stage_job(root, jobs, "broken", bad)
+        assert rc == 96 and "RUN_ARGV ENV FAULT: host broken: the environment myenv cannot start" in out \
+            and "RUN_ARGV: holding this slot for 1 s (D-113), then exiting 96\n" in out and "HELLO" not in out \
+            and dt >= 1.0, (out, "mutation stage_fault")
+        # a host on the avoid list (D-102): held, 94, neither the activation nor the command
+        avoid = os.path.join(wr, "avoid_nodes.txt")
+        with open(avoid, "w") as fh:
+            fh.write("# listed by hand\n  listed  \n")
+        rc, out, dt = _stage_job(root, jobs, "listed", {"AVOID_FILE": avoid})
+        assert rc == 94 and ("RUN_ARGV AVOID: host listed is on the avoid list %s (D-102); holding this "
+                             "slot for 1 s, then exiting 94\n" % avoid) in out and "HELLO" not in out \
+            and "RUN_ARGV ENV" not in out and dt >= 1.0, (out, "mutation stage_avoid")
+        rc, out, _ = _stage_job(root, jobs, "good", {"AVOID_FILE": avoid})
+        assert rc == 0 and "HELLO\n" in out and "AVOID" not in out, out
+        # the command's own exit status is the job's
+        rc, out, _ = _stage_job(root, jobs, "good", {}, cmd="echo BYE; exit 3")
+        assert rc == 3 and "BYE\n" in out, out
+        # SKIP_CONDA=1 (the tests): no activation, even where nothing starts
+        rc, out, _ = _stage_job(root, jobs, "broken", dict(bad, SKIP_CONDA="1"))
+        assert rc == 0 and "HELLO\n" in out and "RUN_ARGV ENV" not in out, out
+        # the job's end: the chain's watchdog revives a chain that is gone (the template, no job)
+        _template(wr, root)
+        rc, out, _ = _stage_job(root, jobs, "good", {"FAKE_PBS_DELAY": "30"})
+        assert rc == 0 and "HELLO\n" in out and ("RUN_ARGV CHAIN: no sequencer job was queued, held or "
+                                                 "running and the chain had not ended on purpose; "
+                                                 "submitted 1.fake to revive it") in out, out
+        assert [j["name"] for j in _spool_jobs(spool)] == ["pl_t"], _spool_jobs(spool)
+        subprocess.run(["qdel", "1.fake"], env={"PATH": _FAKE + os.pathsep + "/usr/bin:/bin",
+                                               "FAKE_PBS_SPOOL": spool})
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # ---------------------------------------------- the synthetic graph (1b) ---
 
 def _synthetic_project(root, proj, walltime="00:00:20", poll=1, sbi_dir=None):
@@ -895,6 +985,7 @@ def test_known_answer():
 
 def test_reference():
     _test_job_units()
+    _test_stage_job_units()
 
 
 def test_convergence():
@@ -922,9 +1013,11 @@ CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_refe
           ("test_contract", test_contract), ("test_determinism", test_determinism),
           ("test_edge_cases", test_edge_cases),
           ("activate_units", _test_activate_units), ("job_units", _test_job_units),
+          ("stage_job_units", _test_stage_job_units),
           ("chain_end", _test_chain_end), ("env_faults", _test_env_faults),
           ("chain_replace", _test_chain_replace), ("watchdog", _test_watchdog)]
-_PARTS = ("activate_units", "job_units", "chain_end", "env_faults", "chain_replace", "watchdog")
+_PARTS = ("activate_units", "job_units", "stage_job_units", "chain_end", "env_faults", "chain_replace",
+          "watchdog")
 
 
 _NEEDS_TRAINING = ("test_contract", "env_faults")      # the real tuner and runner in the jobs

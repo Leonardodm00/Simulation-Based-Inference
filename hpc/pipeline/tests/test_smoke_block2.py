@@ -45,6 +45,24 @@ Checks (specs/SPEC.md block 2, "Test oracles")
                         from its own files, the grace period, a stale log
     test_decisions      in process: what the stage does with each kind of
                         verification report, and with a job that leaves none
+    test_env_faults     D-113 end to end, the jobs through jobs/stage_job.sh
+                        under the fake conda (absent on host broken): the
+                        test task's first job and the round's gate land on
+                        broken (exit 96): the test submitted again, the gate
+                        taken as never run (the gate alone after the
+                        verification is not needed: the free round's gate
+                        passes); an array element PBS never starts: a free
+                        round at bank.max_rerun_rounds 0; VERIFIED, 8 jobs,
+                        2 node faults on broken
+    test_env_decisions  D-113 in process: a round whose bad tasks never
+                        started (no file; no log, a stale one, one without
+                        `[job] host=`, one with RUN_ARGV ENV FAULT, counted
+                        on its host) is free when no rerun is left; one that
+                        started is not; the stall guard after 3 free rounds;
+                        a verification job that exits 96 costs no try; a
+                        gate that exits 96 never ran (its host counted); a
+                        dependent gate PBS ended unrun (-1, no log) never
+                        ran, no host counted
     test_cores          D-099: under a cap that leaves 9 cores, with NCPUS=4
                         and GATE_NCPUS=16 in the sequencer's environment (a
                         PBS job's): the tasks ask the launcher's 1 core, the
@@ -960,6 +978,152 @@ def test_decisions():
         s.close()
 
 
+def test_env_faults():
+    s = Standin(max_rerun_rounds=0)
+    try:
+        envs = os.path.join(s.root, "conda_envs")
+        ST.fake_env_folder(envs, "sbi_export", PYTHON)
+        home = os.path.join(s.root, "home")
+        os.makedirs(home)
+        extra = {"PATH": os.pathsep.join([_FAKE, os.path.join(_HERE, "fake_conda"), s.fakebin,
+                                          os.environ.get("PATH", "")]),
+                 "HOME": home, "FAKE_CONDA_ENVS": envs, "FAKE_CONDA_ABSENT_HOSTS": "broken",
+                 "FAKE_ENV_BROKEN_HOSTS": "broken", "FAKE_PBS_HOSTS": "goodnode",
+                 "FAKE_PBS_HOST_BY_NAME": "bank_test:1=broken,bank_gate:1=broken",
+                 "FAKE_PBS_FAIL_ONCE": "1", "PIPELINE_AVOID_HOLD_S": "0"}
+        rc, out = s.run([], timeout=900, env_extra=extra)
+        assert rc == 0 and "PIPELINE DONE" in out and "sim_bank: VERIFIED:" in out, out[-4000:]
+        want = ["sim_bank: the test task (job 1.fake) could not start on broken (host broken: the "
+                "environment sbi_export cannot start",
+                "an environment fault, not the task's (D-113); submitted again",
+                "sim_bank: test task passed: TASK 0 OK",
+                "sim_bank: the gate 4.fake could not start on broken (host broken: the environment "
+                "sbi_export cannot start",
+                "taken as a gate that never ran (D-113)",
+                "sim_bank: VERIFY BAD task 1 (",
+                "sim_bank: 1 task(s) never started (no marker, no file, and their logs show no start in "
+                "this round",
+                "a free round (1), not counted against bank.max_rerun_rounds 0"]
+        miss = [w for w in want if w not in out]
+        assert not miss, (miss, out[-4000:])
+        assert "quarantine" not in out.split("free round (1)")[0].split("VERIFY BAD task 1")[-1], out
+        assert s.n_submitted() == 8, s.n_submitted()   # 2 tests, 2 arrays, 2 gates, 2 verifications
+        st = json.load(open(os.path.join(s.cfg["paths"]["work_root"], "state.json")))
+        sub = st["stages"]["sim_bank"]["sub"]
+        assert sub["node_fault_hosts"] == {"broken": 2} and sub["free_rounds"] == 1, sub
+        cert = json.load(open(os.path.join(s.bank, "BANK_VERIFIED.json")))
+        assert cert["rerun_rounds"] == 1 and cert["quarantines"] == [], cert
+        tlog = open(os.path.join(s.sbix, "export_windows", "synth", "logs", "bank_test_0.log")).read()
+        assert "(the pipeline's job protocol, D-113)" in tlog and "RUN_ARGV: host goodnode" in tlog, tlog
+    finally:
+        s.close()
+
+
+def test_env_decisions():
+    import stages.bank as B
+    s, cfg, logdir = _in_process()
+    saved = os.environ.get("PIPELINE_LOG_GRACE_S")
+    os.environ["PIPELINE_LOG_GRACE_S"] = "0"
+    try:
+        stage = B.SimBankStage()
+        calls = []
+        stage._start_array = lambda c, st, p: (calls.append("array"), st["sub"].update(phase="gate"))
+        stage._start_gate_alone = lambda c, st, p: (calls.append("gate_alone"),
+                                                   st["sub"].update(phase="gate_alone"))
+        stage._submit_verify = lambda c, st, p: (calls.append("verify"),
+                                                 st["sub"].update(verify_try=int(st["sub"].get(
+                                                     "verify_try", 0)) + 1), "running")[2]
+
+        def report(bad):
+            path = os.path.join(s.root, "rep_%d.json" % int(time.time() * 1e6))
+            json.dump({"verdict": "BAD", "host": "dvnode999", "n_tasks": 3, "bad_tasks": bad,
+                       "global_problems": []}, open(path, "w"))
+            return {"verdict": "BAD", "host": "dvnode999", "n_tasks": 3, "bad_tasks": bad,
+                    "global_problems": []}, path
+
+        nomark = {"1": {"name": "t1", "problems": ["no marker (the task did not finish)"],
+                        "io_only": False, "files": []}}
+        log1 = os.path.join(logdir, "bank_task_1.log")
+        sub = _FakeSub()
+        # (1) no log, no rerun left (round 2 of 2): a free round
+        st = {"jobs": [], "sub": {"phase": "verify", "round": 2, "verify_try": 1,
+                                  "array_submitted": time.time() - 30}}
+        assert stage._act_on_report(cfg, st, sub, *report(nomark)) == "running" and calls[-1] == "array"
+        assert st["sub"]["free_rounds"] == 1 and st["sub"]["round"] == 3, st["sub"]
+        assert not os.path.exists(s.qroot), "a free round moved files"
+        # (2) its log shows the job started in this round: counted, none left -> STOP
+        with open(log1, "w") as fh:
+            fh.write("RUN_ARGV: host dvnode1, job 7[1].fake, env sbi_export (the pipeline's job "
+                     "protocol, D-113)\n[job] host=dvnode1 started=x task=1\nFAILED: boom\n")
+        st = {"jobs": [], "sub": {"phase": "verify", "round": 2, "verify_try": 1,
+                                  "array_submitted": time.time() - 30}}
+        assert stage._act_on_report(cfg, st, sub, *report(nomark)) == "finished"
+        assert "after 2 rerun round(s), 1 task(s) still bad" in st["sub"]["fail"], st["sub"]
+        # (3) the same log, older than this round's array: a log of an earlier round -> free
+        old = time.time() - 3600.0
+        os.utime(log1, (old, old))
+        st = {"jobs": [], "sub": {"phase": "verify", "round": 2, "verify_try": 1,
+                                  "array_submitted": time.time() - 30}}
+        assert stage._act_on_report(cfg, st, sub, *report(nomark)) == "running", st["sub"]
+        # (4) the job protocol's environment fault: free, counted on its host
+        with open(log1, "w") as fh:
+            fh.write("RUN_ARGV: host dvnode7, job 7[1].fake, env sbi_export (the pipeline's job "
+                     "protocol, D-113)\nRUN_ARGV ENV FAULT: host dvnode7: the environment sbi_export "
+                     "cannot start (conda: x; folders: none found)\n")
+        st = {"jobs": [], "sub": {"phase": "verify", "round": 0, "verify_try": 1,
+                                  "array_submitted": time.time() - 30}}
+        assert stage._act_on_report(cfg, st, sub, *report(nomark)) == "running"
+        assert st["sub"]["node_fault_hosts"] == {"dvnode7": 1} and st["sub"]["free_rounds"] == 1, st["sub"]
+        assert st["sub"]["env_fault_streak"]["n"] == 1, st["sub"]
+        # (5) a task with files on disk is no free round, whatever its log
+        withfiles = {"1": dict(nomark["1"], files=["shard_0001.npz"])}
+        st = {"jobs": [], "sub": {"phase": "verify", "round": 2, "verify_try": 1,
+                                  "array_submitted": time.time() - 30}}
+        assert stage._act_on_report(cfg, st, sub, *report(withfiles)) == "finished"
+        assert "after 2 rerun round(s)" in st["sub"]["fail"], st["sub"]
+        # (6) the stall guard: the 4th refusal with as many unstarted stops after 3 free rounds
+        os.remove(log1)
+        st = {"jobs": [], "sub": {"phase": "verify", "round": 0, "verify_try": 1,
+                                  "array_submitted": time.time() - 30}}
+        for k in range(3):
+            assert stage._act_on_report(cfg, st, sub, *report(nomark)) == "running", (k, st["sub"])
+        assert stage._act_on_report(cfg, st, sub, *report(nomark)) == "finished"
+        assert ("1 task(s) still could not start after 3 free rounds in a row, no fewer each round "
+                "(D-113)") in st["sub"]["fail"], st["sub"]
+        # (7) a verification job that exits 96: submitted again, not a try; its host counted
+        vlog = os.path.join(s.root, "verify_96.log")
+        with open(vlog, "w") as fh:
+            fh.write("RUN_ARGV ENV FAULT: host dvnode3: the environment sbi_export cannot start (x)\n")
+        st = {"jobs": [{"id": "50.fake", "role": "v", "finished": True, "exit_status": 96}],
+              "sub": {"phase": "verify", "round": 0, "verify_try": 1, "verify_job": "50.fake",
+                      "verify_report": os.path.join(s.root, "never.json"), "verify_log": vlog}}
+        n_calls = len(calls)
+        assert stage.poll(cfg, st, sub) == "running" and calls[n_calls:] == ["verify"], calls
+        assert st["sub"]["verify_try"] == 1 and st["sub"]["node_fault_hosts"] == {"dvnode3": 1}, st["sub"]
+        # (8) a gate that exits 96 with a log of its own: never ran, its host noted
+        glog = os.path.join(logdir, "bank_gate.log")
+        before = B.file_stat(glog)
+        with open(glog, "w") as fh:
+            fh.write("RUN_ARGV: host dvnode5, job 60.fake, env sbi_export (the pipeline's job protocol, "
+                     "D-113)\nRUN_ARGV ENV FAULT: host dvnode5: the environment sbi_export cannot start (x)\n")
+        st = {"jobs": [{"id": "60.fake", "finished": True, "exit_status": 96, "after": "59[].fake"}],
+              "sub": {"gate_job": "60.fake", "gate_log": glog, "gate_log_stat": before,
+                      "record_stat": B.file_stat(os.path.join(s.bank, "BANK_RECORD.json"))}}
+        assert stage._gate_outcome(cfg, st) == "never_ran", st["sub"]
+        assert st["sub"]["gate_not_started"]["host"] == "dvnode5", st["sub"]
+        # (9) a dependent gate PBS ended unrun (exit -1, no log of its own): never ran, nothing noted
+        st = {"jobs": [{"id": "61.fake", "finished": True, "exit_status": -1, "after": "59.fake"}],
+              "sub": {"gate_job": "61.fake", "gate_log": glog, "gate_log_stat": B.file_stat(glog),
+                      "record_stat": B.file_stat(os.path.join(s.bank, "BANK_RECORD.json"))}}
+        assert stage._gate_outcome(cfg, st) == "never_ran" and "gate_not_started" not in st["sub"], st["sub"]
+    finally:
+        if saved is None:
+            os.environ.pop("PIPELINE_LOG_GRACE_S", None)
+        else:
+            os.environ["PIPELINE_LOG_GRACE_S"] = saved
+        s.close()
+
+
 def _record_cores(rec):
     """The cores a fake PBS record can hold at once: its -l values, times
     min(%c, the elements) for an array."""
@@ -1077,6 +1241,7 @@ CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_refe
           ("test_verify_tool", test_verify_tool), ("test_edge_cases", test_edge_cases),
           ("test_dropped_gate", test_dropped_gate), ("test_healing", test_healing),
           ("test_log_timing", test_log_timing), ("test_decisions", test_decisions),
+          ("test_env_faults", test_env_faults), ("test_env_decisions", test_env_decisions),
           ("test_cores", test_cores)]
 
 

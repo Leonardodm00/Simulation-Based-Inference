@@ -31,7 +31,9 @@ Paths this spec covers (files, directories ending in `/`, or globs):
 - `hpc/pipeline/projects/giulia/giulia.json` -- the Giulia project's
   configuration (config v6)
 - `hpc/pipeline/projects/linddup/linddup.json` -- the LindDUP project's
-  configuration (config v10; added 2026-10-29, D-104..D-109)
+  configuration (config v10; added 2026-10-29, D-104..D-109; v2 of the
+  file the same day: `sim.plan_args` `--quiet-hours 6` (D-112), the
+  search's `gp_seed` 1 and `max_concurrent_trials` 25, Giulia's (D-114))
 - the changes the later blocks make under `hpc/joint/` (listed per block in
   sec. 5 as they are written; the rest of `hpc/joint/` is their input, not
   under test here): `hpc/joint/stage1/latent_bank.py` (`ShardIndex`,
@@ -1161,6 +1163,51 @@ fixture, not part of the pipeline.
   environment: the tasks 1 core, the gate 8, `-J 0-2%9`; in process, the
   array waits while 7 are free; a share of 7 stops the stage at its start).
 
+- Amended 2026-10-29 (b) (D-113; block 3's amendment (a) gives the
+  launcher the job protocol's variables, so the test task, the array's
+  tasks and the gates start through `jobs/stage_job.sh`). A job that could
+  not start its command costs no round and no try:
+  - (a) the test task held off a listed host (94) or with an environment
+    fault (`common.env_fault` on the job and its log `logs/bank_test_0.
+    log`): submitted again (`_start_test`), the fault counted on its host
+    (`_env_fault_counted`: D-102's count and D-111's guard);
+  - (b) a gate (the round's or the gate alone) held off or with an
+    environment fault is a gate that never ran, at once (no grace):
+    `gate_not_started` keeps its job, host and reason; the fault is
+    counted; a verified round then runs the gate alone, again as often as
+    it cannot start (the one-try rule for a gate that never ran stays for
+    the others); a dependent gate PBS ended unrun (`common.
+    unrun_dependent`) never ran, nothing counted;
+  - (c) the verification job (run_argv.pbs) with an environment fault:
+    submitted again without counting a try;
+  - (d) the rounds: a bad task of the report never started when it has no
+    marker and no file on disk, and its log `logs/bank_task_<i>.log` is
+    absent, older than this round's array (`array_submitted` - 60 s), lacks
+    the job script's `[job] host=` line, or shows `RUN_ARGV ENV FAULT` /
+    `RUN_ARGV AVOID` (its environment fault counted on the log's host).
+    When every bad task never started, the round is free: nothing is
+    quarantined (but a record or certificate, if any), `round` + 1,
+    `free_rounds` + 1, the array again; FREE_ROUND_STALL (3) free rounds in
+    a row with no fewer unstarted stop the stage. Otherwise the round
+    counts against `bank.max_rerun_rounds` as before (`after <r - free>
+    rerun round(s), ...`).
+  - Test oracles (`tests/test_smoke_block2.py`): `test_env_faults` (the real
+    launcher and job scripts, the fake conda absent on host `broken`,
+    `bank.max_rerun_rounds` 0): the test task's first job and the round's
+    gate on `broken`, an element PBS never starts -> the test submitted
+    again, the gate taken as never run, a free round, VERIFIED, 8 jobs,
+    `node_fault_hosts` {broken: 2}, the certificate's `quarantines` empty;
+    `test_env_decisions` (in process): the free round with no rerun left
+    (no log; a stale log; a log with `RUN_ARGV ENV FAULT`, counted on its
+    host), a counted round when the log shows a start or the task has
+    files, the stall STOP after 3 free rounds, a verification job exiting
+    96 (no try counted, its host noted), a gate exiting 96 with its own log
+    (never ran, host noted), a dependent gate ended unrun with -1 and no
+    log (never ran, nothing noted). Mutations caught `[SANDBOX
+    2026-10-29]`: no task ever unstarted; a verification job's fault
+    counted as a try; the test task's fault a failure; a stale log read as
+    this round's; no job protocol in the launcher's environment.
+
 ### Block 3: the input stages S1-S3 (`stages/inputs.py`)
 
 - Module: `hpc/pipeline/stages/inputs.py` (`RealExtractionStage`,
@@ -1230,6 +1277,97 @@ fixture, not part of the pipeline.
   `test_cores` (S2's CONCURRENCY 3 in a share of 10 with tasks of 3 cores;
   S1 refused in a share of 3; S1 recorded in a share of 4, then S2
   refused at its start: its gate of 8 can never fit).
+
+- Amended 2026-10-29 (b) (D-113, the user's "This should be agnostic
+  (independent) from the subproject run", 17:37; D-112, "we will run on
+  the available simulations"; the design Claude's, `[proposed]`). Every
+  job the pipeline submits starts through its job protocol, whatever the
+  data set and whichever repository's job script it is.
+  - (a) The launchers' environment (`_InputBase._env`, and block 2's
+    `_BankBase._env`): the variables of `common.stage_job_protocol(cfg)`
+    -- `PIPELINE_JOBS_DIR` (this checkout's `hpc/pipeline/jobs`),
+    `WORK_ROOT`, `CHAIN_NAME` (`pl_<tag>`), `AVOID_FILE` (D-102's list)
+    and `AVOID_HOLD_S` (`common.AVOID_HOLD_S`) -- each first removed from
+    the caller's environment; a value with a comma or a blank is refused
+    (`ValueError`, the stage stops). Sbi-extractor's env.sh
+    (`sbix_pipeline_v`) passes them to every job its launchers submit with
+    `qsub -v`, and every Sbi-extractor job script -- `extractor/
+    run_extractor_array_mea.pbs`, `run_cohort_manifest.pbs`,
+    `sim_reextract/run_sim_reextract_gate.pbs`, `export_windows/
+    run_bank_task.pbs`, `run_bank_gate.pbs`, and S2's task wrapper
+    `sim_reextract/run_mea_task.pbs` around Astro-Neuron-Network's
+    `submit_mea_array.sh` (ANN unchanged) -- then starts through
+    `jobs/stage_job.sh` (block 7, "Environment faults and reruns" (g)). By
+    hand (no `PIPELINE_JOBS_DIR`) the scripts and the launchers are as
+    before.
+  - (b) S2's jobs that could not start their command -- the test task or a
+    gate held off a listed host (exit 94; `common.held_off_node`) or with
+    an environment fault (`common.env_fault`: exit 96, 97 / 98, a code of
+    `JOB_EXEC_FAULTS`, the log's `RUN_ARGV ENV FAULT` line) -- are
+    submitted again (the test task: `launch test`; a gate: `launch gate`
+    with RESUME=1, the gate alone), free; an environment fault counts as a
+    node fault of the job's host (the scheduler's `exec_host`, kept as the
+    job's `host`) and in D-111's guard (`common.note_env_fault`; at 12 in a
+    row on 3 hosts the stage stops). A gate that waited on the array
+    (`after`) and that PBS ended with a code of `JOB_EXEC_FAULTS` before it
+    wrote a log of its own (`common.unrun_dependent`: a one-task round is
+    a plain job, whose failure ends its afterok gate unrun) is a gate that
+    never ran, no node's fault: as one that finished with no record and no
+    log of its own after the grace period, the gate alone, at most
+    `GATE_UNRUN_MAX` (3) times in a row. Only the gate's own log counts
+    (`gate_log_stat` at its submission, as block 2's).
+  - (c) S2's rounds: a gate that ran and refused is read
+    (`inputs.parse_gate_refusal`: the `[gate] FAIL <campaign>/<sweep>`
+    blocks and their `[gate]      - ` problems). A refusal no rerun fixes
+    (`[gate] REFUSED:` a precondition, `[gate] FAIL environment`, `[gate]
+    FAIL no mea_env.json read`) or one without task blocks stops the stage
+    as before. A task with the problem `no mea_env.json` never started (its
+    job never ran `submit_mea_array.sh`); every other bad task started and
+    failed. When every bad task never started, the round is free
+    (`common.free_round`): not counted, but `FREE_ROUND_STALL` (3) free
+    rounds in a row that leave at least as many unstarted stop the stage
+    (`<n> task(s) still could not start after 3 free rounds in a row, no
+    fewer each round (D-113): the environment or the cluster, not a node
+    ...`). Otherwise the round counts: at most `S2_RERUN_ROUNDS` (2,
+    `PIPELINE_S2_RERUN_ROUNDS`), then `after <k> rerun round(s), <n>
+    task(s) still bad (job <gate>; <log>): <task>: <problems> | ...`. Each
+    round is `launch array` with RESUME=1 (the plan keeps the complete
+    tasks and re-plans the rest, D-112 included), recorded as
+    `re-detection array (round <r>)` and `re-detection gate (round <r>)`.
+  - (d) D-112 in the plan (Sbi-extractor `sim_reextract_plan.py
+    --quiet-hours H`, through `sim.plan_args`): a task whose folder, JSON
+    files or `topo_*/` folders changed less than H hours before the plan
+    is left out, named in the plan's `excluded` (`still being written
+    (D-112): changed <age> h before the plan, less than --quiet-hours H`)
+    and `excluded_active`, before the replay check reads its files; every
+    task so young: refused (no runnable task); such a task with detections
+    in the output root: refused. S2 plans at every launch, so a task gone
+    quiet joins the next round and the record names the tasks it holds.
+  - Constants, not configuration keys (the digest does not change):
+    `inputs.S2_RERUN_ROUNDS` 2, `inputs.GATE_UNRUN_MAX` 3,
+    `common.FREE_ROUND_STALL` 3 (`PIPELINE_FREE_ROUND_STALL`).
+  - S1 is not changed beyond (a): its jobs start through the protocol (the
+    folder fallback included), but a well whose job could not start
+    (exit 96 or 94, PBS) stops S1 at the aggregation's refusal, since the
+    launcher refuses a refused root (sec. 8).
+  - Test oracles (`tests/test_smoke_block3.py` `test_env_rounds`; the S2
+    stub's tracking mode `STUB_TRACK=1`: tasks complete by a file, jobs
+    through `jobs/stage_job.sh` when `PIPELINE_JOBS_DIR` is set, the gate's
+    refusal in the real format; `tests/fake_conda` absent on host
+    `broken`, fake environment folders whose python fails there): (a) the
+    test task's first job and the first gate on `broken` (exit 96): both
+    submitted again, `node_fault_hosts` {broken: 2}; an array element PBS
+    never starts: the gate names it never started, a free round runs it;
+    PIPELINE DONE, 7 jobs; the launcher's jobs print the protocol's line
+    and the prefix is recorded; (b) a task failing whenever it starts:
+    rounds 1 and 2, the one-task rounds' gates ended unrun (-1) taken as
+    never run (the gate alone, no node fault), then the STOP line, 9 jobs;
+    (c) a task whose job never starts: free rounds 1-3, then the stall
+    STOP, 13 jobs. Mutations caught (`MUTATIONS` in the scratch runner,
+    `[SANDBOX 2026-10-29]`): a test task that could not start taken as a
+    failure; free rounds counted; the gate's environment fault taken as a
+    refusal; no stall guard; no job protocol in the launcher's
+    environment.
 
 ### Block 4: the campaign prior in the runner
 
@@ -2313,7 +2451,26 @@ fixture, not part of the pipeline.
   - Not changed: D-096's rule for a failed record; D-102's list, hold and
     counts; `max_resubmits`; Sbi-extractor's job scripts (S1, S2 and the
     bank's tasks keep their own activation: done for Giulia; a laptop
-    push, D-062).
+    push, D-062). [corrected 2026-10-29 (b): D-113 brings them under the
+    protocol, (g)]
+  - (g) [amended 2026-10-29 (b), D-113] `jobs/stage_job.sh`, the job
+    protocol of the job scripts of other repositories, sourced by absolute
+    path when the launcher passed `PIPELINE_JOBS_DIR`:
+    `pipeline_stage_job_start <env>` prints `RUN_ARGV: host <h>, job <id>,
+    env <env> (the pipeline's job protocol, D-113)` (the stages read the
+    host there, `common.host_of_log`); on a host of `AVOID_FILE` (D-102)
+    `RUN_ARGV AVOID: host <h> is on the avoid list <file> (D-102); holding
+    this slot for <s> s, then exiting 94`, the hold, the watchdog, status
+    94; else `pipeline_activate` (a); when it fails, `RUN_ARGV: holding
+    this slot for <s> s (D-113), then exiting <rc>`, the hold, the
+    watchdog, status 96; `pipeline_stage_job_end` (the scripts' EXIT trap)
+    runs the watchdog of block 1 (g) whatever the job's exit, which it
+    never changes. The stages' side: blocks 2 and 3, amended 2026-10-29
+    (b). Tests: `test_smoke_block7c.py` `stage_job_units` (conda; the
+    folder; nothing usable: 96 after the hold, the command not run; a
+    listed host: 94, neither the activation nor the command; the command's
+    own exit; SKIP_CONDA=1; the watchdog at the job's end); mutations
+    `stage_avoid` and `stage_fault` each caught `[SANDBOX 2026-10-29]`.
   - Test oracles (`tests/test_smoke_block7c.py`; the jobs under the fake PBS,
     `hostname` stubs for the node names, a fake conda (`tests/fake_conda/`:
     `FAKE_CONDA_ABSENT_HOSTS` behaves as no conda installed,
@@ -2555,6 +2712,34 @@ submission at a time. [proposed 2026-10-29 by Claude; Confirmed: no]
   unchanged by a run (read-only).
 - Status: built 2026-10-29; smoke-tested in the sandbox; not run on
   davinci.
+- Amended 2026-10-29 (b) (D-112, D-113). `sim.plan_args` is read for S2's
+  `--quiet-hours H` (`plan_quiet_hours`; an unreadable value: FAIL `plan
+  args`). With H: the tasks changed less than H h ago (`newest`, as the
+  plan's own rule) are the ones the plan leaves out: `being written` NOTE
+  naming them (OK when none; FAIL when every task is, the plan refuses);
+  they are not sampled (unless every task is); the `campaign` WARN is kept
+  for the tasks younger than the tool's `--quiet-hours` that the plan
+  would still plan, else a NOTE; `plan option`: the Sbi-extractor
+  checkout's `sim_reextract_plan.py` takes `--quiet-hours` (else FAIL).
+  `pace` (`iteration_gaps`, at most 20,000 files): the gaps between two
+  iteration files of one task by modification time, the 95th percentile
+  and the longest; WARN when the 95th percentile is not under H (a task
+  still running may look finished), else NOTE. D-113: `protocol (SBI)`:
+  `<sbi_dir>/hpc/pipeline/jobs` holds stage_job.sh, activate_env.sh,
+  chain.sh, and `paths.work_root` / `paths.sbi_dir` carry no comma or
+  blank (else FAIL), with the environment prefixes recorded so far under
+  `<work_root>/envs`; `protocol (Sbi-extractor)`: env.sh defines
+  `sbix_pipeline_v` and the six job scripts call
+  `pipeline_stage_job_start` (else FAIL: a checkout before D-113). The
+  summary gains `plan_quiet_hours` and `being_written`. Tests:
+  `test_being_written` (one task changed now: named, not sampled -- 3
+  files, stoa_gate_p's 3 values --, no WARN; iteration files 10 h apart:
+  the `pace` WARN, the longest 10.00 h); the consistent tree adds `being
+  written` OK, `plan option` OK, `pace` NOTE, both `protocol` rows OK;
+  the mutations every task changed now (`being written`), a plan without
+  the option (`plan option`), plan_args `--quiet-hours soon` (`plan
+  args`), stage_job.sh removed (`protocol (SBI)`), a job script without
+  the protocol (`protocol (Sbi-extractor)`), each its named FAIL alone.
 
 ## 6. Pipeline entry points
 
@@ -2565,9 +2750,10 @@ submission at a time. [proposed 2026-10-29 by Claude; Confirmed: no]
 | `bash hpc/pipeline/run_pipeline.sh --project giulia --status` | the stage table from the state file and the live scheduler | -- | seconds |
 | `python3 hpc/pipeline/tests/test_smoke_pipeline.py`, `test_smoke_block1b.py`, `test_smoke_block1c.py` | block 1's smoke tests under the fake PBS: the sequencer; its jobs (D-098); the core cap (D-099) | none (synthetic project in a temporary directory; `SBIX_CLONE` for 1c's launcher check) | about 25 s, 3 min, 2 min |
 | `python3 hpc/pipeline/tests/test_smoke_block7.py` | block 7's smoke test: the search and the best fit under the fake PBS on the fixture banks | the training environment (torch, sbi, skopt) | about 2 min |
-| `python3 hpc/pipeline/tests/test_smoke_block2.py`, `test_smoke_block3.py` | blocks 2 and 3: the bank stages and the input stages on the stand-in davinci | the Sbi-extractor checkout (`SBIX_CLONE`), numpy | about 20 s, 7 s |
+| `python3 hpc/pipeline/tests/test_smoke_block2.py`, `test_smoke_block3.py` | blocks 2 and 3: the bank stages and the input stages on the stand-in davinci; since 2026-10-29 (b) their jobs through the job protocol (D-113) | the Sbi-extractor checkout (`SBIX_CLONE`) at or after D-113, numpy | about 2 min, 30 s |
 | `python3 hpc/pipeline/tests/test_smoke_block8.py` | block 8: the one command end to end on the stand-in with the real tools | both of the above | about 1 min |
-| `python3 hpc/pipeline/tests/test_smoke_block7c.py` | D-111: the environment's fallback, environment faults, the chain's replacement and watchdog | the training environment (torch, sbi, skopt) | a few minutes |
+| `python3 hpc/pipeline/tests/test_smoke_block7c.py` | D-111: the environment's fallback, environment faults, the chain's replacement and watchdog; D-113's `stage_job_units` | the training environment (torch, sbi, skopt) | a few minutes |
+| `python3 hpc/pipeline/tests/test_smoke_inputs_check.py` | block 9: the inputs check (D-112's and D-113's rows included) | the Sbi-extractor checkout at or after D-113, numpy | about 1 s |
 
 ## 7. Not executable in the sandbox
 
@@ -2607,7 +2793,20 @@ stated in the README.
   <stage>` resumes it. Of the jobs of S2-S6 only the bank's verification
   job runs the watchdog, so the first residual above covers those stages
   almost whole. Whether D-111 is extended to them is the user's call (the
-  decisions log, Open calls).]
+  decisions log, Open calls).] [closed 2026-10-29 (b) by D-113: every job
+  of S1, S2 and S5 starts through `jobs/stage_job.sh` (block 7 (g)) and
+  runs the watchdog at its end; S2 and S5 submit again, free, the jobs
+  that could not start and run free rounds for the tasks that never
+  started (blocks 2 and 3, amended 2026-10-29 (b)).]
+- S1's residual (D-113, 2026-10-29): S1's jobs start through the job
+  protocol, so a node without conda activates the environment from its
+  folder; but a well whose job could not start at all (exit 96 or 94, a
+  PBS start failure) is named by the aggregation's refusal and stops S1,
+  and the launcher refuses a refused root (`holds no
+  cohort_manifest.json`), so the remedy is by hand: the root moved aside,
+  then `--retry real_extraction`. A resume mode of `launch_stage_d.sh`
+  (the missing wells only) would let S1 heal as S2 and S5 do (a
+  Sbi-extractor change, D-062). Not needed for LindDUP (S1 skipped).
 
 - Block 5's alternative, proposed 2026-10-15 and not taken up: decompress
   the windows once into a plain float32 file (about 45 GB on disk for

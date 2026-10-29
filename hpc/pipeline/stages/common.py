@@ -14,7 +14,11 @@ environment faults (D-111): a trial's or a member's job that could not
 start its environment, or that PBS could not start, is submitted again
 without counting a resubmission, and a stage whose jobs fault so on many
 nodes in a row stops (`env_fault`, `note_env_fault`); every job carries
-the variables of the chain's helpers (`qsub_line`).
+the variables of the chain's helpers (`qsub_line`). Since 2026-10-29 the
+same for the jobs Sbi-extractor's launchers submit (D-113): the
+variables that put them under the job protocol (`stage_job_protocol`,
+jobs/stage_job.sh), and the free rounds of a stage whose tasks could not
+start (`free_round`, `counted_round`).
 
 Nothing here names a project (D-091): every path and value comes from the
 configuration.
@@ -45,7 +49,8 @@ __all__ = ["paths_of", "tuner_common_args", "shard_globs", "run_tuner", "qsub_li
            "read_avoid_list", "add_to_avoid_list", "note_node_fault", "sync_avoid_list",
            "held_off_node", "chain_name", "ENV_FAULT_EXIT", "JOB_EXEC_FAULTS",
            "ENV_FAULT_STREAK", "ENV_FAULT_HOSTS", "env_fault", "note_env_fault",
-           "clear_env_fault_streak"]
+           "clear_env_fault_streak", "stage_job_protocol", "PROTOCOL_VARS", "FREE_ROUND_STALL",
+           "free_round", "counted_round", "unrun_dependent"]
 
 
 class ToolError(RuntimeError):
@@ -704,3 +709,71 @@ def clear_env_fault_streak(sub):
     environment faults in a row starts again (D-111)."""
     if sub.get("env_fault_streak", {}).get("n"):
         sub["env_fault_streak"] = {"n": 0, "hosts": []}
+
+
+# ---------------------------------------------------------------------------
+# The jobs of Sbi-extractor's launchers (D-113; SPEC blocks 2 and 3, amended
+# 2026-10-29 (b))
+# ---------------------------------------------------------------------------
+
+# The variables a stage gives a launcher so that every job it submits starts
+# through jobs/stage_job.sh (the avoid list, the activation's folder fallback,
+# exit 94 / 96, the chain's watchdog); env.sh's sbix_pipeline_v passes them on
+# with qsub -v. Popped first: a value inherited from the caller never leaks.
+PROTOCOL_VARS = ("PIPELINE_JOBS_DIR", "WORK_ROOT", "CHAIN_NAME", "AVOID_FILE", "AVOID_HOLD_S")
+# Free rounds (a round whose bad tasks all never started) in a row that leave
+# at least as many tasks unstarted as the round before stop the stage.
+FREE_ROUND_STALL = int(os.environ.get("PIPELINE_FREE_ROUND_STALL", "3"))
+
+
+def stage_job_protocol(cfg):
+    """{name: value} of PROTOCOL_VARS for a launcher's environment: this
+    checkout's jobs/ folder, the work root, the chain's name, the avoid list
+    and its hold. Refuses a value qsub -v cannot carry (a comma or a blank)."""
+    v = {"PIPELINE_JOBS_DIR": paths_of(cfg)["jobs_dir"],
+         "WORK_ROOT": cfg.data["paths"]["work_root"],
+         "CHAIN_NAME": chain_name(cfg), "AVOID_FILE": avoid_file(cfg),
+         "AVOID_HOLD_S": str(int(AVOID_HOLD_S))}
+    for k in PROTOCOL_VARS:
+        if "," in v[k] or any(c.isspace() for c in v[k]):
+            raise ValueError("%s=%r: qsub -v cannot carry a comma or a blank (D-113)" % (k, v[k]))
+    return v
+
+
+def free_round(sub, n_unstarted, stage, what="task(s)"):
+    """D-113: a round whose bad tasks all never started (their jobs could not
+    start: an environment fault, a hold off a listed node, PBS) is free, not
+    counted against the stage's rerun rounds. Counts it in the stage's state
+    and returns the stop reason, or None: FREE_ROUND_STALL free rounds in a
+    row that leave at least as many unstarted as the round before."""
+    prev = sub.get("free_last")
+    stall = int(sub.get("free_stall", 0))
+    stall = stall + 1 if (prev is not None and int(n_unstarted) >= int(prev)) else 0
+    sub["free_stall"] = stall
+    sub["free_last"] = int(n_unstarted)
+    sub["free_rounds"] = int(sub.get("free_rounds", 0)) + 1
+    if stall >= FREE_ROUND_STALL:
+        return ("%d %s still could not start after %d free rounds in a row, no fewer each round "
+                "(D-113): the environment or the cluster, not a node -- read the jobs' logs (their "
+                "RUN_ARGV lines), fix it, then --retry %s" % (int(n_unstarted), what, stall, stage))
+    return None
+
+
+def unrun_dependent(job, log_fresh):
+    """D-113: True for a finished job that waited on another (`after`) and
+    that PBS ended with one of JOB_EXEC_FAULTS before it wrote a log of its
+    own -- its dependency failed (afterok on a plain job: davinci deletes the
+    dependent) or PBS never started it. Never a node's fault: the caller's
+    'never ran' path applies, and nothing is counted against a host."""
+    try:
+        code = int(job.get("exit_status"))
+    except (TypeError, ValueError):
+        return False
+    return bool(job.get("after")) and not log_fresh and code in JOB_EXEC_FAULTS
+
+
+def counted_round(sub):
+    """A round counted against the rerun rounds (a task started and failed):
+    the free rounds' stall starts again (D-113)."""
+    sub["free_stall"] = 0
+    sub.pop("free_last", None)
