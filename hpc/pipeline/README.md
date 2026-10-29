@@ -559,8 +559,9 @@ cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && pyth
 
 # L4. the dry run; pass: exit 0, no REFUSE or STOP line, real_extraction "would be skipped", sim_redetection
 #     and label_freeze "would run", "at most 4 trial(s) at once -- max_concurrent_trials 25", two
-#     "environment faults (D-111)" lines, three "job protocol (D-113)" lines (S1, S2, S5), S2's
-#     "rounds (D-113)" and S5's "jobs that cannot start (D-113)", the sequencer pl_linddup
+#     "environment faults (D-111)" lines, two "job protocol (D-113)" lines (S2, S5; a skipped stage
+#     prints none, so S1's is absent), S2's "rounds (D-113)" and S5's "jobs that cannot start
+#     (D-113)", the sequencer pl_linddup
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --dry-run 2>&1 | tee ~/pipeline_linddup_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|cores|exit|D-111|D-113" ; echo "exit ${PIPESTATUS[0]}"
 
 # L5. the run; pass lines, in order: environment sbi_export: <prefix> (recorded for nodes without conda,
