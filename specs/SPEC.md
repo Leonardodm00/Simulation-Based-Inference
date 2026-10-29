@@ -2593,6 +2593,21 @@ stated in the README.
   `JOB_EXEC_FAULTS` is PBS Pro's documented set, `[proposed]`: which of
   the codes davinci's server reports for which failure is known only for
   -2 (2026-10-16).
+  [2026-10-29, the LindDUP chat: a data set whose S2 and S5 still run
+  (`projects/linddup/`) meets them outside D-111. Their test tasks, arrays
+  and gates run Sbi-extractor's and ANN's job scripts (S2:
+  `launch_sim_reextract.sh` with ANN's `submit_mea_array.sh` and
+  `run_sim_reextract_gate.pbs`; S5: `launch_bank.sh` with
+  `run_bank_task.pbs` and `run_bank_gate.pbs`), which keep their own
+  activation (block 7's "Not changed"), so a node without conda fails
+  them: S2's test task or gate then stops the stage, as do the bank's test
+  task and a bank gate that does not run alone either, while the bank's
+  array tasks heal through the rerun rounds (D-094); each STOP ends the
+  chain on purpose (`driver/CHAIN_END`), and a submission with `--retry
+  <stage>` resumes it. Of the jobs of S2-S6 only the bank's verification
+  job runs the watchdog, so the first residual above covers those stages
+  almost whole. Whether D-111 is extended to them is the user's call (the
+  decisions log, Open calls).]
 
 - Block 5's alternative, proposed 2026-10-15 and not taken up: decompress
   the windows once into a plain float32 file (about 45 GB on disk for

@@ -497,26 +497,44 @@ tick that raises no longer leaves its successor refusing (2026-10-19).
 The same discipline: one line at a time, each read before the next. Before
 L1, the Sbi-extractor commit of 2026-10-29 (D-107, D-108, `profiles/linddup.sh`)
 must be on GitHub (D-062: pushed from the laptop); its tree is `413e707a`.
+[2026-10-29, after D-111 (`66e18ef`): the commands are unchanged. L1's pull
+brings D-111 too (davinci's checkout has it since the Giulia line 1 of 17:00),
+L4 and L5 print its lines, and two cautions are added: the campaign may still
+be being written (L3, before L5), and S2's and the bank's own jobs are outside
+D-111 (L6).]
 
 ```
-# L1. this code and its cluster-side check: step 1 above; pass line: PIPELINE CODE OK
+# L1. this code and its cluster-side check: step 1 above; pass lines: `66e18ef` or later from git log, PIPELINE CODE OK
 
 # L2. the Sbi-extractor pull, its tree and its suites; pass lines, in order: the tree 413e707a..., then
 #     -- 8 pass, 0 fail, 0 error, 0 todo, 2 skip / -- 41 pass, 0 fail, ... 2 skip / -- 17 pass, 0 fail, ... 2 skip / ALL 35 CHECKS PASSED
 cd ~/repos/Sbi-extractor && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin feat/real-arm-parity && git rev-parse HEAD^{tree} && source env.sh && python3 smoke_test_topology_axes.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_plan.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_export.py 2>&1 | tail -1 && python3 sim_reextract/smoke_test_sim_reextract.py 2>&1 | tail -1
 
 # L3. the inputs check (read-only; block 9); pass line: INPUTS CHECK: 0 FAIL, <w> WARN -- read every WARN (above
-#     all `campaign`: a MEAMA job may still be writing the campaign) and the qstat lines; paste it whole
+#     all `campaign`: a MEAMA job may still be writing the campaign) and the qstat lines; paste it whole.
+#     Before L5: no `meama_campaign` job (`meama_cam*`) left in the qstat lines (Q, H, R or B; at 17:02 on
+#     2026-10-29 `1544754[]` was B) and no WARN on `campaign`. Otherwise wait for the array to end, or leave
+#     the tasks it is writing out by name (`sim.plan_args` `--exclude-task CAMPAIGN/SWEEP`, D-060) -- the
+#     user's call; S2 must not plan a campaign being written (D-104, D-073)
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/inputs_check.py --project linddup --json ~/inputs_check_linddup.json 2>&1 | tee ~/inputs_check_linddup.txt
 
 # L4. the dry run; pass: exit 0, no REFUSE or STOP line, real_extraction "would be skipped" (extracted_v2 is
-#     done), sim_redetection and label_freeze "would run", "at most 4 trial(s) at once", the sequencer pl_linddup
-cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --dry-run 2>&1 | tee ~/pipeline_linddup_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|cores|exit" ; echo "exit ${PIPESTATUS[0]}"
+#     done), sim_redetection and label_freeze "would run", "at most 4 trial(s) at once", two
+#     "environment faults (D-111): ..." lines (the search's, the best fit's), the sequencer pl_linddup
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --dry-run 2>&1 | tee ~/pipeline_linddup_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|cores|exit|D-111" ; echo "exit ${PIPESTATUS[0]}"
 
-# L5. the run; pass line: SUBMITTED the sequencer: job <id> (pl_linddup)
+# L5. the run; pass lines, in order: environment sbi_export: <prefix> (recorded for nodes without conda,
+#     D-111), the same for sbi_env (both prefixes expected under /davinci-1/home/ldellamea/.conda/envs, which
+#     a node without /archive still reaches), then SUBMITTED the sequencer: job <id> (pl_linddup)
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup
 
-# L6. any time: the status and the log (S2's test task, then its array and gate, S3, the plan's estimates, ...)
+# L6. any time: the status and the log (S2's test task, then its array and gate, S3, the plan's estimates, ...).
+#     S2's test task, array and gate and the bank's test task, array and gate run Sbi-extractor's and ANN's
+#     job scripts, which keep their own conda activation (outside D-111): a node without conda fails them.
+#     The bank's array tasks heal through its rerun rounds (D-094) and a bank gate that never ran is run
+#     alone once; otherwise such a failure is a STOP that ends the chain on purpose (--status: "chain: ended
+#     on purpose ..."): read the STOP line and the job's log, then the dry run and the submission, each with
+#     --retry <stage>
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project linddup --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/linddup/pipeline.log
 ```
 
