@@ -150,9 +150,34 @@ def evaluate_npe_shards(model, index, row_mask, batch_size=512):
 
 
 def _save_checkpoint(path, payload):
+    """[D-111] Durable: the temporary file is flushed and fsynced before its
+    rename, and the folder after it (best effort), so a node that goes down
+    leaves the old or the new checkpoint, not an empty one."""
     tmp = path + ".tmp"
-    torch.save(payload, tmp)
+    with open(tmp, "wb") as fh:
+        torch.save(payload, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
     os.replace(tmp, path)
+    try:
+        dfd = os.open(os.path.dirname(os.path.abspath(path)), os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError:
+        pass
+
+
+def _set_aside_checkpoint(path):
+    """[D-111] `<path>.corrupt<k>`, the first free k: a checkpoint that could
+    not be loaded is kept, never deleted (as the pipeline's D-097)."""
+    k = 1
+    while os.path.exists("%s.corrupt%d" % (path, k)):
+        k += 1
+    dst = "%s.corrupt%d" % (path, k)
+    os.replace(path, dst)
+    return dst
 
 
 def load_train_checkpoint(path):
@@ -206,8 +231,23 @@ def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
     first_epoch = 0
 
     # [block 6] resume from the per-epoch checkpoint when asked and present.
+    # [D-111] the pipeline asks for --resume on every job, so a checkpoint that
+    # cannot be loaded (torn by a node that went down) starts the run fresh
+    # instead of failing it; an OSError is the file system's (a node fault).
+    ck = None
     if ckpt_path and resume and os.path.isfile(ckpt_path):
-        ck = load_train_checkpoint(ckpt_path)
+        try:
+            ck = load_train_checkpoint(ckpt_path)
+        except OSError:
+            raise
+        except Exception as exc:
+            dst = _set_aside_checkpoint(ckpt_path)
+            if log_fn is not None:
+                log_fn("checkpoint %s could not be loaded (%s: %s); moved aside as %s; starting "
+                       "from epoch 0" % (os.path.basename(ckpt_path), type(exc).__name__,
+                                         str(exc)[:200], os.path.basename(dst)))
+            ck = None
+    if ck is not None:
         if ck["config"] != cfg.to_dict():
             raise ValueError("%s was written under another TrainConfig: %r vs %r"
                              % (ckpt_path, ck["config"], cfg.to_dict()))

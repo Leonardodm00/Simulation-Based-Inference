@@ -312,6 +312,9 @@ and PBS_JOBID may spell the server part differently, so job ids are never
 compared as whole strings. The sequencer's jobs call all four commands from
 compute nodes; `tools/probe_compute_qsub.pbs` checks that davinci allows it
 (qsub with `-W depend=afterany` and `-h`, qstat -x -f, qselect -u -N, qdel).
+[amended 2026-10-29, D-111] `JobStatus.exec_host`: the first host of the
+record's `exec_host` (`<host>/0*48` -> `<host>`), None when absent; the
+stages keep it as a finished job's `host`.
 
 The fake PBS of `tests/fake_pbs/` provides the same commands for the
 tests: `qsub` records the job and runs its script after `FAKE_PBS_DELAY`
@@ -769,6 +772,69 @@ fixture, not part of the pipeline.
   (`Cannot allocate memory`, then every qstat refused) -- the fake PBS
   models the refusal only -- and the 17-minute scale (the tests use 2
   ticks of about 1.6 s).
+- Amended 2026-10-29 (g) (D-111, the user's "Fix this it must be bullet
+  proof as the whole pipeline once started MUST BE"; the records are in
+  block 7's "Environment faults and reruns"; the design Claude's,
+  `[proposed]`): an environment fault never ends the chain. (1)
+  `submit_driver` writes, at every submission, `<work_root>/driver/
+  chain.qsub` -- the qsub argument lines of a driver job, one per line,
+  its argv file `@ARGV@` and its log `@LOG@`, no dependency -- and
+  `driver/revive.argv`, the plain `drive --config <cfg>` of a successor;
+  the driver's job carries `ROLE=driver`. (2) A driver job that cannot
+  start its command (status 96, block 7's (a); or 90, 91: its folder or
+  its argv file unreachable) and sees no other job named `CHAIN_NAME`
+  queued, held or running (`qselect -u <user> -N <name> -s HQRSTUW`,
+  itself left out; a qselect that fails counts as none: a duplicate driver
+  exits by itself, (c) above) submits a replacement from the template --
+  its own argv file (it never ran, so its flags still apply) and a new log
+  `driver/replace.<utc>.<pid>.log` -- with `-a <now + d>`, d = min(3600,
+  300 x 2^(n-1)) s for its n-th replacement since a driver last completed
+  a full tick (`driver/env_replacements`, which `on_tick` removes;
+  `PIPELINE_REPLACE_BASE_S`, `PIPELINE_REPLACE_MAX_S` for the tests), qsub
+  tried up to 10 times 30 s apart (`PIPELINE_CHAIN_QSUB_WAIT_S`); printed
+  `RUN_ARGV CHAIN: ...` and logged in `pipeline.log`: `driver <id>: could
+  not start on <host> (<why>); its replacement <id> starts in <d> s
+  (replacement <n> since the last full tick; D-111)`. Another job of the
+  chain queued, held or running: nothing submitted (`RUN_ARGV CHAIN: the
+  sequencer's chain goes on with <ids>`). No template (code before this
+  amendment): `RUN_ARGV CHAIN: ... the chain ends here`. (3) The watchdog,
+  at the end of every stage job (block 7's (b)): when neither
+  `<work_root>/STOP_REQUEST` nor `driver/CHAIN_END` exists, the template
+  and `revive.argv` do, and qselect (as in (2); one that fails: nothing)
+  lists no job named `CHAIN_NAME`, the job takes `driver/watchdog.lock`
+  (`mkdir`; stale after 600 s, `PIPELINE_WATCHDOG_STALE_S`), checks the
+  same again and submits a driver from the template with `revive.argv` and
+  a log `driver/revive.<utc>.<pid>.log`, at once; printed `RUN_ARGV CHAIN:
+  ...` and logged `watchdog: job <id> on <host>: no sequencer job was
+  queued, held or running and the chain had not ended on purpose;
+  submitted <id> to revive it (D-111)`. So the chain also comes back after
+  a driver job PBS could not start (an `Exit_status` -2 on a bad node), or
+  one that died before submitting its successor, as soon as a stage job
+  ends. (4) The deliberate end, `driver/CHAIN_END` (one line: utc, the
+  job, the reason), written by a driver that ends the chain on purpose --
+  `done`, `stopped` on request (not by a signal), `failed`, `refused`,
+  `tick limit`, the unclean limit of (c), a raise that reaches it -- and by
+  a driver job's script when its command exits 2 (a refusal before its
+  first tick) and none is there; not when the chain ends because no
+  successor could be submitted (the scheduler: a watchdog revives it once
+  qsub works again) nor when another driver holds the lock. `cmd_submit`
+  removes it and `env_replacements`, logged. (5) `run`: an `EnvError` (both
+  routes of block 7's (a) failed for an in-environment command) at a
+  stage's start is not a refusal: it propagates, as one in a poll does, to
+  `cmd_drive`'s handler (an unclean end; the successor goes on). (6)
+  `cmd_submit`, on the login node, records the prefixes of `envs.extract`
+  and `envs.train` (`python -c "import sys; print(sys.prefix)"` through
+  `run_in_env`, whose activation writes `<work_root>/envs/<env>.prefix`)
+  before the first driver, logged `environment <env>: <prefix> (recorded
+  for nodes without conda, D-111)`; a failure is logged and the submission
+  goes on. (7) `--status` prints `chain: ended on purpose at <utc> by
+  <job>: <reason>` when `CHAIN_END` exists, and `chain: <n> replacement(s)
+  after environment faults since the last full tick` when
+  `env_replacements` holds n > 0. (8) `run` exports `WORK_ROOT` (the
+  configuration's work root) into its own environment, so the
+  in-environment commands of any sequencer record the prefix conda gives.
+  Test oracles and status: block 7's entry (one suite,
+  `tests/test_smoke_block7c.py`, covers both); smoke-tested 2026-10-29.
 - Confirmed: yes 2026-10-15 (the user's answers to the build handoff's Q1-Q7
   and the follow-up; D-090..D-093)
 - Status: smoke-tested 2026-10-15 (6 pass, 1 skip: convergence, not a
@@ -1396,6 +1462,27 @@ fixture, not part of the pipeline.
   Stage 2 suite 40/40 + 1 skip, the Stage 1 suite 46/46 + 1 skip, the
   Stage 4 suites 9/9 and 8/8 under `SKIP_CONDA=1`, the Sbi-extractor bank
   suite 15/15 + 1 skip, all unchanged)
+- Amended 2026-10-29 (D-111; block 7's "Environment faults and reruns",
+  (e)): the pipeline passes `--resume` to every trial and member, so a run
+  whose checkpoint is damaged must not fail for it. (1) `_save_checkpoint`
+  writes the temporary file, flushes and fsyncs it, renames it and fsyncs
+  the folder (best effort): a node that goes down after the rename leaves
+  the old or the new checkpoint, not an empty one (the ledger's empty
+  record of 2026-10-19 was a rename without an fsync). (2) `train_joint`
+  with `resume` and the file present: a checkpoint `load_train_checkpoint`
+  cannot load -- any exception but an OSError, which is the file system's
+  (a node fault) and is raised as before -- is moved aside as
+  `<name>.corrupt<k>` (the first free k; never deleted, as D-097's) and
+  the run starts from epoch 0, logged `checkpoint <name> could not be
+  loaded (<error>); moved aside as <name>.corrupt<k>; starting from epoch
+  0`; a checkpoint of another TrainConfig still raises (it is not
+  damaged). Test oracle (`smoke_test_blocks_4_6.py`, B6c): an empty, a
+  truncated and a garbage checkpoint under `--resume`: each moved aside,
+  the run then equal to a run without a checkpoint (history and model bit
+  for bit at one thread); an intact one resumes as before. Mutation: the
+  catch removed -> B6c FAILS. Status: smoke-tested 2026-10-29 `[SANDBOX]`
+  (B6c pass in 38 s; the mutation made it fail on the empty checkpoint: the
+  run exited 1).
 ### Block 7: the search and the best fit S7-S8
 
 - Modules: `hpc/pipeline/stages/search.py` (`SearchStage`), `stages/best_fit.py`
@@ -2129,6 +2216,205 @@ fixture, not part of the pipeline.
     10-minute hold keeps the scheduler from refilling a node at once (the
     hold's length is the user's to change through `PIPELINE_AVOID_HOLD_S`).
 
+- Environment faults and reruns [amended 2026-10-29; D-111, the user's
+  "Fix this it must be bullet proof as the whole pipeline once started
+  MUST BE"; the design Claude's, `[proposed]`]. Found on davinci 2026-10-29
+  (the read-only check of 14:52): the sequencer `1904837` stopped ticking
+  at 2026-10-26 21:43Z on its first node; PBS ran it again, with the two
+  trial jobs then running (`1905463`, `1905466`, both with checkpoints),
+  on 2026-10-27 at 12:36:58, on three nodes where the conda installation
+  was not mounted: `conda: command not found` at `run_argv.pbs:64-65`,
+  exit 98 within 1-2 s, before any command. The successor `1906402` then
+  ran on one of them and exited 98 as well: no driver was left, the chain
+  ended with no line in the log, and the trials' jobs ended without a
+  record. Had conda been there, the trials' reruns would have started from
+  epoch 0 (their argv had no `--resume`). Such faults now cost a delay,
+  never the chain, a resubmission or a trial's progress.
+  - (a) The activation, `jobs/activate_env.sh` (`pipeline_activate <env>`,
+    0 or 96; sourced by `run_argv.pbs` and by `envs.run_in_env`). With
+    `SKIP_CONDA=1` nothing (the tests, as before). First conda, as the job
+    scripts always did: `set +u` across `eval "$(conda shell.bash hook)"`
+    and `conda activate <env>`, the caller's `-u` restored after; a
+    success records `$CONDA_PREFIX` in `<WORK_ROOT>/envs/<env>.prefix`
+    (rewritten only when it changed, through a temporary name). When the
+    hook or the activation fails, the environment's own folder: the first
+    usable of the recorded prefix, `$HOME/.conda/envs/<env>` and
+    `<d>/<env>` for each `d` of `CONDA_ENVS_PATH` -- usable when
+    `<p>/conda-meta` is a directory, `<p>/bin/python` is executable and
+    `<p>/bin/python -c "import sys"` exits 0 on this node within 120 s
+    --, activated as conda activates one environment: `CONDA_PREFIX=<p>`,
+    `CONDA_DEFAULT_ENV=<env>`, `CONDA_SHLVL=1`, `PATH=<p>/bin:$PATH`, every
+    `<p>/etc/conda/activate.d/*.sh` sourced in name order under `set +u`;
+    printed `RUN_ARGV ENV: host <h>: conda unavailable (<its first error
+    line>); <env> activated from its folder <p>`. None usable: printed
+    `RUN_ARGV ENV FAULT: host <h>: the environment <env> cannot start
+    (conda: <error>; folders: <p> (<why>), ...)`, status 96.
+  - (b) The job, `run_argv.pbs`, with four more variables through `qsub
+    -v` (`common.qsub_line`): `JOBS_DIR` (this checkout's
+    `hpc/pipeline/jobs`), `WORK_ROOT`, `CHAIN_NAME` (the sequencer's job
+    name, `pl_<tag>`) and `ROLE` (`driver` for the sequencer's jobs,
+    `stage` for every other). With `JOBS_DIR` the activation (a); without
+    it -- a job submitted by code before this amendment -- the two lines of
+    before (exit 97, 98). Status 96: a stage job holds its slot
+    `AVOID_HOLD_S` s (D-102's hold: the scheduler does not refill the node
+    at once), runs the watchdog of block 1 (g), prints `RUN_ARGV EXIT: 96`
+    and exits 96; a driver job keeps the chain going (block 1 (g)) and
+    exits 96 at once. A stage job runs the watchdog also after its command
+    and after D-102's hold.
+  - (c) The stages: a trial's or a member's last job that ended without a
+    record (a record decides as before) is an environment fault
+    (`common.env_fault(job, log_text) -> why or None`) when its exit
+    status is 96, or 97 / 98 (the job script before this amendment), or
+    one of `JOB_EXEC_FAULTS` = {-1, -2, -3, -4, -5, -6, -7, -10, -11, -14,
+    -16, -18, -20} (PBS Pro's codes for a job its node could not start or
+    keep: exec failures, MoM aborts, a bad uid, a rerun, a sister or the
+    MoM lost, a hook's requeue), or when its log has a `RUN_ARGV ENV
+    FAULT:` line. After D-102's hold rule and before D-096's and the
+    refusal rules: the fault is counted on its host as a node fault
+    (`note_node_fault`, so D-102 lists the host at its third) -- the host
+    of the log's `RUN_ARGV ... host <h>` line, else the scheduler's
+    `exec_host` (sec. 3.3, recorded as the job's `host` when it finishes),
+    else `?` --, recorded in the trial's (member's) `env_faults` (host,
+    job, why, utc), and the trial (member) is submitted again at once when
+    it fits, else `waiting`: NOT a resubmission (`resubmits` unchanged).
+    Logged `search: trial <id12> could not start on <host> (<why>): an
+    environment fault, not the trial's (D-111); submitted again at once
+    (not a resubmission); <n> node fault(s) on <host> so far`
+    (`best_fit: member seed <k> ...`).
+  - (d) The guard against a broken environment (the faults are free, so a
+    broken environment would loop for ever): each stage counts its
+    environment faults in a row (`sub["env_fault_streak"]`: the count and
+    the hosts), reset by any job of the stage that ended otherwise (a
+    record, a kill, a refusal; D-102's holds leave it as it is). At
+    `ENV_FAULT_STREAK` (12) faults in a row on at least `ENV_FAULT_HOSTS`
+    (3) hosts the stage fails, the trial (member) left `waiting`: `STOP:
+    stage <s> failed: <n> job(s) in a row could not start (environment
+    faults on <k> node(s): <hosts>; the last: <why>): the environment or
+    the cluster, not a node -- fix it, delete from <avoid file> the hosts
+    this run listed (<hosts>), then --retry <s>`.
+  - (e) Reruns: every trial's and member's argv carries `--resume` (the
+    runner continues from the run's checkpoint when there is one and
+    starts fresh otherwise, block 6), so a job PBS runs again continues
+    where its first run stopped; block 6's amendment of 2026-10-29 makes a
+    checkpoint that cannot be loaded start the run fresh instead of
+    failing it.
+  - (f) `tools/search_report.py`: a trial whose last job is an environment
+    fault reads `could not start (an environment fault: <why>): submitted
+    again at once, not a resubmission (D-111)`. The dry runs print
+    `environment faults (D-111): a trial [member] whose job cannot start
+    its environment, or that PBS cannot start, is submitted again at once
+    (not a resubmission); <n> in a row on <k> node(s) stop the stage; every
+    trial [member] runs with --resume`.
+  - Constants (`stages/common.py`; no configuration key, so the digest does
+    not change and a running chain needs no `--accept-config-change`):
+    `ENV_FAULT_EXIT` 96, `JOB_EXEC_FAULTS`, `ENV_FAULT_STREAK` 12
+    (`PIPELINE_ENV_FAULT_STREAK`), `ENV_FAULT_HOSTS` 3
+    (`PIPELINE_ENV_FAULT_HOSTS`).
+  - Not changed: D-096's rule for a failed record; D-102's list, hold and
+    counts; `max_resubmits`; Sbi-extractor's job scripts (S1, S2 and the
+    bank's tasks keep their own activation: done for Giulia; a laptop
+    push, D-062).
+  - Test oracles (`tests/test_smoke_block7c.py`; the jobs under the fake PBS,
+    `hostname` stubs for the node names, a fake conda (`tests/fake_conda/`:
+    `FAKE_CONDA_ABSENT_HOSTS` behaves as no conda installed,
+    `FAKE_CONDA_ACTIVATE_FAILS`) and fake environment folders whose python
+    fails on the hosts of `FAKE_ENV_BROKEN_HOSTS`; the fake PBS gains `-a`,
+    `FAKE_PBS_FAIL_START=<name>:<k>` (Exit_status -2, no log),
+    `FAKE_PBS_HOST_BY_NAME=<name>:<k>=<host>` and `exec_host` in qstat, and no
+    longer passes a submitter's node name on to its job):
+    - known answer (`activate_units`, no scheduler): `pipeline_activate`
+      under `set -u` -- conda works (0; the env's python first on PATH; the
+      prefix recorded; nothing printed); conda absent (the recorded prefix;
+      `RUN_ARGV ENV: host noconda: conda unavailable (bash: conda: command
+      not found); myenv activated from its folder <p>`; its activate.d
+      script sourced; `-u` restored); conda's activation failing (the same,
+      its EnvironmentNameNotFound line as the reason); only
+      `$HOME/.conda/envs`; only `CONDA_ENVS_PATH` (an absent folder first);
+      nothing usable (96; `RUN_ARGV ENV FAULT: ...` naming each folder and
+      why: `no conda-meta`, `its python does not start on this node`);
+      `SKIP_CONDA=1` (0, nothing, PATH unchanged). `run_in_env` through the
+      fallback (the command's output and the `RUN_ARGV ENV:` line) and with
+      nothing usable (`EnvError`, exit 96). `env_fault` on 96, 97, 98, -2,
+      -11, "96" as text, the marker with no exit status; None on 0, 1, 2, 3,
+      94, 135, 271, -29, None; `host_of_log` on the two new lines. The qsub
+      line's variables (a stage job's, a driver's; a role `x` refused); the
+      template equal to a driver's qsub line with `@LOG@` and `@ARGV@` and no
+      `-W`; `revive.argv`. The guard: 11 faults on 3 hosts do not stop, the
+      12th does (its text, the hosts this run listed), cleared by a job that
+      ran; 12 on 2 hosts do not stop.
+    - reference (`job_units`, `run_argv.pbs` and `chain.sh` by hand, the fake
+      PBS for qsub and qselect): a good node (conda, the command, `RUN_ARGV
+      EXIT: 0` last, the prefix recorded); no conda (the folder, the
+      command); a stage job where nothing starts (`RUN_ARGV ENV FAULT:`, held
+      1 s, `RUN_ARGV EXIT: 96` last, the command not run; no template:
+      nothing submitted); with a template and no job of the chain, the
+      watchdog revives it once (`revive.argv`, no `-a`, the line in
+      `pipeline.log`) and not again while the revived job waits; nothing with
+      `STOP_REQUEST`, nothing with `CHAIN_END`. A driver job where nothing
+      starts: a replacement with `-a` about 1 s ahead and its own argv file
+      (`env_replacements` 1, the line in `pipeline.log`); the next one 2 s;
+      nothing while a held job of the chain exists; nothing with
+      `STOP_REQUEST`. A driver's command that exits 2 writes `CHAIN_END`. A job
+      without `JOBS_DIR` on a node without conda exits 98, as before.
+    - invariants (`chain_end`, the synthetic graph, drivers as jobs): stage B
+      refuses: `the chain ends (failed, exit 3)`, `CHAIN_END` written,
+      `--status` prints `chain: ended on purpose at ...`; a submission with
+      `--retry B` logs its removal and the pipeline finishes (`CHAIN_END`
+      then `done (exit 0)`).
+    - contract (`env_faults`, end to end on the blocks 4-6 fixture, the real
+      tuner and runner in the jobs, `SKIP_CONDA=0`): the first trial job on
+      host `noconda` runs through the folder (`RUN_ARGV ENV:` in its log; ok;
+      `resubmits` 0); the second trial's first job on host `broken` exits 96
+      after its hold and the trial is submitted again at once (`resubmits` 0;
+      `env_faults` [(broken, its job)]; the job's `host` broken from
+      `exec_host`; the log line) and finishes ok; member seed 1's first job on
+      `broken` likewise (`best_fit: member seed 1 could not start on broken
+      ...`); `node_fault_hosts` {broken: 1} in each stage; the streak 0 at the
+      end; every trial and member argv with `--resume`; the training
+      environment's prefix recorded by the sequencer's own commands;
+      `PIPELINE DONE`.
+    - determinism (`chain_replace`, the synthetic graph, drivers as jobs under
+      the fake conda, `FAKE_PBS_HOST_BY_NAME=pl_synth:2=broken`): the
+      submission records both prefixes (`environment sbi_export: ...
+      (recorded for nodes without conda, D-111)`); the second driver job
+      exits 96 on `broken` (`RUN_ARGV ENV FAULT:`, `RUN_ARGV CHAIN: submitted
+      the replacement ...`, `RUN_ARGV EXIT: 96` last), its replacement
+      carries `-a`, its own argv file and a `driver/replace.*` log, starts
+      (`driver <id> on ...`) and finishes the pipeline; `env_replacements`
+      gone; `CHAIN_END` `done (exit 0)`; no two drivers at once; every stage
+      job once.
+    - edge cases (`watchdog`, the synthetic graph with `SYNTH_RUN_ARGV=1`,
+      `FAKE_PBS_FAIL_START=pl_synth:2`, stage A's job 30 s past the first
+      driver's budget): the second driver ends with Exit_status -2 and no
+      log while A runs; A's end revives the chain (one `watchdog: job <A>
+      on ...` line, `RUN_ARGV CHAIN: no sequencer job was queued ...` in A's
+      log), `PIPELINE DONE`, each stage job once. The same with `stop`
+      between the two: `stop: no sequencer is running`, `CHAIN_END` stopped
+      on request, A's end revives nothing (two driver jobs in all); a
+      submission removes the marker and finishes.
+    - mutations: `fallback` (the folder route disabled) -> `activate_units`,
+      `job_units` and `env_faults` FAIL; `env_free` (an environment fault
+      taken as a kill) -> `env_faults` FAILS (`resubmits` 1);
+      `always_resume` (`--resume` only on a resubmission) -> `env_faults`
+      FAILS; `streak` (the guard never stops) -> `activate_units` FAILS;
+      `replace` (the driver's replacement disabled) -> `job_units` and
+      `chain_replace` FAIL; `watchdog` (disabled) -> `job_units` and
+      `watchdog` FAIL; `chain_end` (the marker ignored by the watchdog) ->
+      `job_units` and the stop run of `watchdog` FAIL.
+  - Status: smoke-tested 2026-10-29 `[SANDBOX]`: `test_smoke_block7c.py` 6
+    pass, 1 skip (164 s), the seven mutations each make their checks FAIL as
+    listed; `smoke_test_blocks_4_6.py` 10 pass, 1 skip (B6c new; its
+    mutation caught); the regression: blocks 1 6 pass 1 skip, 1b 6 pass 1
+    skip, 1c 7 pass 1 skip, 2 12 pass 1 skip, 3 7 pass 1 skip, 7 7 pass 1
+    skip, 7b 6 pass 1 skip, 8 1 pass 1 skip, report 5 pass 1 skip, reset 5
+    pass 1 skip, perrow 5 pass 1 skip; the Stage 2 suite 40/40 (1 skip), the
+    Stage 3 suite 33/33, the Stage 4 suites 9/9 and 8/8 (`SKIP_CONDA=1`);
+    vermin (3.5 minimum on the changed modules), pyflakes, ASCII, LF, the
+    agnostic grep. Not in the sandbox: davinci's PBS (`qselect -s` with
+    these letters, `-a`'s form, which `Exit_status` it reports for which
+    failure, qsub and qselect from a job on a node without conda), a real
+    conda installation's hook and activate.d scripts, and the 300-3600 s
+    backoff and the 600 s hold at their own scale (the tests use 1-2 s).
 ### Block 8: end to end on the stand-in and the delivery
 
 - Test (`tests/test_smoke_block8.py`): the one command from an empty work
@@ -2281,6 +2567,7 @@ submission at a time. [proposed 2026-10-29 by Claude; Confirmed: no]
 | `python3 hpc/pipeline/tests/test_smoke_block7.py` | block 7's smoke test: the search and the best fit under the fake PBS on the fixture banks | the training environment (torch, sbi, skopt) | about 2 min |
 | `python3 hpc/pipeline/tests/test_smoke_block2.py`, `test_smoke_block3.py` | blocks 2 and 3: the bank stages and the input stages on the stand-in davinci | the Sbi-extractor checkout (`SBIX_CLONE`), numpy | about 20 s, 7 s |
 | `python3 hpc/pipeline/tests/test_smoke_block8.py` | block 8: the one command end to end on the stand-in with the real tools | both of the above | about 1 min |
+| `python3 hpc/pipeline/tests/test_smoke_block7c.py` | D-111: the environment's fallback, environment faults, the chain's replacement and watchdog | the training environment (torch, sbi, skopt) | a few minutes |
 
 ## 7. Not executable in the sandbox
 
@@ -2294,6 +2581,18 @@ run on davinci is `--dry-run`, then the plain command; the pass lines are
 stated in the README.
 
 ## 8. Open questions
+
+- D-111's residuals (raised 2026-10-29): a driver job PBS cannot start
+  while no stage job runs (between two stages, or once every trial of the
+  round has ended) leaves the chain dead until a stage job ends or the
+  user submits again; a cluster on which no job can start anywhere stops
+  everything until it recovers (the replacement loop then tries once an
+  hour at most); a broken environment stops the stage after
+  `ENV_FAULT_STREAK` faults on `ENV_FAULT_HOSTS` nodes, and the hosts
+  D-102 listed during that streak stay listed until the user deletes them.
+  `JOB_EXEC_FAULTS` is PBS Pro's documented set, `[proposed]`: which of
+  the codes davinci's server reports for which failure is known only for
+  -2 (2026-10-16).
 
 - Block 5's alternative, proposed 2026-10-15 and not taken up: decompress
   the windows once into a plain float32 file (about 45 GB on disk for

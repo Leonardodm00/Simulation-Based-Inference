@@ -9,7 +9,12 @@ writes (`write_json` fsyncs before its rename); since 2026-10-21 the
 bad-node avoid list (D-102): a host with AVOID_FAULTS node faults in a
 stage's run is written to `<work_root>/avoid_nodes.txt`, a job that lands
 there holds its slot AVOID_HOLD_S seconds and exits AVOID_EXIT, and the
-stage submits it again without counting a resubmission.
+stage submits it again without counting a resubmission; since 2026-10-29
+environment faults (D-111): a trial's or a member's job that could not
+start its environment, or that PBS could not start, is submitted again
+without counting a resubmission, and a stage whose jobs fault so on many
+nodes in a row stops (`env_fault`, `note_env_fault`); every job carries
+the variables of the chain's helpers (`qsub_line`).
 
 Nothing here names a project (D-091): every path and value comes from the
 configuration.
@@ -38,7 +43,9 @@ __all__ = ["paths_of", "tuner_common_args", "shard_globs", "run_tuner", "qsub_li
            "set_aside_bad_checkpoints", "unreadable_record", "LOG_GRACE_S", "RECORD_GRACE_S",
            "AVOID_FAULTS", "AVOID_HOLD_S", "AVOID_EXIT", "AVOID_FILE_NAME", "avoid_file",
            "read_avoid_list", "add_to_avoid_list", "note_node_fault", "sync_avoid_list",
-           "held_off_node"]
+           "held_off_node", "chain_name", "ENV_FAULT_EXIT", "JOB_EXEC_FAULTS",
+           "ENV_FAULT_STREAK", "ENV_FAULT_HOSTS", "env_fault", "note_env_fault",
+           "clear_env_fault_streak"]
 
 
 class ToolError(RuntimeError):
@@ -63,6 +70,7 @@ def paths_of(cfg):
         "ensemble_tool": os.path.join(pipe, "tools", "ensemble_nll.py"),
         "verify_tool": os.path.join(pipe, "tools", "bank_verify.py"),
         "job_script": os.path.join(pipe, "jobs", "run_argv.pbs"),
+        "jobs_dir": os.path.join(pipe, "jobs"),
     }
 
 
@@ -125,21 +133,35 @@ def job_name(text, limit=15):
     return t
 
 
+def chain_name(cfg):
+    """The PBS job name of the project's sequencer jobs, `pl_<tag>` (D-098;
+    the tag is the configuration's `dataset`)."""
+    return job_name("pl_" + cfg.data["dataset"])
+
+
 def qsub_line(cfg, name, queue, ncpus, mem, walltime, log_path, argv_file, workdir,
-              env_name=None, avoid_file=None):
+              env_name=None, avoid_file=None, role="stage"):
     """The complete qsub command line of one run_argv.pbs job, in the
     environment `env_name` (default the configuration's envs.train: the
     trials, the probes and the members; the bank's verification job passes
     envs.extract). With `avoid_file` (the trials and the members, D-102)
     the job reads the avoid list at its start and, on a listed host, holds
-    its slot AVOID_HOLD_S seconds and exits AVOID_EXIT."""
+    its slot AVOID_HOLD_S seconds and exits AVOID_EXIT. Every job carries
+    the helpers' folder, the work root, the chain's name and its role
+    (`driver` for the sequencer's jobs, `stage` otherwise), D-111: the
+    activation's fallback, the driver's replacement, the watchdog."""
     p = paths_of(cfg)
     skip = "1" if E.skip_conda() else "0"
+    work_root = cfg.data["paths"]["work_root"]
+    if role not in ("stage", "driver"):
+        raise ValueError("role %r: stage or driver" % (role,))
     variables = "ARGV_FILE=%s,ENV_NAME=%s,WORKDIR=%s,SKIP_CONDA=%s" % (
         argv_file, env_name or cfg.data["envs"]["train"], workdir, skip)
+    variables += ",JOBS_DIR=%s,WORK_ROOT=%s,CHAIN_NAME=%s,ROLE=%s" % (
+        p["jobs_dir"], work_root, chain_name(cfg), role)
     if avoid_file:
         variables += ",AVOID_FILE=%s,AVOID_HOLD_S=%d" % (avoid_file, int(AVOID_HOLD_S))
-    for v in (argv_file, workdir, avoid_file or ""):
+    for v in (argv_file, workdir, avoid_file or "", p["jobs_dir"], work_root):
         if "," in v:
             raise ValueError("a path with a comma cannot be passed through qsub -v: %r" % v)
     return ["qsub", "-N", job_name(name), "-q", str(queue),
@@ -376,7 +398,7 @@ _FS_TEXTS = ("Input/output error", "Transport endpoint is not connected",
              "Could not chdir to home directory", "Bus error")
 _RUNNER_EXITED = re.compile(r"^runner exited (-?[0-9]+)$")
 _RUN_ARGV_EXIT = re.compile(r"^RUN_ARGV EXIT: ([0-9]+)\s*$", re.M)
-_RUN_ARGV_HOST = re.compile(r"^RUN_ARGV(?: AVOID)?: host ([^,\s]+)", re.M)
+_RUN_ARGV_HOST = re.compile(r"^RUN_ARGV(?: AVOID| ENV| ENV FAULT)?: host ([^,:\s]+)", re.M)
 
 
 def _line_at(text, i):
@@ -601,3 +623,84 @@ def held_off_node(job):
         return int(job.get("exit_status")) == AVOID_EXIT
     except (TypeError, ValueError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Environment faults (D-111; SPEC block 7, amended 2026-10-29)
+# ---------------------------------------------------------------------------
+
+# run_argv.pbs's exit when the job's environment cannot start on its node
+# (jobs/activate_env.sh: neither conda nor the environment's own folder).
+ENV_FAULT_EXIT = 96
+# The job script before D-111: the conda hook (97) or activation (98) failed.
+_OLD_CONDA_EXITS = (97, 98)
+# PBS Pro's Exit_status for a job its node could not start or keep (exec
+# failures, MoM aborts, a bad uid or gid, a rerun, a sister or the MoM lost,
+# a hook's requeue) [proposed: PBS Pro's documented codes; davinci's use of
+# them is known for -2 only, 2026-10-16]. The limits' kills (-24..-29) and a
+# hook's deletion (-17, -19) are not here.
+JOB_EXEC_FAULTS = frozenset((-1, -2, -3, -4, -5, -6, -7, -10, -11, -14, -16, -18, -20))
+# The guard: this many environment faults in a row, on at least this many
+# hosts, stop the stage (a broken environment would otherwise loop for ever,
+# the faults being free). Environment overrides for the tests.
+ENV_FAULT_STREAK = int(os.environ.get("PIPELINE_ENV_FAULT_STREAK", "12"))
+ENV_FAULT_HOSTS = int(os.environ.get("PIPELINE_ENV_FAULT_HOSTS", "3"))
+_ENV_FAULT_LINE = re.compile(r"^RUN_ARGV ENV FAULT: (.*)$", re.M)
+
+
+def env_fault(job, log_text=None):
+    """A short reason when a job that ended without a record could not start
+    its command for its node's sake (D-111) -- its environment (exit
+    ENV_FAULT_EXIT, or 97 / 98 of the job script before D-111, or the
+    `RUN_ARGV ENV FAULT:` line of its log) or PBS itself (Exit_status in
+    JOB_EXEC_FAULTS) -- else None. `job` is a sequencer job record (its
+    `exit_status` from the scheduler); `log_text` the job's log, if any."""
+    code = None
+    try:
+        code = int(job.get("exit_status"))
+    except (TypeError, ValueError):
+        code = None
+    m = _ENV_FAULT_LINE.search(log_text or "")
+    line = m.group(1).strip()[:200] if m else None
+    if code == ENV_FAULT_EXIT:
+        return line or "exit %d: the environment could not start (no log)" % ENV_FAULT_EXIT
+    if code in _OLD_CONDA_EXITS:
+        return "exit %d: the conda %s failed (a job script before D-111)" % (
+            code, "hook" if code == 97 else "activation")
+    if code in JOB_EXEC_FAULTS:
+        return "PBS could not start or keep the job on its node (Exit_status %d)" % code
+    if code is None and line:
+        return line
+    return None
+
+
+def note_env_fault(sub, host, why, stage, log, path):
+    """Count an environment fault: a node fault on `host` (note_node_fault,
+    D-102: listed at AVOID_FAULTS) and one more in the stage's streak.
+    Returns (faults on the host, the stop reason or None): the reason when
+    the streak reaches ENV_FAULT_STREAK faults on at least ENV_FAULT_HOSTS
+    hosts -- the environment or the cluster, not a node."""
+    n, _ = note_node_fault(sub, host, why, stage, log, path)
+    streak = sub.setdefault("env_fault_streak", {"n": 0, "hosts": []})
+    streak["n"] = int(streak.get("n", 0)) + 1
+    hosts = list(streak.get("hosts", []))
+    if host not in hosts:
+        hosts.append(host)
+    streak["hosts"] = hosts
+    streak["last"] = str(why)[:200]
+    real = [h for h in hosts if h != "?"]
+    if streak["n"] >= ENV_FAULT_STREAK and len(set(hosts)) >= ENV_FAULT_HOSTS:
+        listed = sorted(h for h in (sub.get("avoided") or {}) if h in real)
+        return n, ("%d job(s) in a row could not start (environment faults on %d node(s): %s; "
+                   "the last: %s): the environment or the cluster, not a node -- fix it, delete "
+                   "from %s the hosts this run listed (%s), then --retry %s"
+                   % (streak["n"], len(set(hosts)), ", ".join(hosts), streak["last"], path,
+                      ", ".join(listed) or "none", stage))
+    return n, None
+
+
+def clear_env_fault_streak(sub):
+    """A job of the stage ran (a record, a kill, a refusal): the streak of
+    environment faults in a row starts again (D-111)."""
+    if sub.get("env_fault_streak", {}).get("n"):
+        sub["env_fault_streak"] = {"n": 0, "hosts": []}

@@ -52,7 +52,7 @@ class JobStatus(object):
     """One job's record as the sequencer reads it."""
 
     def __init__(self, job_id, state, exit_status=None, walltime_s=None,
-                 array_counts=None, raw="", output_path=None):
+                 array_counts=None, raw="", output_path=None, exec_host=None):
         self.job_id = job_id
         self.state = state                  # a letter of _KNOWN_STATES or "unknown"
         self.exit_status = exit_status      # int or None
@@ -60,6 +60,7 @@ class JobStatus(object):
         self.array_counts = array_counts or {}
         self.raw = raw
         self.output_path = output_path      # Output_Path without its "host:" prefix, or None
+        self.exec_host = exec_host          # the first host of exec_host (D-111), or None
 
     @property
     def finished(self):
@@ -139,8 +140,12 @@ def parse_qstat(job_id, text):
         # "<submission host>:<path>"; the host is the qsub's, so only the path compares
         v = fields["Output_Path"]
         output_path = v.split(":", 1)[1] if ":" in v else v
+    exec_host = None
+    if fields.get("exec_host"):
+        # "<host>/0*48" or "<host1>/0+<host2>/0": the first host (D-111)
+        exec_host = fields["exec_host"].split("+")[0].split("/")[0].strip() or None
     return JobStatus(job_id, state, exit_status, walltime_s, counts, raw=text,
-                     output_path=output_path)
+                     output_path=output_path, exec_host=exec_host)
 
 
 def status(job_id, retries=_QSTAT_RETRIES, retry_wait_s=_QSTAT_RETRY_WAIT_S):

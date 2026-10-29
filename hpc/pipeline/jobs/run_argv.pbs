@@ -5,7 +5,7 @@
 # a file, and submits this script with the resources on the qsub line:
 #
 #   qsub -N <name> -q <queue> -l select=1:ncpus=<n>:mem=<mem> -l walltime=<w> \
-#        -j oe -o <log> -v ARGV_FILE=<file>,ENV_NAME=<conda env>,WORKDIR=<dir> \
+#        -j oe -o <log> -v ARGV_FILE=<file>,ENV_NAME=<conda env>,WORKDIR=<dir>,... \
 #        hpc/pipeline/jobs/run_argv.pbs
 #
 # Variables (qsub -v):
@@ -22,13 +22,30 @@
 #               and exits 94 without running the command; the sequencer
 #               submits it again, not counted as a resubmission.
 #   AVOID_HOLD_S  the seconds of that hold (600 from the sequencer)
+#   JOBS_DIR    this checkout's hpc/pipeline/jobs: the activation with its
+#               fallback (activate_env.sh) and the chain's helpers
+#               (chain.sh), D-111. Unset (a job submitted by code before
+#               D-111): the conda activation of before, exit 97 / 98.
+#   WORK_ROOT   the pipeline's work root (the environments' recorded
+#               prefixes, the chain's template, its markers, the log)
+#   CHAIN_NAME  the sequencer's job name (pl_<tag>)
+#   ROLE        driver (the sequencer's own jobs) or stage (every other)
 #
-# The conda activation is the proven block of the Stage 1/3 job scripts:
-# `set -u` off across the hook AND the activate (third-party deactivate.d
-# scripts are not -u clean on davinci), on again after. Exit 97 = the hook
-# failed, 98 = the activation failed, 90 = WORKDIR unreachable, 91 = no
-# ARGV_FILE, 94 = held off a listed host; the command's own exit status
-# otherwise, echoed as the last line `RUN_ARGV EXIT: <n>` (the pass line of
+# The activation (D-111, activate_env.sh): conda first, `set -u` off across
+# the hook AND the activate (third-party deactivate.d scripts are not -u
+# clean on davinci), on again after; when conda is absent from the node or
+# fails there, the environment's own folder. When neither works the job
+# cannot start (exit 96): a stage job holds its slot AVOID_HOLD_S seconds
+# and exits 96 (the stage submits it again, not counted as a resubmission);
+# a driver job submits a replacement of itself, delayed, unless another job
+# of the chain is queued, held or running. A stage job's end, whatever it
+# was, runs the chain's watchdog: a chain that is gone without ending on
+# purpose is revived.
+#
+# Exit 90 = WORKDIR unreachable, 91 = no ARGV_FILE, 94 = held off a listed
+# host, 96 = the environment cannot start on this node, 97 / 98 = the conda
+# hook / activation failed (without JOBS_DIR); the command's own exit
+# status otherwise. The last line is `RUN_ARGV EXIT: <n>` (the pass line of
 # a job is its command's).
 #
 # Pure ASCII, LF only.
@@ -41,11 +58,43 @@ set -u
 : "${SKIP_CONDA:=0}"
 : "${AVOID_FILE:=}"
 : "${AVOID_HOLD_S:=600}"
+: "${JOBS_DIR:=}"
+: "${WORK_ROOT:=}"
+: "${CHAIN_NAME:=}"
+: "${ROLE:=stage}"
 
-cd "$WORKDIR" || exit 90
+D105=0
+if [ -n "$JOBS_DIR" ] && [ -f "$JOBS_DIR/activate_env.sh" ] && [ -f "$JOBS_DIR/chain.sh" ]; then
+    if . "$JOBS_DIR/activate_env.sh" && . "$JOBS_DIR/chain.sh"; then
+        D105=1
+    fi
+fi
+
+_finish() {              # <exit code>: the job's last line, and its end
+    echo "RUN_ARGV EXIT: $1"
+    exit "$1"
+}
+
+_not_started() {         # <exit code> <why>: the command could not be run
+    if [ "$D105" = "1" ]; then
+        if [ "$ROLE" = "driver" ]; then
+            pipeline_chain_replace "$2"
+        elif [ "$1" = "96" ]; then
+            echo "RUN_ARGV: holding this slot for ${AVOID_HOLD_S} s (D-111), then exiting 96"
+            sleep "$AVOID_HOLD_S"
+            pipeline_watchdog
+        fi
+    fi
+    _finish "$1"
+}
+
+if ! cd "$WORKDIR"; then
+    echo "RUN_ARGV: cannot enter WORKDIR $WORKDIR" >&2
+    _not_started 90 "cannot enter $WORKDIR"
+fi
 if [ ! -f "$ARGV_FILE" ]; then
     echo "RUN_ARGV: no argv file at $ARGV_FILE" >&2
-    exit 91
+    _not_started 91 "no argv file at $ARGV_FILE"
 fi
 
 # D-102: a listed host is not computed on; the slot is held, then freed
@@ -54,16 +103,27 @@ if [ -n "$AVOID_FILE" ] && [ -f "$AVOID_FILE" ]; then
     if grep -v '^[[:space:]]*#' "$AVOID_FILE" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -qxF -- "$host"; then
         echo "RUN_ARGV AVOID: host $host is on the avoid list $AVOID_FILE (D-102); holding this slot for ${AVOID_HOLD_S} s, then exiting 94"
         sleep "$AVOID_HOLD_S"
+        if [ "$D105" = "1" ] && [ "$ROLE" != "driver" ]; then
+            pipeline_watchdog
+        fi
         echo "RUN_ARGV EXIT: 94"
         exit 94
     fi
 fi
 
 if [ "$SKIP_CONDA" != "1" ]; then
-    set +u
-    eval "$(conda shell.bash hook)" || exit 97
-    conda activate "$ENV_NAME" || exit 98
-    set -u
+    if [ "$D105" = "1" ]; then
+        pipeline_activate "$ENV_NAME"
+        rc=$?
+        if [ "$rc" != "0" ]; then
+            _not_started "$rc" "the environment $ENV_NAME cannot start"
+        fi
+    else
+        set +u
+        eval "$(conda shell.bash hook)" || exit 97
+        conda activate "$ENV_NAME" || exit 98
+        set -u
+    fi
 fi
 
 ARGV=()
@@ -75,5 +135,14 @@ echo "RUN_ARGV: host $(hostname), job ${PBS_JOBID:-<none>}, ncpus ${NCPUS:-<unse
 echo "RUN_ARGV: ${ARGV[*]}"
 "${ARGV[@]}"
 rc=$?
+if [ "$D105" = "1" ]; then
+    if [ "$ROLE" = "driver" ]; then
+        if [ "$rc" = "2" ]; then
+            pipeline_chain_end "the sequencer job ${PBS_JOBID:-?} refused to start (exit 2; its log says why)"
+        fi
+    else
+        pipeline_watchdog
+    fi
+fi
 echo "RUN_ARGV EXIT: $rc"
 exit $rc

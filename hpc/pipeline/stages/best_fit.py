@@ -124,8 +124,9 @@ class BestFitStage(Stage):
                    "--argv-file", argv_file])
         if real:
             args += ["--real-shards", real]
-        if resume:
-            args += ["--resume"]
+        # D-111: always --resume (the runner starts fresh without a checkpoint), so a
+        # job that PBS runs again continues where its first run stopped
+        args += ["--resume"]
         CM.run_tuner(cfg, args, log_path=log_path)
         return argv_file
 
@@ -172,6 +173,7 @@ class BestFitStage(Stage):
                 m["status"] = "ok"
                 m["record"] = rec
                 m["L"] = obj.get("L")
+                CM.clear_env_fault_streak(st["sub"])      # the job ran (D-111)
                 log("best_fit: member seed %d done: L %s (%s)" % (int(seed), m["L"], rec))
                 return
             # amended 2026-10-19: read again for RECORD_GRACE_S, then set aside
@@ -200,6 +202,13 @@ class BestFitStage(Stage):
             log("best_fit: member seed %d landed on %s, which is on the avoid list (D-102): its job "
                 "%s held the slot and exited; %s" % (int(seed), host, job["id"], how))
             return
+        text = CM.read_log_tail(job.get("log"))
+        why = CM.env_fault(job, text)
+        if why is not None:
+            # D-111: the job could not start its environment, or PBS could not start it
+            self._after_env_fault(cfg, st, pbs, seed, job, why, text, log)
+            return
+        CM.clear_env_fault_streak(st["sub"])              # the job ran (D-111)
         if b["resubmit_node_faults"]:
             # D-096 applied to the members: a node fault is not a refusal
             text = CM.read_log_tail(job.get("log"))
@@ -243,6 +252,37 @@ class BestFitStage(Stage):
                     "raise best_fit.max_resubmits or fix the cause, then --retry best_fit "
                     "(finished members are kept)" % (int(seed), len(m["jobs"]), job["id"],
                                                      job.get("exit_status")))
+
+    def _after_env_fault(self, cfg, st, pbs, seed, job, why, text, log):
+        """D-111: the member's job ended without a record because it could not
+        start on its node -- a node fault there (D-102's list), recorded in
+        the member's `env_faults`, the member submitted again at once when it
+        fits, else `waiting`; `resubmits` unchanged. At the guard's streak
+        the stage stops instead, the member left waiting."""
+        b = cfg.data["best_fit"]
+        sub = st["sub"]
+        m = sub["members"][str(seed)]
+        host = CM.host_of_log(text) or job.get("host") or "?"
+        m.setdefault("env_faults", []).append({"host": host, "job": job["id"], "why": why,
+                                               "utc": CM.utc_now()})
+        n, stop = CM.note_env_fault(sub, host, why, "best_fit", log, CM.avoid_file(cfg))
+        if stop is not None:
+            m["status"] = "waiting"
+            m["resume_next"] = True
+            sub["env_stop"] = stop
+            log("best_fit: member seed %d could not start on %s (%s): an environment fault "
+                "(D-111); the guard stops the stage" % (int(seed), host, why))
+            return
+        if pbs.fits(int(b["ncpus"])):
+            self._submit_member(cfg, st, pbs, seed, resume=True)
+            how = "submitted again at once (not a resubmission)"
+        else:
+            m["status"] = "waiting"
+            m["resume_next"] = True
+            how = "queued again (not a resubmission): it starts when the cores allow (D-099)"
+        log("best_fit: member seed %d could not start on %s (%s): an environment fault, not the "
+            "member's (D-111); %s; %d node fault(s) on %s so far"
+            % (int(seed), host, why, how, n, host))
 
     def _resubmit_member(self, cfg, st, pbs, seed):
         """A member's next job with --resume: at once when it fits under
@@ -371,6 +411,7 @@ class BestFitStage(Stage):
                 job["exit_status"] = js.exit_status
                 job["walltime_s"] = js.walltime_s
                 job["state"] = js.state
+                job["host"] = getattr(js, "exec_host", None)       # D-111
         by_id = dict((j["id"], j) for j in st["jobs"])
         if sub.get("phase") == "members":
             for seed in b["member_seeds"]:
@@ -380,6 +421,11 @@ class BestFitStage(Stage):
                 job = by_id.get(m["jobs"][-1])
                 if job is not None and job.get("finished"):
                     self._finish_member_job(cfg, st, pbs, seed, job, log)
+            if sub.get("env_stop"):
+                # D-111's guard: environment faults on many nodes in a row
+                sub["phase"] = "failed"
+                sub["fail"] = sub.pop("env_stop")
+                return "finished"
             # D-102: a host cleared from the avoid list by hand is counted again from now
             CM.sync_avoid_list(sub, CM.avoid_file(cfg), log, "best_fit")
             self._submit_waiting(cfg, st, pbs)
@@ -449,6 +495,10 @@ class BestFitStage(Stage):
                 "member that lands there holds its slot %d s and is submitted again at once (not a "
                 "resubmission); delete its line to lift the ban"
                 % (CM.avoid_file(cfg), CM.AVOID_FAULTS, CM.AVOID_HOLD_S),
+                "environment faults (D-111): a member whose job cannot start its environment, or "
+                "that PBS cannot start, is submitted again at once (not a resubmission); %d in a "
+                "row on %d node(s) stop the stage; every member runs with --resume"
+                % (CM.ENV_FAULT_STREAK, CM.ENV_FAULT_HOSTS),
                 "ensemble: %s --members <M per-row files> -> %s (L_bar, D-089)"
                 % (p["ensemble_tool"], dirs["ensemble"]),
                 "artefact: %s" % dirs["complete"]]

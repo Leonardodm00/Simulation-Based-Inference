@@ -267,6 +267,43 @@ at its next hand-over after the pull with no `--accept-config-change`.
 Not covered: the gate's probes, the bank's verification job, S1, S2 and the
 bank tasks (short jobs; the bank quarantines bad shards, D-095).
 
+**Environment faults (D-111, 2026-10-29).** A node without the conda
+installation (davinci, 2026-10-27: PBS ran the sequencer and two trials again
+on such nodes; all exited 98 before any command, then the successor too, and
+the chain ended with no line in the log) no longer stops anything. Every job,
+and every in-environment command of the sequencer, activates its environment
+through `jobs/activate_env.sh`: conda first; when conda is absent or fails on
+the node, the environment's own folder -- the prefix recorded in
+`<paths.work_root>/envs/<env>.prefix` (written whenever conda works, and by
+the submission on the login node), `$HOME/.conda/envs/<env>`, then
+`CONDA_ENVS_PATH` -- whose python must start there (`RUN_ARGV ENV: host
+<node>: conda unavailable (...); <env> activated from its folder <path>` in
+the job's log). When nothing works the job cannot start (`RUN_ARGV ENV FAULT:
+host <node>: ...`, exit 96): a trial's or a member's job holds its slot 10
+minutes and the sequencer submits it again at once, not counted as a
+resubmission (`search: trial <id> could not start on <node> (...): an
+environment fault, not the trial's (D-111); submitted again at once (not a
+resubmission)`), counted as a node fault on that host (so the avoid list
+takes it at its third); a job PBS itself could not start (an `Exit_status`
+-2 and its kin) is treated the same. A driver job that cannot start submits a
+replacement of itself, delayed 5 minutes and twice that at each further
+attempt up to an hour (`driver <id>: could not start on <node> (...); its
+replacement <id> starts in 300 s (replacement 1 since the last full tick;
+D-111)`), unless another job of the chain is queued, held or running; and
+every trial or member job, at its end, checks that the chain is there and
+revives it when it is gone without having ended on purpose (`watchdog: job
+<id> on <node>: no sequencer job was queued, held or running ...; submitted
+<id> to revive it (D-111)`). The chain ends on purpose only when the
+pipeline is done, stopped, failed or refused, or after three unclean ends in
+a row: then `<paths.work_root>/driver/CHAIN_END` holds why (`--status`
+prints `chain: ended on purpose at ...`), no watchdog revives it, and a
+submission removes it. Twelve environment faults in a row on three or more
+nodes stop the stage instead (`STOP: ... the environment or the cluster, not
+a node -- fix it, ... then --retry <stage>`): a broken environment, not a
+node. Every trial and member runs with `--resume`, so a job PBS runs again
+continues from its checkpoint; a checkpoint that cannot be loaded is moved
+aside (`<name>.corrupt<k>`) and the run starts from epoch 0.
+
 `tools/search_report.py --config <file> [--qstat] [--trial <id>]` reads
 (never writes) the state, the ledger, the pending specs, the run folders and
 the job logs and prints, per trial, what the stage's next poll does with it
@@ -493,6 +530,7 @@ python3 hpc/pipeline/tests/test_smoke_block2.py        # block 2, about 2 min, n
 python3 hpc/pipeline/tests/test_smoke_block3.py        # block 3, about 7 s, the same
 python3 hpc/pipeline/tests/test_smoke_block7.py        # block 7, about 2 min, needs torch, sbi, skopt
 python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults, checkpoints, unreadable records and the avoid list, block 1's stop and retry guard, about 10 min, the same
+python3 hpc/pipeline/tests/test_smoke_block7c.py       # D-111: the environment's fallback, environment faults, the driver's replacement, the watchdog, about 3 min, the same
 python3 hpc/pipeline/tests/test_smoke_report.py        # tools/search_report.py, a few seconds, stdlib
 python3 hpc/pipeline/tests/test_smoke_reset.py         # tools/search_reset.py, about 20 s, stdlib and the fake PBS
 python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, a few seconds, numpy (with torch, sbi and zuko also the real-flow oracle)
@@ -517,12 +555,12 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 
 | block | what | status |
 |---|---|---|
-| 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4; the sequencer as a chain of PBS jobs on compute nodes, the lock and the state hardened, adoption, the transition (D-098, config v8); the core cap (D-099, config v9); the prepared state saved before the first tick (2026-10-19 (e)) | built 2026-10-15, smoke-tested; amended 2026-10-18 (`test_smoke_block1b.py`) and 2026-10-19 (`test_smoke_block1c.py`; (e) in `test_smoke_block1b.py`); on davinci 2026-10-19: the probe passed (a compute node drives jobs), the three block-1 tests pass |
+| 1 | the sequencer, the schema, the state, the scheduler adapter, the one command, config v4; the sequencer as a chain of PBS jobs on compute nodes, the lock and the state hardened, adoption, the transition (D-098, config v8); the core cap (D-099, config v9); the prepared state saved before the first tick (2026-10-19 (e)); a driver that loses the scheduler hands over (2026-10-21 (f)); an environment fault never ends the chain: the driver's replacement, the stage jobs' watchdog, the deliberate end (D-111, 2026-10-29 (g)) | built 2026-10-15, smoke-tested; amended 2026-10-18 (`test_smoke_block1b.py`) and 2026-10-19 (`test_smoke_block1c.py`; (e) in `test_smoke_block1b.py`); on davinci 2026-10-19: the probe passed (a compute node drives jobs), the three block-1 tests pass |
 | 2 | the bank stages S4-S6 through `launch_bank.sh` (the profile from the configuration; the chain line BC as phases; a gate that never ran is run alone; the self-healing simulated bank: the verification job, the quarantine, the reruns, the certificate; config v6) | built 2026-10-16, smoke-tested on the stand-in; amended 2026-10-16 (the dropped gate), 2026-10-18 (D-094, D-095) and 2026-10-19 (D-099: the cap, the launcher's NCPUS passed; `test_cores`) |
 | 3 | the input stages S1-S3 through `launch_stage_d.sh`, `launch_sim_reextract.sh`, `preflight_label_axes.py` | built 2026-10-16, smoke-tested (S3 on the real tool; S1-S2 on stubs of the launchers); amended 2026-10-19 (D-099: the cap; `test_cores`) |
 | 4 | the campaign prior in the runner (`run_joint_arms.py`: a `latent_spec.kind` `campaign` bank uses the unit box, L0 = 0) | built 2026-10-15, smoke-tested |
 | 5 | the streaming loader (D-084): `--buffer-shards K` streams the bank through a rolling buffer of K shards with the quota rule; K >= the shard count reproduces the in-memory run bit for bit | built 2026-10-15, smoke-tested |
-| 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch` | built 2026-10-15, smoke-tested |
-| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py`; the read-only `tools/perrow_check.py` (the NLL split L = T + R); the bad-node avoid list (D-102) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`); 2026-10-20 (`test_smoke_perrow.py`); 2026-10-21 (the avoid list: `test_smoke_block7b.py` `avoid_units`, `avoid_list`) |
+| 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch`; the checkpoint fsynced, a damaged one moved aside on resume (D-111) | built 2026-10-15, smoke-tested; amended 2026-10-29 (`smoke_test_blocks_4_6.py` B6c) |
+| 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py`; the read-only `tools/perrow_check.py` (the NLL split L = T + R); the bad-node avoid list (D-102); environment faults and reruns: the activation's fallback, free resubmissions, the guard, `--resume` on every trial and member (D-111) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`); 2026-10-20 (`test_smoke_perrow.py`); 2026-10-21 (the avoid list: `test_smoke_block7b.py` `avoid_units`, `avoid_list`); 2026-10-29 (D-111: `test_smoke_block7c.py`) |
 | 8 | end to end on the stand-in (the real bank tools, tuner and runner; 11 jobs; the sequencer stopped and re-run); the davinci lines above | rehearsed 2026-10-16 |
 | 9 | the inputs check `tools/inputs_check.py` (read-only, any data set; LindDUP's first, 2026-10-29) | built 2026-10-29, smoke-tested (`test_smoke_inputs_check.py`; 12 mutations, each caught); not run on davinci |

@@ -1,0 +1,36 @@
+#!/bin/bash
+# A fake conda for the pipeline's tests (D-111; not pipeline code).
+#
+# `conda shell.bash hook` prints a `conda` shell function whose `activate
+# <env>` activates $FAKE_CONDA_ENVS/<env> (CONDA_PREFIX, CONDA_DEFAULT_ENV,
+# PATH) or fails with EnvironmentNameNotFound when that folder is absent or
+# FAKE_CONDA_ACTIVATE_FAILS=1. On a host listed in FAKE_CONDA_ABSENT_HOSTS
+# (comma-separated, as `hostname` prints it; `*` = every host) the command
+# behaves as if conda were not installed there: `conda: command not found`,
+# exit 127 -- davinci's nodes of 2026-10-27 without the conda installation.
+#
+# Pure ASCII, LF only.
+h=$(hostname 2>/dev/null)
+case ",${FAKE_CONDA_ABSENT_HOSTS:-}," in
+    *",$h,"*|*",*,"*) echo "bash: conda: command not found" >&2; exit 127 ;;
+esac
+if [ "${1:-}" = "shell.bash" ] && [ "${2:-}" = "hook" ]; then
+    cat <<'HOOK'
+conda() {
+    if [ "${1:-}" = "activate" ]; then
+        if [ "${FAKE_CONDA_ACTIVATE_FAILS:-0}" = "1" ] || [ ! -d "${FAKE_CONDA_ENVS:-/nonexistent}/${2:-}" ]; then
+            echo "EnvironmentNameNotFound: Could not find conda environment: ${2:-}" >&2
+            return 1
+        fi
+        export CONDA_PREFIX="${FAKE_CONDA_ENVS}/$2"
+        export CONDA_DEFAULT_ENV="$2"
+        export PATH="$CONDA_PREFIX/bin:$PATH"
+        return 0
+    fi
+    command conda "$@"
+}
+HOOK
+    exit 0
+fi
+echo "fake conda: $*" >&2
+exit 1

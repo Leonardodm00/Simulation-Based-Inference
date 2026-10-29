@@ -17,6 +17,8 @@ Checks (the SPEC's oracles; B4 / B5 / B6 name the block)
     test_b6_flags          --passes, --split-fracs, --split-seed, --head-pool-ops,
                            --flow-hidden-layers, --threads, --patience
     test_b6_resume         stop after epoch 1 + --resume == the uninterrupted run
+    test_b6c_damaged_checkpoint  [D-111] --resume on an empty, a truncated, a garbage
+                         checkpoint: moved aside, the run from epoch 0 == no checkpoint
     test_convergence       skipped (not a discretisation)
 
 Run
@@ -513,6 +515,45 @@ def test_b6_resume():
     assert rc == 0, log[-3000:]
     assert [h["epoch"] for h in record(stop_full, "A1_seed4")["history"]] == \
         [h["epoch"] for h in record(stop_part, "A1_seed4")["history"]] == [0, 1, 2]
+
+
+def test_b6c_damaged_checkpoint():
+    """[D-111] --resume on a damaged checkpoint (empty, truncated, garbage):
+    moved aside as .corrupt1, and the run from epoch 0 equals a run without
+    a checkpoint, bit for bit at one thread (the pipeline passes --resume to
+    every trial and member, so a torn checkpoint must not fail the run)."""
+    sh = shared()
+    common = ["--epochs", "3", "--steps-per-epoch", "3", "--b-sim", "16", "--seed", "5",
+              "--buffer-shards", "2"]
+    ref = os.path.join(sh["root"], "b6c_ref")
+    rc, log = run_runner(ref, common)
+    assert rc == 0, log[-3000:]
+    part = os.path.join(sh["root"], "b6c_part")
+    rc, log = run_runner(part, common + ["--stop-after-epoch", "1"])
+    assert rc == 0, log[-3000:]
+    with open(os.path.join(part, "A1_seed5_train_ckpt.pt"), "rb") as fh:
+        good = fh.read()
+    for kind, raw in (("empty", b""), ("truncated", good[:len(good) // 2]),
+                      ("garbage", b"\x00not a checkpoint" * 40)):
+        d = os.path.join(sh["root"], "b6c_" + kind)
+        os.makedirs(d)
+        p_ = os.path.join(d, "A1_seed5_train_ckpt.pt")
+        with open(p_, "wb") as fh:
+            fh.write(raw)
+        rc, log = run_runner(d, common + ["--resume"])
+        assert rc == 0, (kind, "the damaged checkpoint failed the run", log[-3000:])
+        assert "checkpoint A1_seed5_train_ckpt.pt could not be loaded" in log and \
+            "moved aside as A1_seed5_train_ckpt.pt.corrupt1; starting from epoch 0" in log, \
+            (kind, log[-2000:])
+        with open(p_ + ".corrupt1", "rb") as fh:
+            assert fh.read() == raw, kind
+        a, b = record(ref, "A1_seed5"), record(d, "A1_seed5")
+        assert a["history"] == b["history"] and a["L"] == b["L"], kind
+        assert ckpt_sha(ref, "A1_seed5")[0] == ckpt_sha(d, "A1_seed5")[0], kind
+    # an intact checkpoint still resumes
+    rc, log = run_runner(part, common + ["--resume"])
+    assert rc == 0 and "resumed from" in log and "could not be loaded" not in log, log[-2000:]
+    assert record(part, "A1_seed5")["L"] == record(ref, "A1_seed5")["L"]
 
 
 def test_convergence():

@@ -156,6 +156,10 @@ def trial_facts(cfg, stage, tid, tr, jobs, qstat=None):
     f["last_error"] = last_error_line(text)
     f["tail"] = traceback_tail(text)
     f["node_fault"] = CM.node_fault((f["record"] or {}).get("error"), text)
+    # D-111: a job that ended without a record and could not start on its node
+    f["env_fault"] = CM.env_fault({"exit_status": f["job_exit"]}, text) \
+        if f["job_finished"] else None
+    f["env_faults_before"] = len(tr.get("env_faults", []))
     f["cause"] = failure_cause((f["record"] or {}).get("error"), text, f["node_fault"])
     return f
 
@@ -318,6 +322,9 @@ def next_action(cfg, f):
     if at_job_end and CM.held_off_node({"exit_status": f.get("job_exit")}):
         return ("held off an avoided node (exit %d): submitted again at once, not a resubmission"
                 % CM.AVOID_EXIT)
+    if at_job_end and f.get("env_fault"):
+        return ("could not start (an environment fault: %s): submitted again at once, not a "
+                "resubmission (D-111)" % f["env_fault"])
     if at_job_end:
         return "ended without a record: " + _after_no_record(cfg, f, True)
     return ("no ledger record any more: %s" % ("queued again" if f["pending"]

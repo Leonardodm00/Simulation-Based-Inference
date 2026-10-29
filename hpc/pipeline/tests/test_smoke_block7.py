@@ -501,7 +501,7 @@ def test_determinism():
         for r in recs:
             argv1 = open(os.path.join(camp, "jobs", r["trial_id"] + ".1.argv")).read().split("\n")
             argv0 = open(os.path.join(camp, "jobs", r["trial_id"] + ".0.argv")).read().split("\n")
-            assert "--resume" in argv1 and "--resume" not in argv0
+            assert "--resume" in argv1 and "--resume" in argv0     # D-111: every argv
         assert not glob.glob(os.path.join(camp, "pending", "*.json"))
         assert not os.path.exists(os.path.join(camp, "SEARCH_COMPLETE.json"))
         assert _n_submitted(spool) == 4 * 3, _n_submitted(spool)

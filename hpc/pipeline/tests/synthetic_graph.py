@@ -32,7 +32,11 @@ SYNTH_STAGE_NCPUS=<n> makes each stage's job ask n cores and its start
 wait (S.Deferred) while they do not fit, SYNTH_NO_CHECK=1 submits without
 asking (the sequencer's guard must refuse it), SYNTH_POLL_ASK=<n> makes
 every poll ask whether n cores fit (a job that can never start, asked in
-a poll).
+a poll). D-111 (block 7c's test): SYNTH_RUN_ARGV=1 submits each stage's
+job through the pipeline's own jobs/run_argv.pbs (`common.qsub_line`, an
+argv file running the stage's script), so the stage jobs carry the chain's
+variables and run its watchdog at their end; SYNTH_SLEEP_<name>=<s> sets
+one stage's sleep.
 Not pipeline code: a fixture. Pure ASCII, LF only; stdlib only.
 """
 
@@ -84,10 +88,12 @@ class SyntheticStage(S.Stage):
         elif self.mode == "silent-kill":
             body = "echo 'the job started'\nexit 0\n"
         else:
+            sleep = os.environ.get("SYNTH_SLEEP_" + self.name,
+                                   os.environ.get("SYNTH_JOB_SLEEP", "0.3"))
             body = ("sleep %s\nmkdir -p '%s'\nprintf 'hello %s\\n' > '%s'\n"
                     "sha256sum '%s' | cut -d' ' -f1 > '%s.sha256'\n"
                     "echo 'STAGE %s OK'\n"
-                    % (os.environ.get("SYNTH_JOB_SLEEP", "0.3"), os.path.dirname(art),
+                    % (sleep, os.path.dirname(art),
                        self.name, art, art, art, self.name))
         with open(p, "w") as fh:
             fh.write("#!/bin/bash\nset -u\n" + body)
@@ -95,6 +101,16 @@ class SyntheticStage(S.Stage):
 
     def _qsub(self, cfg):
         n = int(os.environ.get("SYNTH_STAGE_NCPUS", "1"))
+        if os.environ.get("SYNTH_RUN_ARGV") == "1":
+            # D-111: through run_argv.pbs, as the pipeline's own stage jobs
+            from stages import common as CM
+            d = os.path.join(cfg.data["paths"]["work_root"], "jobs")
+            if not os.path.isdir(d):
+                os.makedirs(d)
+            argv_file = os.path.join(d, self.name + ".argv")
+            CM.write_argv_file(argv_file, ["bash", self._script(cfg)])
+            return CM.qsub_line(cfg, "synth_" + self.name, "cpu", n, "1gb", "00:10:00",
+                                self._log(cfg), argv_file, cfg.data["paths"]["work_root"])
         return ["qsub", "-N", "synth_" + self.name, "-q", "cpu",
                 "-l", "select=1:ncpus=%d:mem=1gb" % n, "-l", "walltime=00:10:00",
                 "-j", "oe", "-o", self._log(cfg), "-v", "STAGE=%s" % self.name,

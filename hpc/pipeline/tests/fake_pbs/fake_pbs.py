@@ -46,7 +46,16 @@ FAKE_PBS_HOSTS=<h1>,<h2>,... gives every job a node name: the k-th job
 submitted (by job number) runs with a `hostname` that prints h_k, the last
 entry for every later job -- a stub `hostname` first on the job's PATH, so
 `$(hostname)` in a job script and the pipeline's `RUN_ARGV: host` line see
-it (block 7's avoid list, D-102).
+it (block 7's avoid list, D-102). FAKE_PBS_HOST_BY_NAME=<name>:<k>=<host>,...
+puts the k-th job named <name> (1-based, in submission order) on <host>,
+before FAKE_PBS_HOSTS. A job with a host has `exec_host = <host>/0*<ncpus>`
+in its qstat record once it has started (D-111).
+
+D-111: `-a <[[CC]YY]MMDDhhmm[.SS]>` holds the job until that local time (state
+W, then Q). FAKE_PBS_FAIL_START=<name>:<k>,... makes the k-th job named
+<name> fail to start once its dependencies and holds are met: state F,
+Exit_status -2 (PBS's JOB_EXEC_FAIL2), no output file -- the start failure
+of 2026-10-16 on a node without its home file system.
 
 With FAKE_PBS_ENFORCE_WALLTIME=1 a non-array job whose `-l walltime=` has
 elapsed is killed (its process group, SIGKILL) and finishes with
@@ -77,6 +86,24 @@ QSTAT_FAIL_FILE = os.environ.get("FAKE_PBS_QSTAT_FAIL_FILE", "")
 HOSTS = [h.strip() for h in os.environ.get("FAKE_PBS_HOSTS", "").split(",") if h.strip()]
 QSELECT_SUFFIX = os.environ.get("FAKE_PBS_QSELECT_SUFFIX", "")
 QSELECT_HISTORY = os.environ.get("FAKE_PBS_QSELECT_HISTORY", "0") == "1"
+
+
+def _name_ordinals(var):
+    """{(name, k): value} from `<name>:<k>[=<value>],...` (D-111's switches)."""
+    out = {}
+    for part in os.environ.get(var, "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        key, _, value = part.partition("=")
+        name, _, k = key.rpartition(":")
+        if name and k.isdigit():
+            out[(name, int(k))] = value
+    return out
+
+
+HOST_BY_NAME = _name_ordinals("FAKE_PBS_HOST_BY_NAME")
+FAIL_START = _name_ordinals("FAKE_PBS_FAIL_START")
 
 
 def _spool():
@@ -117,6 +144,39 @@ def _next_num():
     return n
 
 
+def _records():
+    """Every job record of the spool, in job-number order."""
+    out = []
+    for p in sorted(os.listdir(_spool())):
+        if p.endswith(".json") and p[:-5].isdigit():
+            try:
+                out.append(_load(int(p[:-5])))
+            except (OSError, ValueError):
+                pass
+    return sorted(out, key=lambda r: r["num"])
+
+
+def _parse_exec_time(text):
+    """`-a [[[[CC]YY]MM]DD]hhmm[.SS]` as an epoch (local time), or None."""
+    s = str(text).strip()
+    secs = 0
+    if "." in s:
+        s, ss = s.split(".", 1)
+        if not ss.isdigit():
+            return None
+        secs = int(ss)
+    if not s.isdigit() or len(s) not in (4, 6, 8, 10, 12):
+        return None
+    now = time.localtime()
+    full = time.strftime("%Y%m%d%H%M", now)
+    s = full[:12 - len(s)] + s
+    try:
+        tm = time.strptime(s, "%Y%m%d%H%M")
+    except ValueError:
+        return None
+    return time.mktime(tm) + secs
+
+
 def _walltime(seconds):
     s = int(round(seconds))
     return "%02d:%02d:%02d" % (s // 3600, (s % 3600) // 60, s % 60)
@@ -128,7 +188,7 @@ def _walltime(seconds):
 
 def cmd_qsub(argv):
     name, queue, out, vars_, depend, array = "job", "", "", {}, None, None
-    depend_kind, held = "afterok", False
+    depend_kind, held, exec_time = "afterok", False, None
     resources = []
     script = None
     i = 0
@@ -146,6 +206,11 @@ def cmd_qsub(argv):
             i += 2
         elif a == "-h":
             held = True; i += 1
+        elif a == "-a":
+            exec_time = _parse_exec_time(argv[i + 1]); i += 2
+            if exec_time is None:
+                sys.stderr.write("qsub: illegal -a value %s\n" % argv[i - 1])
+                return 1
         elif a == "-o":
             out = argv[i + 1]; i += 2
         elif a == "-v":
@@ -179,9 +244,15 @@ def cmd_qsub(argv):
         if len(indices) < 2:
             sys.stderr.write("qsub: Invalid Job Array Range\n")
             return 1
+    ordinal = 1 + sum(1 for r in _records() if r.get("name") == name)
     num = _next_num()
     job_id = ("%d[].%s" if indices else "%d.%s") % (num, SERVER)
+    host = HOST_BY_NAME.get((name, ordinal))
+    if not host and HOSTS:
+        host = HOSTS[min(num, len(HOSTS)) - 1]
     rec = {"num": num, "id": job_id, "name": name, "queue": queue,
+           "ordinal": ordinal, "host": host or None, "exec_time": exec_time,
+           "fail_start": (name, ordinal) in FAIL_START,
            "resources": resources, "script": os.path.abspath(script),
            "cwd": os.getcwd(), "out": out, "vars": vars_, "depend": depend,
            "depend_kind": depend_kind,
@@ -237,12 +308,13 @@ def _wait_dependency(dep, kind="afterok", self_num=None):
         time.sleep(0.1)
 
 
-def _host_stub(num):
+def _host_stub(num, host=None):
     """A directory holding a `hostname` that prints the job's node name
-    (FAKE_PBS_HOSTS), or None."""
-    if not HOSTS:
-        return None
-    host = HOSTS[min(num, len(HOSTS)) - 1]
+    (FAKE_PBS_HOST_BY_NAME, FAKE_PBS_HOSTS), or None."""
+    if not host:
+        if not HOSTS:
+            return None
+        host = HOSTS[min(num, len(HOSTS)) - 1]
     d = os.path.join(_spool(), "hostbin_%d" % num)
     if not os.path.isdir(d):
         os.makedirs(d)
@@ -258,7 +330,14 @@ def _run_one(rec, index):
     env.update(rec["vars"])
     env["PBS_JOBID"] = rec["id"] if index is None else "%d[%d].%s" % (rec["num"], index, SERVER)
     env["PBS_O_WORKDIR"] = rec["cwd"]
-    stub = _host_stub(rec["num"])
+    # a job inherits its submitter's environment here (davinci passes only -v):
+    # the submitter's own node name must not follow it to this job's node
+    spool = os.path.abspath(_spool())
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep)
+        if not (os.path.dirname(os.path.abspath(p)) == spool
+                and os.path.basename(p).startswith("hostbin_")))
+    stub = _host_stub(rec["num"], rec.get("host"))
     if stub:
         env["PATH"] = stub + os.pathsep + env.get("PATH", "")
     if index is not None:
@@ -326,6 +405,19 @@ def cmd_run(num):
     if _deleted(num):
         return 0
     rec = _load(num)
+    if rec.get("exec_time") and time.time() < float(rec["exec_time"]):
+        rec["state"] = "W"                      # -a: waits for its execution time
+        _save(rec)
+        while time.time() < float(rec["exec_time"]):
+            if _deleted(num):
+                return 0
+            time.sleep(0.1)
+        rec = _load(num)
+        if rec["state"] == "F":
+            return 0
+        rec["state"] = "Q"
+        _save(rec)
+    rec = _load(num)
     if rec["depend"] and not _wait_dependency(rec["depend"], rec.get("depend_kind", "afterok"), num):
         if _deleted(num):
             return 0
@@ -344,6 +436,13 @@ def cmd_run(num):
     if _deleted(num):
         return 0
     rec = _load(num)
+    if rec.get("fail_start"):
+        # D-111: PBS could not start it on its node (JOB_EXEC_FAIL2): no log
+        rec["state"], rec["exit_status"] = "F", -2
+        rec["comment"] = "Job failed to start (FAKE_PBS_FAIL_START)"
+        rec["started"] = rec["finished"] = time.time()
+        _save(rec)
+        return 0
     rec["state"] = "B" if rec["indices"] else "R"
     rec["started"] = time.time()
     _save(rec)
@@ -473,6 +572,13 @@ def cmd_qstat(argv):
     if rec["started"]:
         end = rec["finished"] or time.time()
         lines.append("    resources_used.walltime = %s" % _walltime(end - rec["started"]))
+        if rec.get("host"):
+            ncpus = 1
+            for r in rec["resources"]:
+                for part in r.split(":"):
+                    if part.startswith("ncpus=") and part[6:].isdigit():
+                        ncpus = int(part[6:])
+            lines.append("    exec_host = %s/0*%d" % (rec["host"], ncpus))
     if rec["indices"]:
         n = len(rec["indices"])
         fin = len(rec["elements"])

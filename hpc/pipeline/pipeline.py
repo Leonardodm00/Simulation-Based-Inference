@@ -31,7 +31,11 @@ continues; three sequencer jobs in a row that end uncleanly before a tick
 end the chain. A driver that cannot reach the scheduler for
 SCHEDULER_FAIL_TICKS ticks in a row (its node's fault: a compute node that
 lost the scheduler on 2026-10-21) hands over to its successor at once rather than at its budget
-(amended 2026-10-21 (f)). `--retry <stage>` is refused while that stage's jobs are
+(amended 2026-10-21 (f)). An environment fault never ends the chain (D-111,
+amended 2026-10-29 (g)): a driver job that cannot start its environment
+submits a delayed replacement of itself (jobs/chain.sh, from the template
+`driver/chain.qsub` written here), and every stage job's end revives a
+chain that is gone without having ended on purpose (`driver/CHAIN_END`). `--retry <stage>` is refused while that stage's jobs are
 still queued or running, since the reset forgets them. A job about to be
 submitted whose name is already queued or running is adopted, not
 submitted twice. `retire` stops a sequencer started on a login node before
@@ -52,6 +56,7 @@ import errno
 import os
 import signal
 import socket
+import subprocess
 import sys
 import time
 import traceback
@@ -82,6 +87,13 @@ _END = {"why": None, "how": None}
 
 DRIVER_DIR = "driver"
 UNCLEAN_FILE = "unclean_ends.json"
+# D-111 (block 1, amended 2026-10-29 (g)): the files of the chain's helpers in
+# the driver folder -- the qsub template of a driver job, the plain argv of a
+# successor, the deliberate end, the count of replacements since a full tick
+CHAIN_TEMPLATE = "chain.qsub"
+REVIVE_ARGV = "revive.argv"
+CHAIN_END_FILE = "CHAIN_END"
+ENV_REPLACEMENTS = "env_replacements"
 # Sequencer jobs in a row that may end uncleanly (an exception, a kill, a
 # signal) before one of them completes a tick; the next one ends the chain
 # instead of looping (PIPELINE_DRIVER_MAX_UNCLEAN overrides it: the tests).
@@ -734,6 +746,9 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
     graph = S.topological_order(graph if graph is not None else S.default_graph(cfg))
     log = log or Log(None if dry_run else os.path.join(work_root, LOG_FILE))
     _END["why"], _END["how"] = None, None
+    # D-111: the in-environment commands of this process record the prefix conda
+    # gives in <work_root>/envs, for the nodes where conda does not work
+    os.environ["WORK_ROOT"] = work_root
 
     # ---- dry run: the table, every submission, the refusals; nothing runs --
     if dry_run:
@@ -818,6 +833,10 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                             state.save()
                             log("%s: waits for cores: %s" % (stage.name, exc))
                         continue
+                    except CM.E.EnvError:
+                        # D-111: this node cannot start the environment -- not a refusal;
+                        # the driver's handler hands over to the successor
+                        raise
                     except Exception as exc:  # a refusal before submission
                         state.set_status(stage.name, "failed", str(exc))
                         state.save()
@@ -952,7 +971,82 @@ def cmd_run(args, graph=None, entry=None):
 
 def driver_name(cfg):
     """The PBS job name of the project's sequencer jobs."""
-    return CM.job_name("pl_" + cfg.tag)
+    return CM.chain_name(cfg)
+
+
+def _chain_path(work_root, name):
+    return os.path.join(work_root, DRIVER_DIR, name)
+
+
+def _write_text(path, text):
+    """A small file written whole (fsync, then rename)."""
+    d = os.path.dirname(path)
+    if d and not os.path.isdir(d):
+        os.makedirs(d)
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    with open(tmp, "w") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def write_chain_template(cfg, entry=None):
+    """D-111: `driver/chain.qsub`, the qsub argument lines of a driver job
+    with its argv file `@ARGV@` and its log `@LOG@` (no dependency), and
+    `driver/revive.argv`, the plain `drive` of a successor -- what a driver
+    job that cannot start (its replacement) and a stage job's watchdog
+    submit from (jobs/chain.sh)."""
+    d = cfg.data["driver"]
+    work_root = cfg.data["paths"]["work_root"]
+    argv = list(entry or _default_entry()) + ["drive", "--config", os.path.abspath(cfg.path)]
+    CM.write_argv_file(_chain_path(work_root, REVIVE_ARGV), argv)
+    line = CM.qsub_line(cfg, driver_name(cfg), d["queue"], d["ncpus"], d["mem"], d["walltime"],
+                        "@LOG@", "@ARGV@", work_root, env_name=cfg.data["envs"]["extract"],
+                        role="driver")
+    _write_text(_chain_path(work_root, CHAIN_TEMPLATE), "".join(a + "\n" for a in line))
+
+
+def _chain_end(work_root, who, why):
+    """D-111: the chain ended on purpose, so no watchdog revives it; the first
+    reason is kept (a submission removes it)."""
+    p = _chain_path(work_root, CHAIN_END_FILE)
+    if os.path.isfile(p):
+        return
+    try:
+        _write_text(p, "%s %s %s\n" % (CM.utc_now(), who, str(why).replace("\n", " ")[:500]))
+    except OSError:
+        pass
+
+
+def _read_chain_end(work_root):
+    """(utc, who, why) of the deliberate end, or None."""
+    try:
+        with open(_chain_path(work_root, CHAIN_END_FILE)) as fh:
+            parts = fh.read().strip().split(" ", 2)
+    except OSError:
+        return None
+    while len(parts) < 3:
+        parts.append("?")
+    return tuple(parts)
+
+
+def _env_replacements(work_root):
+    """The driver jobs replaced after an environment fault since a full tick."""
+    try:
+        with open(_chain_path(work_root, ENV_REPLACEMENTS)) as fh:
+            return int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _clear_env_replacements(work_root):
+    p = _chain_path(work_root, ENV_REPLACEMENTS)
+    if os.path.isfile(p):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
 
 
 def _driver_budget_s(cfg):
@@ -988,7 +1082,9 @@ def submit_driver(cfg, depend=None, extra=(), pbs_module=PBS, entry=None):
             + [str(a) for a in extra])
     CM.write_argv_file(argv_file, argv)
     line = CM.qsub_line(cfg, driver_name(cfg), d["queue"], d["ncpus"], d["mem"], d["walltime"],
-                        log_path, argv_file, work_root, env_name=cfg.data["envs"]["extract"])
+                        log_path, argv_file, work_root, env_name=cfg.data["envs"]["extract"],
+                        role="driver")
+    write_chain_template(cfg, entry=entry)          # D-111: before the job can need it
     if depend:
         line = line[:-1] + ["-W", "depend=afterany:%s" % depend] + line[-1:]
     return pbs_module.submit(line), argv_file, log_path
@@ -1013,6 +1109,36 @@ def _drivers(cfg, pbs_module=PBS):
         if not js.finished:
             out.append((j, js.state))
     return out
+
+
+def _record_env_prefixes(cfg, log):
+    """D-111: on the login node, where conda works, each environment of the
+    configuration is activated once, which records its prefix in
+    <work_root>/envs/<env>.prefix for the nodes where conda does not work
+    (jobs/activate_env.sh). A failure is logged and the submission goes on."""
+    work_root = cfg.data["paths"]["work_root"]
+    names = []
+    for k in ("extract", "train"):
+        n = (cfg.data.get("envs") or {}).get(k)
+        if n and n not in names:
+            names.append(n)
+    env = dict(os.environ)
+    env["WORK_ROOT"] = work_root
+    for name in names:
+        try:
+            rc, out = CM.E.run_in_env(name, [CM.E.python_in_env(), "-c",
+                                             "import sys; print(sys.prefix)"],
+                                      env=env, timeout=300)
+        except (CM.E.EnvError, OSError, subprocess.TimeoutExpired) as exc:
+            log("environment %s: its prefix could not be recorded here (%s); the nodes without "
+                "conda look in $HOME/.conda/envs and CONDA_ENVS_PATH (D-111)" % (name, exc))
+            continue
+        lines = [x.strip() for x in out.splitlines() if x.strip()]
+        if rc != 0 or not lines:
+            log("environment %s: its prefix could not be recorded here (exit %d) (D-111)"
+                % (name, rc))
+            continue
+        log("environment %s: %s (recorded for nodes without conda, D-111)" % (name, lines[-1]))
 
 
 def cmd_submit(args, graph=None, entry=None):
@@ -1072,6 +1198,18 @@ def cmd_submit(args, graph=None, entry=None):
         _clear_unclean(work_root)
         log("the count of sequencer jobs that ended uncleanly in a row (%d) was reset by this "
             "submission" % u["count"])
+    ce = _read_chain_end(work_root)
+    if ce is not None:
+        try:
+            os.remove(_chain_path(work_root, CHAIN_END_FILE))
+        except OSError:
+            pass
+        log("the chain's deliberate end of %s (%s: %s) was removed by this submission (D-111)" % ce)
+    if _env_replacements(work_root):
+        log("the count of driver jobs replaced after an environment fault (%d) was reset by this "
+            "submission (D-111)" % _env_replacements(work_root))
+        _clear_env_replacements(work_root)
+    _record_env_prefixes(cfg, log)
     extra = []
     for r in args.retry:
         extra += ["--retry", r]
@@ -1172,6 +1310,8 @@ def cmd_drive(args, graph=None, entry=None):
             "the chain ends here, no successor -- read their logs in %s, then submit again"
             % (me, u["count"], "; ".join("%s %s" % (e[1], e[2]) for e in u["ends"][-3:]),
                os.path.join(work_root, DRIVER_DIR)))
+        _chain_end(work_root, me, "the unclean limit: %d sequencer jobs in a row ended uncleanly"
+                   % u["count"])
         return EXIT_FAILED
     # 3. the successor, at once: whatever ends this job, the chain goes on
     box = {"succ": None, "asked": False}
@@ -1189,6 +1329,7 @@ def cmd_drive(args, graph=None, entry=None):
         if not ticked["once"]:
             ticked["once"] = True
             _clear_unclean(work_root)
+            _clear_env_replacements(work_root)      # D-111: a full tick, the backoff starts again
 
     def hand_over():
         """Amendment (f): a successor is queued, or can be submitted now --
@@ -1229,6 +1370,9 @@ def cmd_drive(args, graph=None, entry=None):
         log("driver %s: the sequencer raised %s (traceback in this job's log); unclean end %d in "
             "a row; the chain ends%s -- read the traceback, then submit again"
             % (me, type(exc).__name__, n, "; its successor %s was deleted" % succ if succ else ""))
+        if n >= DRIVER_MAX_UNCLEAN:
+            _chain_end(work_root, me, "the sequencer raised %s at the unclean limit (%d in a row)"
+                       % (type(exc).__name__, n))
         return 1
     why, how = _END.get("why"), _END.get("how")
     succ = box["succ"]
@@ -1258,6 +1402,10 @@ def cmd_drive(args, graph=None, entry=None):
         _delete(succ, log, "driver %s" % me)
     if why in ("done", "stopped"):
         _clear_unclean(work_root)
+    if why in ("done", "failed", "refused", "tick limit") or \
+            (why == "stopped" and not (how or "").startswith("signal")):
+        # D-111: on purpose -- no stage job's watchdog revives it
+        _chain_end(work_root, me, "%s (exit %d)%s" % (why, rc, (": " + how) if how else ""))
     log("driver %s: the chain ends (%s, exit %d)%s" % (me, why, rc,
                                                      "; its successor %s was deleted" % succ
                                                      if succ else ""))
@@ -1294,6 +1442,13 @@ def cmd_status(args, graph=None, entry=None):
                 "%s %s" % jv for jv in live) if live else "none queued or running"))
         except PBS.SchedulerError as exc:
             log("sequencer jobs: the scheduler did not answer (%s)" % exc)
+        ce = _read_chain_end(work_root)
+        if ce is not None:
+            log("chain: ended on purpose at %s by %s: %s (D-111)" % ce)
+        n = _env_replacements(work_root)
+        if n:
+            log("chain: %d replacement(s) after environment faults since the last full tick "
+                "(D-111)" % n)
     graph = S.topological_order(graph if graph is not None else S.default_graph(cfg))
     print_table(stage_table(cfg, graph, state, live=True), log)
     for ev in state.data["events"][-10:]:
@@ -1328,6 +1483,10 @@ def cmd_stop(args, graph=None, entry=None):
     if not live and not other:
         if os.path.isfile(p):
             os.remove(p)
+        if os.path.isdir(work_root):
+            # D-111: so that no stage job's watchdog starts the chain again
+            _chain_end(work_root, "stop", "stopped on request from %s (no sequencer was running)"
+                       % socket.gethostname())
         log("stop: no sequencer is running")
         return EXIT_OK
     # the request first, so that a waiting job released at this moment stops too

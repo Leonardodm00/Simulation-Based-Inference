@@ -524,11 +524,11 @@ def test_contract():
         assert "search: trial %s failed: not a node fault (runner exited 1); final" % t2[:12] in out, out
         assert "BrokenPipeError: [Errno 108] Cannot send after transport endpoint shutdown" in out
         assert "no resubmission left: recorded killed" in out, out
-        # the second argv of a healed trial carries --resume; the first does not
+        # D-111: every argv of a trial carries --resume (the first one too)
         for t in (t0, t1):
             a0 = open(os.path.join(camp, "jobs", t + ".0.argv")).read().split("\n")
             a1 = open(os.path.join(camp, "jobs", t + ".1.argv")).read().split("\n")
-            assert "--resume" not in a0 and "--resume" in a1, t
+            assert "--resume" in a0 and "--resume" in a1, t
         sc = json.load(open(os.path.join(camp, "SEARCH_COMPLETE.json")))
         assert sc["n_trials"]["ok"] == 2 and sc["n_trials"]["failed"] == 1 and \
             sc["n_trials"]["killed"] == 1, sc["n_trials"]
@@ -869,7 +869,7 @@ def _test_unreadable_record():
             assert "search: trial %s ended without a record (job " % t[:12] in out
             a_0 = open(os.path.join(camp, "jobs", t + ".0.argv")).read().split("\n")
             a_1 = open(os.path.join(camp, "jobs", t + ".1.argv")).read().split("\n")
-            assert "--resume" not in a_0 and "--resume" in a_1, t
+            assert "--resume" in a_0 and "--resume" in a_1, t     # D-111: every argv
         recs = _records(camp)
         assert len(recs) == 4 and all(r["status"] == "ok" for r in recs.values()), recs
         best = os.path.join(c["paths"]["runs_root"], "synth_best")
@@ -934,8 +934,8 @@ def _test_avoid_list():
                 "2 s, then exiting 94\nRUN_ARGV EXIT: 94\n" % avoid) in jl and \
             "RUN_ARGV: host" not in jl and "evaluate" not in jl, jl
         assert "RUN_ARGV: host nodeY" in open(os.path.join(camp, "jobs", t1 + ".1.log")).read()
-        for n in (0, 1):
-            assert "--resume" not in open(os.path.join(camp, "jobs", "%s.%d.argv" % (t1, n))).read()
+        for n in (0, 1):     # D-111: every argv carries --resume
+            assert "--resume" in open(os.path.join(camp, "jobs", "%s.%d.argv" % (t1, n))).read()
         assert st["stages"]["search"]["sub"]["node_fault_hosts"] == {"nodeX": 3}
         assert st["stages"]["search"]["sub"]["avoided"]["nodeX"]["faults"] == 3
         recs = _records(camp)

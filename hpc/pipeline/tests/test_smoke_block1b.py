@@ -419,8 +419,10 @@ def test_reference():
         want = ["qsub", "-N", "pl_synth", "-q", "test", "-l", "select=1:ncpus=1:mem=1gb",
                 "-l", "walltime=00:00:20", "-j", "oe", "-o",
                 os.path.join(wr, "driver", "driver.1.log"), "-v",
-                "ARGV_FILE=%s,ENV_NAME=%s,WORKDIR=%s,SKIP_CONDA=1"
-                % (os.path.join(wr, "driver", "driver.1.argv"), raw["envs"]["extract"], wr),
+                "ARGV_FILE=%s,ENV_NAME=%s,WORKDIR=%s,SKIP_CONDA=1,JOBS_DIR=%s,WORK_ROOT=%s,"
+                "CHAIN_NAME=pl_synth,ROLE=driver"
+                % (os.path.join(wr, "driver", "driver.1.argv"), raw["envs"]["extract"], wr,
+                   os.path.join(_REPO, "hpc", "pipeline", "jobs"), wr),
                 "-W", "depend=afterany:8.fake",
                 os.path.join(_REPO, "hpc", "pipeline", "jobs", "run_argv.pbs")]
         assert seen[0] == want, "\n%r\n%r" % (seen[0], want)

@@ -355,8 +355,11 @@ class SearchStage(Stage):
                    "--patience", "99"])
         if real:
             argv += ["--real-shards", real]
-        if resume:
-            argv += ["--resume"]
+        # D-111: always --resume -- the runner continues from the run's checkpoint
+        # when there is one and starts fresh otherwise, so a job that PBS runs
+        # again continues where its first run stopped (`resume` names the
+        # submissions that expect a checkpoint, in the log)
+        argv += ["--resume"]
         return argv
 
     def _submit_trial(self, cfg, st, pbs, tid, resume=False):
@@ -497,6 +500,7 @@ class SearchStage(Stage):
                 return                   # read again at the next poll
             tr.pop("record_unreadable_since", None)
         if rec is not None:
+            CM.clear_env_fault_streak(st["sub"])          # the job ran (D-111)
             if str(rec.get("status", "ok")) == "failed" and s["resubmit_node_faults"]:
                 # D-096: not final until its evidence says it was not the node's fault
                 tr["status"] = "examining"
@@ -519,6 +523,14 @@ class SearchStage(Stage):
             # submitted again at once, not a resubmission; --resume as the held job had it
             self._after_hold(cfg, st, pbs, tid, job, log)
             return
+        text = CM.read_log_tail(job.get("log"))
+        why = CM.env_fault(job, text)
+        if why is not None:
+            # D-111: the job could not start its environment, or PBS could not start
+            # it: the node's fault, not the trial's -- submitted again, not counted
+            self._after_env_fault(cfg, st, pbs, tid, job, why, text, log)
+            return
+        CM.clear_env_fault_streak(st["sub"])              # the job ran (D-111)
         if not os.path.isfile(os.path.join(self._dirs(cfg)["pending"], tid + ".json")):
             # the tuner reads the configuration there: a resubmission would fail at its start
             self._write_killed_record(cfg, st, tid, "killed: the job ended without a record and no "
@@ -578,6 +590,39 @@ class SearchStage(Stage):
             how = "queued again (not a resubmission): it starts when the cores allow (D-099)"
         log("search: trial %s landed on %s, which is on the avoid list (D-102): its job %s held the "
             "slot and exited; %s" % (tid[:12], host, job["id"], how))
+
+    # ------------------------------------- environment faults (D-111) ---
+
+    def _after_env_fault(self, cfg, st, pbs, tid, job, why, text, log):
+        """The trial's job ended without a record because it could not start
+        on its node: counted there as a node fault (D-102's list), recorded
+        in the trial's `env_faults`, and the trial submitted again at once
+        when it fits, else `waiting` -- `resubmits` unchanged. At the
+        guard's streak the stage stops instead, the trial left waiting."""
+        s = cfg.data["search"]
+        sub = st["sub"]
+        tr = sub["trials"][tid]
+        host = CM.host_of_log(text) or job.get("host") or "?"
+        tr.setdefault("env_faults", []).append({"host": host, "job": job["id"], "why": why,
+                                                "utc": CM.utc_now()})
+        tr.pop("nll", None)
+        n, stop = CM.note_env_fault(sub, host, why, "search", log, CM.avoid_file(cfg))
+        if stop is not None:
+            tr["status"] = "waiting"
+            tr["resume_next"] = True
+            sub["env_stop"] = stop
+            log("search: trial %s could not start on %s (%s): an environment fault (D-111); the "
+                "guard stops the stage" % (tid[:12], host, why))
+            return
+        if pbs.fits(int(s["trial"]["ncpus"])):
+            self._submit_trial(cfg, st, pbs, tid, resume=True)
+            how = "submitted again at once (not a resubmission)"
+        else:
+            tr["status"] = "waiting"
+            tr["resume_next"] = True
+            how = "queued again (not a resubmission): it starts when the cores allow (D-099)"
+        log("search: trial %s could not start on %s (%s): an environment fault, not the trial's "
+            "(D-111); %s; %d node fault(s) on %s so far" % (tid[:12], host, why, how, n, host))
 
     # ------------------------------------------- node faults (D-096) ---
 
@@ -813,6 +858,7 @@ class SearchStage(Stage):
                 job["exit_status"] = js.exit_status
                 job["walltime_s"] = js.walltime_s
                 job["state"] = js.state
+                job["host"] = getattr(js, "exec_host", None)       # D-111
                 finished_now.append(job)
         phase = sub.get("phase")
         if phase == "gate":
@@ -848,6 +894,12 @@ class SearchStage(Stage):
                 job = by_id.get(tr["jobs"][-1])
                 if job is not None and job.get("finished"):
                     self._finish_trial_job(cfg, st, pbs, tid, job, log)
+            if sub.get("env_stop"):
+                # D-111's guard: environment faults on many nodes in a row
+                sub["phase"] = "failed"
+                sub["fail"] = sub.pop("env_stop")
+                self._save_rounds_file(cfg, st)
+                return "finished"
             # D-096: failed trials awaiting their log, and failed trials never examined
             if s["resubmit_node_faults"]:
                 self._sweep_failed(cfg, st, log)
@@ -964,6 +1016,10 @@ class SearchStage(Stage):
                  "trial that lands there holds its slot %d s and is submitted again at once (not a "
                  "resubmission); delete its line to lift the ban"
                  % (CM.avoid_file(cfg), CM.AVOID_FAULTS, CM.AVOID_HOLD_S),
+                 "environment faults (D-111): a trial whose job cannot start its environment, or "
+                 "that PBS cannot start, is submitted again at once (not a resubmission); %d in a "
+                 "row on %d node(s) stop the stage; every trial runs with --resume"
+                 % (CM.ENV_FAULT_STREAK, CM.ENV_FAULT_HOSTS),
                  "clock: elapsed from round 0's first submission, cap %s h (D-090)"
                  % (s["max_total_walltime_h"],),
                  "end: finalists --top-k 1 -> %s; artefact %s" % (dirs["finalists"], dirs["complete"])]
