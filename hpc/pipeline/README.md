@@ -539,8 +539,9 @@ git push origin feat/real-arm-parity
 # L1. this code and its cluster-side check: step 1 above, then the job protocol's units; pass lines:
 #     the D-112..D-114 commit or later from git log, PIPELINE CODE OK, then
 #     "3 of 3 checks pass" (activate_units, job_units, stage_job_units: bash and stdlib).
-#     The pull also updates the running Giulia chain at its next tick: nothing it runs changed
-#     (blocks 2, 3 and 9 and new helpers only; giulia.json's digest unchanged).
+#     The pull also reaches the running Giulia chain: its sequencer job keeps the code it loaded,
+#     its successor and the jobs it submits read the new files; nothing they run changed (blocks
+#     2, 3 and 9 and new helpers only; giulia.json untouched, so its digest is unchanged).
 cd ~/SBI && python3 hpc/pipeline/tests/test_smoke_block7c.py activate_units job_units stage_job_units 2>&1 | tail -1
 
 # L2. the Sbi-extractor pull, its tree and its suites (SBI_HPC_DIR -> ~/SBI/hpc, pulled in L1);
