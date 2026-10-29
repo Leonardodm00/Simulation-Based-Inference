@@ -30,6 +30,8 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   `README.md`, `tests/`
 - `hpc/pipeline/projects/giulia/giulia.json` -- the Giulia project's
   configuration (config v6)
+- `hpc/pipeline/projects/linddup/linddup.json` -- the LindDUP project's
+  configuration (config v10; added 2026-10-29, D-104..D-109)
 - the changes the later blocks make under `hpc/joint/` (listed per block in
   sec. 5 as they are written; the rest of `hpc/joint/` is their input, not
   under test here): `hpc/joint/stage1/latent_bank.py` (`ShardIndex`,
@@ -2152,6 +2154,121 @@ fixture, not part of the pipeline.
 
 Every block is written (2026-10-16); the constraints are those of secs. 2-4
 above.
+
+### Block 9: the inputs check (`tools/inputs_check.py`; added 2026-10-29)
+
+A read-only look at a data set's inputs before its first submission, for
+the LindDUP project (D-104) and any later one: whether the simulation
+campaign is still being written (D-060, D-073: a campaign still written
+must not be re-detected), and whether the configuration's values agree
+with the data they describe -- what S2-S7 would otherwise find one
+submission at a time. [proposed 2026-10-29 by Claude; Confirmed: no]
+
+- Command: `python3 hpc/pipeline/tools/inputs_check.py --project <tag>`
+  (or `--config <path>`) `[--max-files N] [--quiet-hours H] [--json OUT]
+  [--no-qstat]`; run on the login node in `envs.extract` (numpy).
+- Reads, never writes (but `--json`): the configuration, through
+  `config.load_config` (the driver's own validation; a refused
+  configuration exits 2); under `sim.sim_main`, the campaign folders that
+  `sim.campaign_glob` matches and in each its sweep tasks (folders
+  `sweep_<x>_task<NNNN>`, Sbi-extractor's pattern): `job_args.json`,
+  `manifest.json`, the `topo_*` folders and the names of their
+  `iter_*.npz` (counted, not opened), and the modification times of the
+  task folder, its `topo_*` folders and its two JSON files; at most
+  `max_files` (default 200) raw iteration files, the first iteration of
+  each topology taken round-robin over the tasks in sorted order, each
+  opened with `numpy.load(allow_pickle=False)` and only its 0-d members
+  read; `<real.extract_root>/cohort_manifest.json` and its `.sha256`;
+  `sim.out_root`; under `paths.sbix_dir` the S2 profile
+  `sim_reextract/profiles/<real.cohort_tag>.sh` and the module
+  `sbi_labels` (its `KNOWN_TOPOLOGY_AXES`, `JOB_ARGS_TOPOLOGY_BOUNDS` and
+  `load_registry(sim.sim_main)`); `qstat -u $USER` when present.
+- Checks. Each prints one line `OK`, `FAIL`, `WARN` or `NOTE` with its
+  label; a FAIL means a stage would refuse, or run on inputs the
+  configuration does not describe. With m(t) the value of a key in task t
+  and Tasks the sweep tasks found:
+  - `campaign`: at least one campaign and one task (FAIL otherwise); the
+    counts of campaigns, tasks, topologies and iteration files (NOTE); the
+    age of the last change, the maximum modification time over the read
+    times (WARN when younger than `quiet_hours`, default 6 h).
+  - `task files`: tasks without `job_args.json` or `manifest.json` (WARN:
+    S2's plan excludes them, naming them).
+  - `simtime`: m(t) of `simtime` takes one value over Tasks, equal to
+    `bank.t_win_s` (FAIL).
+  - `cohort manifest`: present with a matching `.sha256` (OK: S1 done);
+    present without one (FAIL: S1 would run and its launcher refuses a
+    root that holds a manifest); absent (NOTE: S1 runs, a first
+    extraction).
+  - `window`: with T = `bank.t_win_s`, Delta_t the manifest's
+    `preprocessing.w_size` and W = round(T / Delta_t): |W Delta_t - T| <=
+    1e-9 s and floor(T / Delta_t) = W, the bank plan's own rule (FAIL
+    otherwise).
+  - `n_e`: `bank.n_e` equals `preprocessing.electrodes_per_subset` (FAIL).
+  - `label width`: `active_indices` takes one value over Tasks and
+    |A| + |`bank.topology_axes`| = `bank.expected_p` =
+    `search.shape_anchors.p` = `search.shape_anchors.d_theta` (FAIL).
+  - `on axis`: `bank.on_axis` is in `param_names` and each task's row of
+    `param_bounds` for it lies inside `bank.on_declared_box` (relative
+    tolerance 1e-12, as the bank plan) (FAIL); a declared box wider than
+    every task's box is a NOTE (the prior is then wider than the sampled
+    box, D-078).
+  - `conn_rule`: one value over Tasks (job_args, else manifest), equal to
+    `freeze.require_conn_rule` (FAIL).
+  - `iteration files`: at least one sampled, and every sampled file
+    readable (FAIL).
+  - `topology axis <a>`, for each a of `bank.topology_axes`: present in
+    every sampled file, finite, more than one distinct value over the
+    sampled files (FAIL); when `JOB_ARGS_TOPOLOGY_BOUNDS` names a, its two
+    job_args keys finite with lo < hi and one pair over Tasks, and every
+    sampled value inside [lo, hi] (FAIL); a not in `KNOWN_TOPOLOGY_AXES`
+    (FAIL: the Sbi-extractor checkout cannot place it; pull it); sbi_labels
+    not importable (FAIL).
+  - `freeze exclude <a>`, for each a of `freeze.exclude`: a present in the
+    sampled files (FAIL: S3 refuses an exclusion of an axis the data does
+    not hold); a known topology axis present with only NaN values, not in
+    `bank.topology_axes` and not excluded (WARN: the freeze counts NaN
+    values as distinct, EXTRACTOR_USAGE trap 6.5).
+  - `batches`: N of a `_v<N>` suffix, else 0 (Sbi-extractor's D-108 rule):
+    two campaigns with one number (FAIL).
+  - `S2 profile`: the profile file exists, unless S2's record does (FAIL).
+  - `S2 root`: `sim.out_root` absent or empty (NOTE: a new root); with
+    `REEXTRACTION_RECORD.json` and a matching `.sha256` (NOTE: S2 done);
+    otherwise (WARN: detections without a record, S2 resumes).
+  - `registry`: `load_registry(sim.sim_main)`'s width equals the
+    manifests' `param_names` length (FAIL); its failure to import is a
+    NOTE (the bank plan imports it the same way).
+  - `size`: the iteration count (rows before the floor) and its raw bytes,
+    count x W x 4 (NOTE).
+  - `qstat`: the user's jobs (name, state), at most 40 lines (NOTE).
+- Output: the lines above, then the sampled scalar members as a table
+  (key, files holding it, distinct values, min, max, NaN count); last
+  line `INPUTS CHECK: <f> FAIL, <w> WARN`; exit 0 without a FAIL, 1 with
+  one, 2 on a refused configuration or bad arguments.
+- Library calls relied on: `numpy.load`; `config.load_config`; Sbi-
+  extractor's `sbi_labels`. Custom code: the scan and the comparisons.
+- Test oracles (`tests/test_smoke_inputs_check.py`, a MEAMA-like tree of
+  two tasks, 3 + 2 topologies of 2 iterations, a cohort manifest and a
+  configuration derived from `linddup.json`, all in a temporary folder):
+  the consistent tree gives 0 FAIL, the counts 1 campaign, 2 tasks, 5
+  topologies, 10 iteration files, and stoa_gate_p's 5 distinct sampled
+  values; each of these makes the named check FAIL and no other:
+  simtime 180 in one task (`simtime`), the manifest's w_size 0.03 s,
+  re-signed (`window`), n_e 1 (`n_e`), expected_p 33 (`label width`), a
+  task's O_N box [0.01, 3.0]
+  against the declared [0.03, 3.0] (`on axis`), conn_rule weibull in one
+  task (`conn_rule`), stoa_gate_p absent from one topology's files
+  (`topology axis stoa_gate_p`), stoa_gate_hi absent from one task
+  (`topology axis stoa_gate_p`), an axis gate_x in topology_axes with the
+  widths raised to 35 (`topology axis gate_x`), p0_conn in freeze.exclude
+  (`freeze exclude p0_conn`), a
+  second campaign without `_v<N>` (`batches`), the profile removed (`S2
+  profile`), a manifest whose `.sha256` does not match (`cohort
+  manifest`); a quiet-hours window covering the tree's age gives the
+  `campaign` WARN, and 0 h none; NaN-valued p0_conn in every file gives
+  the `freeze exclude` WARN; the tree's listing and modification times are
+  unchanged by a run (read-only).
+- Status: built 2026-10-29; smoke-tested in the sandbox; not run on
+  davinci.
 
 ## 6. Pipeline entry points
 

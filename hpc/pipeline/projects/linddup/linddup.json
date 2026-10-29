@@ -1,0 +1,154 @@
+{
+  "_comment": "The LindDUP data set's pipeline configuration, v1 (2026-10-29; decisions D-104..D-109 of claude/SBI_decisions_and_ideas_log.md v1.90, project knowledge). LindDUP (D-104, the user's name): the joint DSN+NPE stack trained on the MEAMA in silico campaign campaign_meama_rho1600_n01 (ANN/Phenomenological/MEAMA) and the DUP15HD recordings (Deep_bio DATA_C control and DATA_P DUP, the cohort of record extracted_v2). Run by configuration (D-105): every value below is LindDUP's; the code is the pipeline's and Sbi-extractor's, with the two generic tool changes D-107 (the contact gate stoa_gate_p as a topology axis) and D-108 (a campaign without _v<N> has batch 0): the Sbi-extractor commit of 2026-10-29 on feat/real-arm-parity whose tree is 413e707a (git rev-parse HEAD^{tree}; its hash depends on who applies it). Values not yet read on the data are marked [to verify]: tools/inputs_check.py reads them on davinci before the first submission. Every key is required; a key starting with '_' documents the key after it and is ignored. Where a value is Giulia's (giulia.json v10), it says so.",
+  "config_version": 10,
+  "dataset": "linddup",
+
+  "_paths": "Where everything lives on davinci (absolute; no '~'). The two repositories are Giulia's checkouts; every LindDUP folder carries linddup (D-104, as D-046 for Giulia).",
+  "paths": {
+    "sbix_dir": "/davinci-1/home/ldellamea/repos/Sbi-extractor",
+    "sbi_dir": "/davinci-1/home/ldellamea/SBI",
+    "work_root": "/davinci-1/home/ldellamea/pipeline/linddup",
+    "banks_root": "/davinci-1/home/ldellamea/banks",
+    "runs_root": "/davinci-1/home/ldellamea/runs/linddup",
+    "tune_root": "/davinci-1/home/ldellamea/tune_joint_linddup"
+  },
+
+  "_envs": "As Giulia's: extraction and banks in sbi_export, training and search in sbi_env.",
+  "envs": {"extract": "sbi_export", "train": "sbi_env"},
+
+  "_real": "S1, the real-arm extraction. Done: the DUP15HD cohort of record, extracted_v2/cohort_manifest.json sha256 c925c5106137fe82 (35 wells: control 17 = DATA_C, pathological 18 = DATA_P; 9 subregions of 9 electrodes; 1200 s; HPC_PATHS.md 3b), so the driver skips S1 while the manifest matches its .sha256. cohort_config is the DUP15HD cohort block (read only if S1 ever ran; its launcher refuses a root that already holds a manifest). cohort_tag names LindDUP's own S2 files: sim_reextract/profiles/linddup.sh, its plan folder, the frozen manifest artifacts/cohort_manifest_linddup/ that S4 reads, the jobs ld_*.",
+  "real": {
+    "cohort_config": "/davinci-1/home/ldellamea/SBI/hpc/dsn/hpc/Config/config_mea_joint_full.davinci.json",
+    "cohort_tag": "linddup",
+    "extract_root": "/davinci-1/home/ldellamea/Deep Summary Network/Deep_bio/extracted_v2"
+  },
+
+  "_sim": "S2, the re-detection of the MEAMA campaign at the DUP15HD probe (n_side 3 and fs 10110.09 from the manifest, pitch 60 um D-021, edge 25 um D-024: the profile). One campaign, one label contract: no plan_args. No MEAMA job may still be writing the campaign when S2 plans (D-060, D-073): its arrays were queued on 2026-09-16 and 2026-10-16 [to verify: inputs_check reads the campaign's last change and lists the queue]. Walltimes: Giulia's G2 ran 0.48 s per iteration per worker at one electrode; a 9-electrode probe costs more per iteration [estimate], so 6 h for the test task and for each array task, against MEAMA tasks of 40 topologies per worker [the launcher's default; to verify]; a task killed at its walltime is re-run by the array's RESUME. concurrency 4: what the core cap leaves (D-109: (200 - 4) / 48).",
+  "sim": {
+    "sim_main": "/davinci-1/home/ldellamea/ANN/Phenomenological/MEAMA",
+    "campaign_glob": "campaign_meama_rho1600_n01",
+    "out_root": "/davinci-1/home/ldellamea/ANN/MEA_analysis/mea_out_linddup",
+    "tools": "/davinci-1/home/ldellamea/ANN/MEA_analysis",
+    "plan_args": "",
+    "test_walltime": "06:00:00",
+    "walltime": "06:00:00",
+    "ncpus": 48,
+    "queue": "cpu",
+    "concurrency": 4
+  },
+
+  "_freeze": "S3, the label freeze. The MEAMA campaign is flat with the contact gate swept (D-107): conn_prob and stoa_gate_p are expected in theta. exclude is empty: the finalv1 sweep, which MEAMA's descends from, writes only the causally live connectivity keys (conn_record_keys), so the Weibull axes should be ABSENT, and an exclusion of an axis absent from the data is refused by the freeze [to verify: inputs_check lists the iteration files' keys; if they hold p0_conn, d0_conn, beta_conn as NaN, as the hhgap files did, they must be excluded here as in giulia.json].",
+  "freeze": {
+    "out": "artifacts/label_axes_linddup.json",
+    "campaigns": "campaign_meama_rho1600_n01",
+    "require_conn_rule": "flat",
+    "exclude": {}
+  },
+
+  "_bank": "S4-S6, the bank plan and the two banks (export_windows/, written into a profile by stages/bank.py). on_declared_box: the MEAMA registry's O_N box [0.03, 3.0] (ANN smoke_test_stoa_gate.py T1) [to verify on the manifests]; with one campaign the declared box is the sampled one, so the prior is exact (D-078's rule). topology_axes and expected_p: D-107, p = 32 active axes of the tripartite sweep group + conn_prob + stoa_gate_p = 34 [to verify: the manifests' active_indices]. t_win_s: one window per simulation, the whole of it (D-041's rule), so the campaign's simtime: 200 s, the MEAMA launcher's default [to verify]; W = 20,000 at Delta_t 0.01 s. n_e 9: the DUP15HD probe, which the bank checks against the manifest's electrodes_per_subset. floor_hz 0.1 (Giulia's, D-075): at 9 electrodes over 200 s a window needs at least 180 detections (Sbi-extractor SPEC sec. 2.5). Seeds: Giulia's rule, the date. Everything else Giulia's.",
+  "bank": {
+    "on_axis": "O_N",
+    "on_declared_box": [0.03, 3.0],
+    "topology_axes": ["conn_prob", "stoa_gate_p"],
+    "expected_p": 34,
+    "t_win_s": 200.0,
+    "n_e": 9,
+    "floor_hz": 0.1,
+    "floor_rtol": 1e-06,
+    "sample_seed": 20261029,
+    "bootstrap_resamples": 2000,
+    "bootstrap_seed": 20261029,
+    "bytes_sample_rows": 500,
+    "rows_per_shard": 10000,
+    "queue": "cpu",
+    "concurrency": 20,
+    "walltime": "auto",
+    "_verify": "Giulia's (D-094): the verification job after every round's gate, 8 cores, 16gb, 2 h.",
+    "verify": {"ncpus": 8, "mem": "16gb", "walltime": "02:00:00"},
+    "_max_rerun_rounds": "Giulia's (D-094/D-095): a bad or missing task is moved to <banks_root>/linddup_sim_quarantine/ (never deleted) and the array runs again, at most twice.",
+    "max_rerun_rounds": 2
+  },
+
+  "_split": "Giulia's (D-088): train / selection / report = 85 / 10 / 5 % of the donors (one donor = one network, D-076; with one simulation per topology every simulation is its own donor).",
+  "split": {"fractions": [0.85, 0.10, 0.05]},
+
+  "_search": "S7, the GP search, S-A1 (D-106). Giulia's design (D-088, D-086): 50 initial points, then 20 GP rounds of 10 trials, 250 in all; at 4 trials at once under the 200-core cap (D-109) round 0 runs in 13 waves and each GP round in 3, and the 400 h clock (D-090's value) may end the search before round 20 -- an open call (the log's Open calls), to settle once the budget gate has measured a trial.",
+  "search": {
+    "_campaign": "S-A1, arm A1 (D-106): encoder and flow fitted on the MEAMA windows only; the DATA_C / DATA_P windows enter the runner's post-training diagnostics and, later, the posteriors (D-083).",
+    "campaign": "S-A1",
+    "arm": "A1",
+
+    "_shape_anchors": "p and d_theta: the bank's theta width, 34 (D-107) [to verify with the bank]; the search stage refuses a bank of another width. embedding_dim 64 anchors the flow-width rule as for Giulia: s = max(p, embedding_dim) = 64 gives hidden_features in [64, 512].",
+    "shape_anchors": {"p": 34, "d_theta": 34, "embedding_dim": 64},
+
+    "_space_overrides": "Giulia's (giulia.json v10, F-s, D-086): depth_exponent [3, 5], embedding_size [16, 64] (a summary of at least 16 numbers for 34 parameters), head_pool_ops [0, 1].",
+    "space_overrides": {"depth_exponent": [3, 5], "embedding_size": [16, 64], "head_pool_ops": [0, 1]},
+
+    "_flow": "Giulia's: 2-hidden-layer conditioners, 10 bins.",
+    "flow": {"conditioner_hidden_layers": 2, "num_bins": 10},
+
+    "_n_initial_points": "Giulia's (D-088).",
+    "n_initial_points": 50,
+    "_gp_rounds": "Giulia's (D-088): 20 rounds of 10.",
+    "gp_rounds": 20,
+    "trials_per_round": 10,
+    "_max_concurrent_trials": "4: what the 200-core cap holds beside the sequencer (D-109: (200 - 4) / 48); Giulia's 25 would be cut to 4 by the cap anyway.",
+    "max_concurrent_trials": 4,
+
+    "_seeds": "gp_seed 0: LindDUP's first design (Giulia's 1 was a restart, D-101); train_seed 0: one donor split for the whole search.",
+    "gp_seed": 0,
+    "train_seed": 0,
+    "_gp_noise_sigma": "Estimated from the data (the code's default).",
+    "gp_noise_sigma": null,
+
+    "_trial": "Giulia's (D-088): 6 passes in 20 epochs, a whole 48-core node, 160gb, 120 h, queue cpu. A LindDUP window is 20,000 samples against Giulia's 18,000, so a trial costs about 11 % more per row [estimate]; the budget gate measures it before round 0.",
+    "trial": {
+      "passes": 6.0,
+      "epochs": 20,
+      "ncpus": 48,
+      "mem": "160gb",
+      "walltime": "120:00:00",
+      "queue": "cpu",
+      "max_resubmits": 2
+    },
+
+    "_budget_gate": "Giulia's: the costliest configuration probed before round 0; the driver stops unless it fits the trial's walltime and memory with a 1.5 safety factor.",
+    "budget_gate": {"probe_steps": 20, "probe_val_rows": 5000, "safety_factor": 1.5},
+
+    "_max_total_walltime_h": "400 h, Giulia's value (D-090); for LindDUP an open call (D-109's Implies): keep, a smaller design, or a longer clock.",
+    "max_total_walltime_h": 400,
+    "walltime_reading": "elapsed",
+    "_resubmit_killed": "Giulia's.",
+    "resubmit_killed": true,
+    "_resubmit_node_faults": "Giulia's (D-096).",
+    "resubmit_node_faults": true
+  },
+
+  "_best_fit": "S8, Giulia's (D-089): the finalist fitted as an ensemble of 10 members on one shared split (seed 1), 40 passes in 40 epochs, patience 10; at 4 members at once under the cap (D-109).",
+  "best_fit": {
+    "split_seed": 1,
+    "member_seeds": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "passes": 40.0,
+    "epochs": 40,
+    "_patience_epochs": "Giulia's (D-087).",
+    "patience_epochs": 10,
+    "_n_posterior_draws": "Giulia's.",
+    "n_posterior_draws": 512,
+    "ncpus": 48,
+    "mem": "200gb",
+    "walltime": "300:00:00",
+    "queue": "cpu",
+    "max_resubmits": 2,
+    "_resubmit_node_faults": "Giulia's (D-096).",
+    "resubmit_node_faults": true
+  },
+
+  "_loader": "Giulia's (D-084): a buffer of 4 shards (10,000 rows each, about 0.8 GB of LindDUP windows per shard).",
+  "loader": {"buffer_shards": 4},
+
+  "_driver": "Giulia's (D-098): the sequencer as a chain of PBS jobs pl_linddup, 4 cores, 16gb, 24 h each.",
+  "driver": {"queue": "cpu", "ncpus": 4, "mem": "16gb", "walltime": "24:00:00", "poll_seconds": 60},
+
+  "_resources": "D-109 (the user, 2026-10-29): LindDUP's jobs, the sequencer's included, never ask for more than 200 cores at once: 4 trials, members or re-detection tasks of 48 beside the sequencer's 4. Giulia's cap (400, D-101) is separate: each pipeline counts only its own jobs. To raise it: change the value here, then --stop and submit again with --accept-config-change.",
+  "resources": {"max_cores": 200}
+}

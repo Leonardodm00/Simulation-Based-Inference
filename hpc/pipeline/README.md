@@ -295,6 +295,12 @@ search's wall budget at 400 h, D-090) plus the queue of the trial and
 member jobs (`search.trial.queue`, `best_fit.queue`: `cpu`). A run started
 under v5 needs `--accept-config-change` once.
 
+`projects/linddup/linddup.json` (2026-10-29, config v10): the LindDUP data set (D-104) -- the
+MEAMA campaign `campaign_meama_rho1600_n01` against the DUP15HD recordings (`extracted_v2`,
+DATA_C / DATA_P), S-A1 (D-106), the contact gate `stoa_gate_p` in theta (D-107: p = 34),
+`resources.max_cores` 200 (D-109); its other values Giulia's, each `_` key saying which.
+Values not yet read on the data carry `[to verify]`: `tools/inputs_check.py` reads them.
+
 ## Layout
 
 ```
@@ -310,7 +316,8 @@ stages/bank.py     S4-S6 (block 2)
 stages/search.py   S7 (block 7)
 stages/best_fit.py S8 (block 7)
 jobs/run_argv.pbs  one job = one command line from an argv file
-tools/             bank_split_hash.py, ensemble_nll.py, bank_verify.py (run by the stages); probe_compute_qsub.pbs
+tools/             bank_split_hash.py, ensemble_nll.py, bank_verify.py (run by the stages); probe_compute_qsub.pbs;
+                   read-only: search_report.py, perrow_check.py, inputs_check.py (block 9: a data set's inputs before its first submission)
 run_pipeline.sh    the one command (conda; submit, --dry-run, --status, --stop, --retire-login-sequencer)
 projects/<tag>/    the project's configuration
 tests/             the smoke tests, the fake PBS, the synthetic graph, the stand-in davinci (standin.py)
@@ -448,6 +455,34 @@ step 5: it re-attaches to the recorded jobs. An accepted configuration change
 (and a `--retry`) is saved before the first driver's first tick, so a first
 tick that raises no longer leaves its successor refusing (2026-10-19).
 
+### LindDUP: the first submission (2026-10-29)
+
+The same discipline: one line at a time, each read before the next. Before
+L1, the Sbi-extractor commit of 2026-10-29 (D-107, D-108, `profiles/linddup.sh`)
+must be on GitHub (D-062: pushed from the laptop); its tree is `413e707a`.
+
+```
+# L1. this code and its cluster-side check: step 1 above; pass line: PIPELINE CODE OK
+
+# L2. the Sbi-extractor pull, its tree and its suites; pass lines, in order: the tree 413e707a..., then
+#     -- 8 pass, 0 fail, 0 error, 0 todo, 2 skip / -- 41 pass, 0 fail, ... 2 skip / -- 17 pass, 0 fail, ... 2 skip / ALL 35 CHECKS PASSED
+cd ~/repos/Sbi-extractor && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin feat/real-arm-parity && git rev-parse HEAD^{tree} && source env.sh && python3 smoke_test_topology_axes.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_plan.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_export.py 2>&1 | tail -1 && python3 sim_reextract/smoke_test_sim_reextract.py 2>&1 | tail -1
+
+# L3. the inputs check (read-only; block 9); pass line: INPUTS CHECK: 0 FAIL, <w> WARN -- read every WARN (above
+#     all `campaign`: a MEAMA job may still be writing the campaign) and the qstat lines; paste it whole
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/inputs_check.py --project linddup --json ~/inputs_check_linddup.json 2>&1 | tee ~/inputs_check_linddup.txt
+
+# L4. the dry run; pass: exit 0, no REFUSE or STOP line, real_extraction "would be skipped" (extracted_v2 is
+#     done), sim_redetection and label_freeze "would run", "at most 4 trial(s) at once", the sequencer pl_linddup
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --dry-run 2>&1 | tee ~/pipeline_linddup_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|cores|exit" ; echo "exit ${PIPESTATUS[0]}"
+
+# L5. the run; pass line: SUBMITTED the sequencer: job <id> (pl_linddup)
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup
+
+# L6. any time: the status and the log (S2's test task, then its array and gate, S3, the plan's estimates, ...)
+bash ~/SBI/hpc/pipeline/run_pipeline.sh --project linddup --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/linddup/pipeline.log
+```
+
 ## Tests
 
 ```
@@ -462,6 +497,7 @@ python3 hpc/pipeline/tests/test_smoke_report.py        # tools/search_report.py,
 python3 hpc/pipeline/tests/test_smoke_reset.py         # tools/search_reset.py, about 20 s, stdlib and the fake PBS
 python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, a few seconds, numpy (with torch, sbi and zuko also the real-flow oracle)
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
+python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # block 9, tools/inputs_check.py, about 1 s, numpy and the Sbi-extractor checkout (SBIX_CLONE)
 ```
 
 Block 1's smoke test under the fake PBS; blocks 4-6 (the runner) are tested by
@@ -489,3 +525,4 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | 6 | runner flags `--passes`, `--patience`, `--split-fracs`, `--split-seed`, `--head-pool-ops`, `--flow-hidden-layers`, `--threads`; a per-epoch checkpoint, `--resume`, `--stop-after-epoch` | built 2026-10-15, smoke-tested |
 | 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py`; the read-only `tools/perrow_check.py` (the NLL split L = T + R); the bad-node avoid list (D-102) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`); 2026-10-20 (`test_smoke_perrow.py`); 2026-10-21 (the avoid list: `test_smoke_block7b.py` `avoid_units`, `avoid_list`) |
 | 8 | end to end on the stand-in (the real bank tools, tuner and runner; 11 jobs; the sequencer stopped and re-run); the davinci lines above | rehearsed 2026-10-16 |
+| 9 | the inputs check `tools/inputs_check.py` (read-only, any data set; LindDUP's first, 2026-10-29) | built 2026-10-29, smoke-tested (`test_smoke_inputs_check.py`; 12 mutations, each caught); not run on davinci |
