@@ -526,15 +526,19 @@ written (D-112) and every job of S1, S2 and S5 runs under the job protocol (D-11
 version of 17:30 is in git history.]
 
 ```
-# L0. on the laptop (Git Bash), once: the two Sbi-extractor commits of 2026-10-29 (D-062), from
-#     the two files sent in the chat, saved in Downloads. The working clone is ~/Sbi-extractor
-#     (C:\Users\leona\Sbi-extractor); ~/repos/ holds only the retired one (HPC_PATHS sec. L).
-#     The line picks the file from the clone's tree: at e9aeb55 (tree dc10065f) both commits,
+# L0. ON THE LAPTOP, in Git Bash -- not on davinci, whose clone (~/repos/Sbi-extractor) only
+#     pulls, in L2 (D-062; HPC_PATHS sec. L). Once: the two Sbi-extractor commits of 2026-10-29,
+#     from the two files sent in the chat, saved in Downloads. The laptop's working clone is
+#     ~/Sbi-extractor (C:\Users\leona\Sbi-extractor); its ~/repos/ holds only the retired one.
+#     The first line picks the file from the clone's tree: at e9aeb55 (tree dc10065f) both commits,
 #     sbix_linddup_d107_to_d113.mbox; at the D-107 commit (tree 413e707a) the second only,
 #     sbix_d112_d113.patch; any other state applies nothing and prints UNEXPECTED HEAD (paste it).
-#     Pass line: the tree 9d8ea296cfa6bc5bed557cb707bee1431f216608; then the push.
+#     Pass line: the tree 9d8ea296cfa6bc5bed557cb707bee1431f216608. The second line pushes only
+#     that tree (else NOT PUSHED); its pass line is git's "e9aeb55..<new> feat/real-arm-parity ->
+#     feat/real-arm-parity". [2026-10-30: the push guarded by the tree, after L0 was run on davinci,
+#     where nothing happened: no ~/Sbi-extractor there, so the chain stopped at its cd.]
 cd ~/Sbi-extractor && git checkout feat/real-arm-parity && git pull --ff-only && case "$(git rev-parse HEAD^{tree})" in dc10065fc25a35c7ac0a84d237530cbb5c68e537) git am ~/Downloads/sbix_linddup_d107_to_d113.mbox ;; 413e707addd88ce37bda8c4b11d4fd91aea0d285) git am ~/Downloads/sbix_d112_d113.patch ;; *) echo "UNEXPECTED HEAD: $(git log -1 --format='%h %s')"; false ;; esac && git rev-parse HEAD^{tree}
-git push origin feat/real-arm-parity
+cd ~/Sbi-extractor && [ "$(git rev-parse HEAD^{tree})" = 9d8ea296cfa6bc5bed557cb707bee1431f216608 ] && git push origin feat/real-arm-parity || echo "NOT PUSHED: the first line must print the tree 9d8ea296... first"
 
 # L1. this code and its cluster-side check: step 1 above, then the job protocol's units; pass lines:
 #     the D-112..D-114 commit or later from git log, PIPELINE CODE OK, then
