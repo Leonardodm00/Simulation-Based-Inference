@@ -29,7 +29,8 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   `pbs.py`, `envs.py`, `stages/`, `jobs/`, `tools/`, `run_pipeline.sh`,
   `README.md`, `tests/`
 - `hpc/pipeline/projects/giulia/giulia.json` -- the Giulia project's
-  configuration (config v6)
+  configuration (config v6 [2026-10-30: v10 since 2026-10-19, D-101;
+  `resources.max_cores` 300 since 2026-10-30, D-115])
 - `hpc/pipeline/projects/linddup/linddup.json` -- the LindDUP project's
   configuration (config v10; added 2026-10-29, D-104..D-109; v2 of the
   file the same day: `sim.plan_args` `--quiet-hours 6` (D-112), the
@@ -223,7 +224,7 @@ Claude's as the log records (D-085..D-090).
 
 | Key | Type | Constraint |
 |---|---|---|
-| `config_version` | int | 10 (v10, 2026-10-19 17:44, D-101: values only -- `search.gp_seed` 1, `resources.max_cores` 400; v9, 2026-10-19: `resources.max_cores`, D-099; v8, 2026-10-18: the `driver` block, D-098; v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
+| `config_version` | int | 10 (v10, 2026-10-19 17:44, D-101: values only -- `search.gp_seed` 1, `resources.max_cores` 400 [2026-10-30, D-115: Giulia's `resources.max_cores` 300, a value under v10, the version unchanged]; v9, 2026-10-19: `resources.max_cores`, D-099; v8, 2026-10-18: the `driver` block, D-098; v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
 | `dataset` | str | `[a-z0-9_]+`; the `<tag>` of the folder and of the artefact names |
 | `paths.{sbix_dir, sbi_dir, work_root, banks_root, runs_root, tune_root}` | str | absolute paths |
 | `envs.{extract, train}` | str | conda environment names |
@@ -267,7 +268,7 @@ Claude's as the log records (D-085..D-090).
 | `loader.buffer_shards` | int | >= 1 |
 | `driver.{queue, mem, walltime}` | str | the sequencer's PBS jobs (D-098; v8): queue, PBS memory, `hh:mm:ss` |
 | `driver.{ncpus, poll_seconds}` | int | >= 1: the jobs' cores; seconds between two ticks |
-| `resources.max_cores` | int | >= 1 (D-099; v9): the most cores the pipeline's jobs request at once, queued, held or running, the sequencer's job included; at least `driver.ncpus` + the largest single job of the configuration |
+| `resources.max_cores` | int | >= 1 (D-099; v9): the most cores the pipeline's jobs request at once, queued, held or running, the sequencer's job included; at least `driver.ncpus` + the largest single job of the configuration. Giulia: 300 (D-115, 2026-10-30; 400 under D-101, 200 under D-099); LindDUP: 200 (D-109) |
 
 Keys whose code is not built yet (the NEEDS-CODE keys) are refused by
 `pipeline.py run` with the block that builds them named, until that block
@@ -379,7 +380,8 @@ fixture, not part of the pipeline.
     node (block 1, amended 2026-10-18 (c)).
   - D-099: the cores requested by the pipeline's jobs that are queued, held
     or running, the sequencer's own job included, never sum to more than
-    `resources.max_cores` (200 for Giulia, raisable); a job waits until it
+    `resources.max_cores` (200 for Giulia, raisable [400 from 2026-10-19,
+    D-101; 300 from 2026-10-30, D-115]); a job waits until it
     fits; nothing submitted is deleted for it (block 1, amended 2026-10-19
     (d); blocks 2, 3 and 7, amended 2026-10-19).
   - D-082: every search and training value from the configuration.
@@ -2056,6 +2058,17 @@ fixture, not part of the pipeline.
     once; `CONFIG_VERSION` 10 in `config.py`). The known answers of
     `test_smoke_block1c.py` and the `config_version` checks of blocks 1,
     1b, 2, 7, 7b follow.
+    [2026-10-30, D-115, the user: "Can we please reduce the cores used to
+    300?"]: Giulia's `resources.max_cores` 300 (296 for the stages: 6
+    trials, 6 members or 6 re-detection tasks of 48 cores at once), a value
+    under v10 -- `CONFIG_VERSION` stays 10, since no key changed and
+    `linddup.json` is v10 too; the configuration's digest changes, so the
+    running chain loads it by `--stop` and a submission with
+    `--accept-config-change`; the jobs in flight when it loads are not
+    deleted (D-099): the pipeline holds more than 300 cores until enough of
+    them end, and no new job starts until it fits. The known answers of
+    `test_smoke_block1c.py` (`test_known_answer`, `_edge_switch_to_cap`)
+    follow.
     `tests/test_smoke_report.py` (stdlib; runs on davinci): a hand-made
     campaign folder and state (ok, a SIGBUS failure, a ValueError failure,
     an empty record with its pending spec, a NUL record without, a running

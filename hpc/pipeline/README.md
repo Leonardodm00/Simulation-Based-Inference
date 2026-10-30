@@ -84,7 +84,8 @@ and would submit their work again.
 ## The core cap (D-099, 2026-10-19)
 
 The pipeline's jobs never ask for more than `resources.max_cores` cores at
-once (Giulia: 200, the user's allowance), from the extraction to the best
+once (Giulia: 300 since 2026-10-30, D-115 -- 200 under D-099, 400 under
+D-101; LindDUP: 200, D-109), from the extraction to the best
 fit, counting every job queued, held or running -- a queued job can start
 at any moment -- and the sequencer's own job (`driver.ncpus`). A job that
 depends on another (a gate after its array, the aggregation after the
@@ -99,22 +100,26 @@ submitted is ever deleted for the cap: jobs submitted before it keep
 running, and no new one starts until the pipeline is under it. A job that
 can never fit (more than `max_cores` less `driver.ncpus`) stops its stage:
 `<stage>: a job of <n> cores can never start ...; raise resources.max_cores`.
-With Giulia's 400 (config v10, D-101; 200 under v9): 396 cores for the
-stages, so 8 trials (or members, or re-detection tasks) of 48 cores at once.
+With Giulia's 300 (D-115, 2026-10-30; 400 under D-101, 200 under v9): 296
+cores for the stages, so 6 trials (or members, or re-detection tasks) of 48
+cores at once.
 
 The dry run and `--status` print `cores: at most <cap> at once
 (resources.max_cores, D-099): the sequencer's job <d>, the stages' jobs <b>;
 in flight per the state file: <n> in <k> job(s)`; each stage's dry-run
-lines say what the cap leaves it (`cores (D-099): at most 8 trial(s) at
+lines say what the cap leaves it (`cores (D-099): at most 6 trial(s) at
 once -- ...`). A stage that waits says so once: `<stage>: waits for cores:
 ...`, or its phase's line (`sim_bank: the array (its gate after it) waits
 for cores (...)`).
 
-To raise the cap: edit `resources.max_cores` in `projects/<tag>/<tag>.json`
+To change the cap: edit `resources.max_cores` in `projects/<tag>/<tag>.json`
 (the load refuses a value below `driver.ncpus` + the largest job the file
 sizes), `--stop --wait 180`, then submit again with
 `--accept-config-change`: the new chain re-attaches to every recorded job
-and fills the larger room.
+and fills the room the cap leaves. A lower cap deletes nothing: the jobs in
+flight finish, and no new one starts until the pipeline is under the cap
+(Giulia's 300 of 2026-10-30, loaded by the lines "Giulia: a configuration
+change in the running chain" under "On davinci").
 
 ## The stages
 
@@ -420,9 +425,9 @@ cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && pyth
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/search_report.py --config hpc/pipeline/projects/giulia/giulia.json --qstat 2>&1 | tee ~/search_report_giulia.txt
 
 # 4. the dry run (submits nothing); pass: no REFUSE or STOP line, exit 0, the line "the sequencer: PBS jobs named
-#    pl_giulia ...", the line "cores: at most 200 at once ... in flight per the state file: <n> in <k> job(s)" (the
-#    jobs the state file records as queued or running), S1-S6 "would be skipped", "search: would run" with its
-#    node-fault lines and "cores (D-099): at most 8 trial(s) at once ...". A stage the state file records as failed
+#    pl_giulia ...", the line "cores: at most 300 at once ... in flight per the state file: <n> in <k> job(s)" (300
+#    since D-115, 2026-10-30; the jobs the state file records as queued or running), S1-S6 "would be skipped", "search: would run" with its
+#    node-fault lines and "cores (D-099): at most 6 trial(s) at once ..." (300 cores since D-115; 8 at 400). A stage the state file records as failed
 #    prints "<stage>: FAILED in the state file ... add --retry <stage>" and exit 3: add that --retry to this line
 #    and to step 5. --accept-config-change: the run was started under an earlier configuration version.
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --accept-config-change 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|node fault|cores|exit" ; echo "exit ${PIPESTATUS[0]}"
@@ -467,7 +472,7 @@ cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && pyth
 # R2. the reset, with the CODE of R1; pass line: SEARCH RESET DONE: <n> job(s) deleted, round(s) set aside as ...
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/search_reset.py --config hpc/pipeline/projects/giulia/giulia.json --confirm <CODE>
 
-# R3. the dry run; pass: exit 0, no REFUSE, "search reset to pending (--retry)", "search: would run", "at most 8 trial(s) at once"
+# R3. the dry run; pass: exit 0, no REFUSE, "search reset to pending (--retry)", "search: would run", "at most 6 trial(s) at once" (8 before D-115)
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --retry search --accept-config-change 2>&1 | tee ~/pipeline_giulia_dry.log | grep -E "REFUSE|STOP|FAILED|reset|would|sequencer|cores|exit" ; echo "exit ${PIPESTATUS[0]}"
 
 # R4. the submission; pass line: SUBMITTED the sequencer: job <id> (pl_giulia)
@@ -517,6 +522,34 @@ step 5: it re-attaches to the recorded jobs. An accepted configuration change
 (and a `--retry`) is saved before the first driver's first tick, so a first
 tick that raises no longer leaves its successor refusing (2026-10-19).
 
+### Giulia: a configuration change in the running chain (D-115, 2026-10-30)
+
+A changed `projects/giulia/giulia.json` (here `resources.max_cores` 400 ->
+300, D-115) has a new digest: once it is on davinci, the next sequencer job
+that starts without `--accept-config-change` -- the daily hand-over's
+successor included -- refuses it and ends the chain on purpose. So the pull
+(any pull of `~/SBI`, LindDUP's lines included) and the reload go together,
+C1 to C4 in one sitting. Nothing running is deleted: the trials in flight
+finish under the old room, and a new one starts only when it fits the new
+cap (at 300: 6 trials of 48 at once, the sequencer's 4 beside them).
+
+```
+# C1. the code: step 1 above, then the value; pass lines: PIPELINE CODE OK, then max_cores 300
+cd ~/SBI && python3 -c "import json; print('max_cores', json.load(open('hpc/pipeline/projects/giulia/giulia.json'))['resources']['max_cores'])"
+
+# C2. stop the running sequencer; its trials keep running; pass line: stop: the sequencer has stopped
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --stop --wait 180 2>&1 | tail -n 3
+
+# C3. the dry run with the change accepted; pass: exit 0, "search: would run", "cores: at most 300 at once", "at most 6 trial(s) at once"
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --dry-run --accept-config-change 2>&1 | tee ~/pipeline_giulia_dry_cap.log | grep -E "REFUSE|STOP|FAILED|would|cores" ; echo "exit ${PIPESTATUS[0]}"
+
+# C4. the submission, only on that dry run; pass line: SUBMITTED the sequencer: job <id> (pl_giulia)
+cd ~/SBI && [ ! -f /davinci-1/home/ldellamea/tune_joint_giulia/S-A1/SEARCH_COMPLETE.json ] && grep -q "search: would run" ~/pipeline_giulia_dry_cap.log && grep -q "cores: at most 300 at once" ~/pipeline_giulia_dry_cap.log && ! grep -qE "REFUSE|STOP:" ~/pipeline_giulia_dry_cap.log && bash hpc/pipeline/run_pipeline.sh --project giulia --accept-config-change || echo "STOP: not submitted (SEARCH_COMPLETE.json exists, or the dry run was not clean)"
+
+# C5. about 10 minutes later, read-only; pass: today's "driver <id> on <node>: started; its successor ...", the event "configuration changed: <old> -> <new>", "cores: at most 300 at once"
+W=/davinci-1/home/ldellamea/pipeline/giulia; qstat -u $USER | grep -E " pl_| t_"; grep -E ": started; its successor|could not start|watchdog|NODE FAULT|REFUSE" $W/pipeline.log | tail -n 4; cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --status 2>&1 | grep -E "configuration changed|cores: at most"
+```
+
 ### LindDUP: the first submission (2026-10-29)
 
 The same discipline: one line at a time, each read before the next. [2026-10-29 19:30,
@@ -546,6 +579,10 @@ cd ~/Sbi-extractor && [ "$(git rev-parse HEAD^{tree})" = 9d8ea296cfa6bc5bed557cb
 #     The pull also reaches the running Giulia chain: its sequencer job keeps the code it loaded,
 #     its successor and the jobs it submits read the new files; nothing they run changed (blocks
 #     2, 3 and 9 and new helpers only; giulia.json untouched, so its digest is unchanged).
+#     [2026-10-30, D-115: from the commit of D-115 on, giulia.json IS changed (resources.max_cores
+#     300), so after this pull load it in the Giulia chain at once -- C2-C5 of "Giulia: a
+#     configuration change in the running chain" -- or the Giulia chain's next hand-over refuses
+#     the new digest and ends the chain on purpose.]
 cd ~/SBI && python3 hpc/pipeline/tests/test_smoke_block7c.py activate_units job_units stage_job_units 2>&1 | tail -1
 
 # L2. the Sbi-extractor pull, its tree and its suites (SBI_HPC_DIR -> ~/SBI/hpc, pulled in L1);
