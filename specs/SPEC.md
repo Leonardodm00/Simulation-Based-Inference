@@ -2370,7 +2370,7 @@ fixture, not part of the pipeline.
 - Environment faults and reruns [amended 2026-10-29; D-111, the user's
   "Fix this it must be bullet proof as the whole pipeline once started
   MUST BE"; the design Claude's, `[proposed]`]. Found on davinci 2026-10-29
-  (the read-only check of 14:52): the sequencer `1904837` stopped ticking
+  (the read-only check pasted at 14:59 [corrected 2026-11-02: not 14:52]): the sequencer `1904837` stopped ticking
   at 2026-10-26 21:43Z on its first node; PBS ran it again, with the two
   trial jobs then running (`1905463`, `1905466`, both with checkpoints),
   on 2026-10-27 at 12:36:58, on three nodes where the conda installation
@@ -2754,6 +2754,87 @@ submission at a time. [proposed 2026-10-29 by Claude; Confirmed: no]
   args`), stage_job.sh removed (`protocol (SBI)`), a job script without
   the protocol (`protocol (Sbi-extractor)`), each its named FAIL alone.
 
+### Block 10: the purge tool (`tools/purge_outputs.py`; added 2026-11-02)
+
+The deletion of a project's search, best fit and simulated bank, for a
+data set whose simulated data are corrupted (the user's call of
+2026-11-02, after the Giulia pipeline's halt). A list-then-delete tool
+with a CODE -- the project's rule that Claude never deletes data and the
+user deletes through such a tool. [the user's choice of 2026-11-02 10:22,
+"Search + simulated bank"; the targets and the refusals proposed by
+Claude; Confirmed: no]
+
+- Command: `python3 hpc/pipeline/tools/purge_outputs.py --config <file>
+  --what <kinds> [--confirm <CODE>]`, on a login node, stdlib only;
+  `<kinds>` a comma-separated subset of `search`, `best_fit`, `sim_bank`,
+  required (no default).
+- Targets, from the configuration: `search` -- `<tune_root>/<search.
+  campaign>` (the ledger, the pending specs, the runs and their
+  checkpoints, the trial jobs' logs and argv files, the gate's probe
+  files, `bank_split.json`, the rounds file, `finalists.json`,
+  `SEARCH_COMPLETE.json`) and every `<tune_root>/<campaign>_set_aside_*`
+  folder (rounds set aside by `tools/search_reset.py`); `best_fit` --
+  `<runs_root>/<dataset>_best`; `sim_bank` -- `<banks_root>/<dataset>_sim`
+  (the shards, sidecars, task markers, the record and the certificate,
+  each with its `.sha256`) and `<banks_root>/<dataset>_sim_quarantine`.
+  Never touched, and printed as kept: `<banks_root>/<dataset>_real` (S6),
+  the bank plan's folder (S4, with the bank launcher's logs) and the work
+  root (the state, the log, the verification reports, the bank profile);
+  never touched either, and not listed: S1-S3's artefacts and S2's
+  outputs.
+- The listing (no `--confirm`; deletes nothing; exit 0): per target its
+  kind, its path, and either `absent` or the files under it (lstat sizes;
+  links not followed), their bytes and the newest modification time of
+  the folder itself and its files (UTC); for the campaign the ledger's
+  counts by status and the number of
+  run folders; for the bank the record's sha256 prefix from its
+  `.sha256`; the jobs check; the kept paths; the totals; and `CODE <8
+  hex>` -- the first 8 hex digits of the sha256 of the canonical JSON of
+  the targets (kind, path, present, files, bytes, that newest time in
+  whole seconds), so that a file added, removed, resized or rewritten in
+  a target makes the CODE stale. A job the refusal names once is not
+  named again by the chain scan.
+- Refused (exit 4, nothing deleted): the work root's lock exists (a
+  sequencer holds it); a sequencer job `pl_<tag>` is queued, held or
+  running; a job that any stage of the state records is not finished per
+  the scheduler; a job of the user whose `qstat -f` names the chain
+  (`CHAIN_NAME=pl_<tag>` followed by a comma or the end of a line, the
+  wrapped lines joined) is not finished; a target is a symbolic link, is
+  not a directory, or resolves outside its configured root; the scheduler
+  does not answer; `--confirm` with a CODE other than the listing's (the
+  listing is printed again, with its CODE). Exit 2: the configuration
+  does not load, or `--what` is empty or names an unknown kind.
+- `--confirm <CODE>` with the matching CODE: first the record
+  `<work_root>/purge/PURGE_<utc>.json` (schema `purge_outputs/1`: the
+  listing, the CODE, the configuration's sha256, the host, status
+  `started`); then each present target removed by `shutil.rmtree`, in
+  the listing's order, one line each, `DELETED [<kind>] <path>: <n>
+  file(s), <x> GB (<s> s)`; a failure prints `FAILED [<kind>] <path>:
+  <error>` and the next target is attempted; the record is rewritten with
+  each target's result and status `done` or `failed`; the pass line
+  `PURGE DONE: <k> folder(s) deleted, <n> file(s), <x> GB; the state file
+  is not touched` (exit 0), else `PURGE INCOMPLETE: ...` (exit 5). The
+  state file, the log and the chain's files are not touched: a later run
+  of the stages concerned needs their `--retry`.
+- Test oracles (`tests/test_smoke_purge.py`; a synthetic project under the
+  fake PBS -- the report test's campaign and state, a set-aside folder, a
+  simulated bank with a record and its `.sha256`, a quarantine, a real
+  bank, a plan folder): the listing names every target with its counts
+  and the kept paths, prints a CODE and deletes nothing (every file's
+  sha256 unchanged); the CODE is the same twice and another once a file
+  in any target changes; with the CODE, exactly the targets are gone,
+  every kept file's sha256 is unchanged, the record says `done` with each
+  target `deleted`, and the pass line is printed; a second listing finds
+  every target absent; the targets come in the documented order (the
+  set-aside folders by name) whatever the order they were made in;
+  refused, each with nothing deleted: a wrong CODE,
+  a lock, a sequencer job, a job the state records still running, a job
+  naming the chain (the fake PBS prints `Variable_List`, wrapped like
+  davinci's) -- a job naming another chain does not refuse --, a target
+  that is a symbolic link, an empty or unknown `--what`, a configuration
+  that does not load; the mutations `code` (a constant CODE) and `chain`
+  (the chain scan off) each make a check FAIL.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
@@ -2767,6 +2848,8 @@ submission at a time. [proposed 2026-10-29 by Claude; Confirmed: no]
 | `python3 hpc/pipeline/tests/test_smoke_block8.py` | block 8: the one command end to end on the stand-in with the real tools | both of the above | about 1 min |
 | `python3 hpc/pipeline/tests/test_smoke_block7c.py` | D-111: the environment's fallback, environment faults, the chain's replacement and watchdog; D-113's `stage_job_units` | the training environment (torch, sbi, skopt) | a few minutes |
 | `python3 hpc/pipeline/tests/test_smoke_inputs_check.py` | block 9: the inputs check (D-112's and D-113's rows included) | the Sbi-extractor checkout at or after D-113, numpy | about 1 s |
+| `python3 hpc/pipeline/tools/purge_outputs.py --config <file> --what search,best_fit,sim_bank [--confirm <CODE>]` | block 10: the list-then-delete of a project's search, best fit and simulated bank | davinci (the tests: a synthetic project) | seconds to list; minutes to delete hundreds of GB |
+| `python3 hpc/pipeline/tests/test_smoke_purge.py` | block 10's smoke test under the fake PBS | none (stdlib) | about 15 s |
 
 ## 7. Not executable in the sandbox
 

@@ -550,6 +550,58 @@ cd ~/SBI && [ ! -f /davinci-1/home/ldellamea/tune_joint_giulia/S-A1/SEARCH_COMPL
 W=/davinci-1/home/ldellamea/pipeline/giulia; qstat -u $USER | grep -E " pl_| t_"; grep -E ": started; its successor|could not start|watchdog|NODE FAULT|REFUSE" $W/pipeline.log | tail -n 4; cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --status 2>&1 | grep -E "configuration changed|cores: at most"
 ```
 
+### Giulia: the halt and the deletion of the search and the simulated bank (D-116, D-117, 2026-11-02)
+
+The simulated data the search used are corrupted (the user, 2026-11-02). First
+the halt (D-116): the sequencer is stopped with `--stop`, so the chain ends on
+purpose (`driver/CHAIN_END`) and no stage job's watchdog revives it; only then
+are the jobs left deleted -- a plain `qdel` of the sequencer is an unclean end
+that hands over, writes no `CHAIN_END`, and the next stage job to end submits
+a sequencer again, which resubmits the deleted trials with `--resume`. H1 and
+H3 select the jobs whose variables name the chain (`CHAIN_NAME=pl_giulia`), so
+no other job is touched. Then the deletion (D-117) through
+`tools/purge_outputs.py` (block 10): it lists, prints a CODE, and deletes only
+with that CODE; it refuses while any job of the chain exists. Deleted: the
+search's campaign folder `S-A1` (the ledger, the runs and their checkpoints,
+the trial jobs' logs, the gate's probes), the rounds set aside on 2026-10-19
+(`S-A1_set_aside_*`), the best fit's folder if any, the simulated bank
+`giulia_sim` and its quarantine. Kept: the real bank `giulia_real`, the bank
+plan's folder, the work root (state, log, reports), S1-S3 and S2's outputs.
+The state file is not touched: a later run of these stages needs their
+`--retry`. Do NOT submit the pipeline afterwards until what is rebuilt has
+been decided: a submission would start the search again from the state.
+
+```
+# H1. read-only: the jobs of the chain; pass line: LISTED: <n> Giulia job(s), the jobs above it
+n=0; while read -r j; do f=$(qstat -f "$j" 2>/dev/null | sed ':a;N;$!ba;s/\n\t//g'); echo "$f" | grep -qE 'CHAIN_NAME=pl_giulia(,|$)' || continue; n=$((n+1)); echo "GIULIA $j $(echo "$f" | awk -F' = ' '/^ *Job_Name = /{print $2; exit}') $(echo "$f" | awk -F' = ' '/^ *job_state = /{print $2; exit}')"; done < <(qselect -u "$USER" | tr -s ' \t' '\n'); echo "LISTED: $n Giulia job(s)"
+
+# H2. stop the sequencer (up to 3 min); pass lines: stop: deleted the waiting sequencer job <id> ..., then stop: the
+#     sequencer has stopped (still running after 180 s: run H2 again; once stopped it says stop: no sequencer is running)
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --stop --wait 180 2>&1
+
+# H3. delete the chain's jobs left; refused while a pl_giulia job exists; pass line: DELETE DONE: <n> Giulia job(s) deleted
+s=(); g=(); while read -r j; do f=$(qstat -f "$j" 2>/dev/null | sed ':a;N;$!ba;s/\n\t//g'); echo "$f" | grep -qE 'CHAIN_NAME=pl_giulia(,|$)' || continue; if echo "$f" | grep -qE '^ *Job_Name = pl_giulia$'; then s+=("$j"); else g+=("$j"); fi; done < <(qselect -u "$USER" | tr -s ' \t' '\n'); if [ ${#s[@]} -gt 0 ]; then echo "REFUSED: the sequencer job(s) ${s[*]} still there -- run the stop line again first; nothing deleted"; else c=0; for j in "${g[@]}"; do qdel "$j" && { echo "DELETED $j"; c=$((c+1)); }; done; echo "DELETE DONE: $c Giulia job(s) deleted"; fi
+
+# H4. the check; pass lines: lock: none (no sequencer ticking), sequencer jobs (pl_giulia): none queued or running,
+#     chain: ended on purpose at ... stopped (exit 0): STOP_REQUEST: asked ... (D-111), Giulia jobs left: 0
+#     (a LEFT <id> E line is a job still exiting: H4 again in a minute)
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project giulia --status 2>&1 | grep -E 'lock: |sequencer jobs|chain: ended on purpose'; n=0; while read -r j; do f=$(qstat -f "$j" 2>/dev/null | sed ':a;N;$!ba;s/\n\t//g'); echo "$f" | grep -qE 'CHAIN_NAME=pl_giulia(,|$)' || continue; n=$((n+1)); echo "LEFT $j $(echo "$f" | awk -F' = ' '/^ *job_state = /{print $2; exit}')"; done < <(qselect -u "$USER" | tr -s ' \t' '\n'); echo "Giulia jobs left: $n"
+
+# P1. the code: step 1 above, then; pass lines: PIPELINE CODE OK, then PURGE TOOL PRESENT
+cd ~/SBI && test -f hpc/pipeline/tools/purge_outputs.py && echo PURGE TOOL PRESENT
+
+# P2. the listing, deletes nothing; pass: the "would DELETE" lines (paths, files, GB), the "kept:" lines, and CODE <8 hex>
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/purge_outputs.py --config hpc/pipeline/projects/giulia/giulia.json --what search,best_fit,sim_bank 2>&1 | tee ~/purge_giulia_list.txt
+
+# P3. the deletion, with the CODE that P2 printed in place of <CODE>; in the background (hundreds of GB take minutes;
+#     the log survives a closed session); prints nothing here
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && nohup python3 hpc/pipeline/tools/purge_outputs.py --config hpc/pipeline/projects/giulia/giulia.json --what search,best_fit,sim_bank --confirm <CODE> > ~/purge_giulia_delete.log 2>&1 &
+
+# P4. read-only, any time after P3; pass lines: the log's PURGE DONE: <k> folder(s) deleted, ..., and in the listing
+#     only "absent" lines and "in all: 0 folder(s), 0 file(s), 0.00 GB" (while P3 still runs: DELETED lines so far)
+tail -n 8 ~/purge_giulia_delete.log; cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/purge_outputs.py --config hpc/pipeline/projects/giulia/giulia.json --what search,best_fit,sim_bank 2>&1 | grep -E "REFUSED|absent|would DELETE|in all"
+```
+
 ### LindDUP: the first submission (2026-10-29)
 
 The same discipline: one line at a time, each read before the next. [2026-10-29 19:30,
@@ -634,6 +686,7 @@ python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults, 
 python3 hpc/pipeline/tests/test_smoke_block7c.py       # D-111: the environment's fallback, environment faults, the driver's replacement, the watchdog; D-113's stage_job_units; about 3 min, the same
 python3 hpc/pipeline/tests/test_smoke_report.py        # tools/search_report.py, a few seconds, stdlib
 python3 hpc/pipeline/tests/test_smoke_reset.py         # tools/search_reset.py, about 20 s, stdlib and the fake PBS
+python3 hpc/pipeline/tests/test_smoke_purge.py         # block 10, tools/purge_outputs.py, about 15 s, stdlib and the fake PBS
 python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, a few seconds, numpy (with torch, sbi and zuko also the real-flow oracle)
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # block 9, tools/inputs_check.py, about 1 s, numpy and the Sbi-extractor checkout (SBIX_CLONE)
@@ -665,3 +718,4 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | 7 | the search and the best fit S7-S8: the budget gate, the rounds with the throttle and the resubmission with `--resume`, the elapsed clock, the finalists, the members and the ensemble NLL; config v5; node faults healed and corrupt checkpoints moved aside (D-096, D-097; config v7); the requested stop and the --retry guard (block 1); an unreadable record set aside and taken as none, the read-only `tools/search_report.py`; the read-only `tools/perrow_check.py` (the NLL split L = T + R); the bad-node avoid list (D-102); environment faults and reruns: the activation's fallback, free resubmissions, the guard, `--resume` on every trial and member (D-111) | built 2026-10-16, smoke-tested; amended 2026-10-18 (`test_smoke_block7b.py`) and 2026-10-19 (D-099: the throttle under the cap; `test_cores`; the unreadable records: `test_smoke_block7b.py`, `test_smoke_report.py`); 2026-10-20 (`test_smoke_perrow.py`); 2026-10-21 (the avoid list: `test_smoke_block7b.py` `avoid_units`, `avoid_list`); 2026-10-29 (D-111: `test_smoke_block7c.py`) |
 | 8 | end to end on the stand-in (the real bank tools, tuner and runner; 11 jobs; the sequencer stopped and re-run); the davinci lines above | rehearsed 2026-10-16 |
 | 9 | the inputs check `tools/inputs_check.py` (read-only, any data set; LindDUP's first, 2026-10-29); the plan's `--quiet-hours`, the tasks being written, the pace, the job protocol's two sides (D-112, D-113) | built 2026-10-29, smoke-tested (`test_smoke_inputs_check.py`; 12 mutations, each caught); amended 2026-10-29 (b) (`test_being_written`; 5 more mutations); not run on davinci |
+| 10 | the purge tool `tools/purge_outputs.py`: the list-then-delete with a CODE of a project's search (with its set-aside rounds), best fit and simulated bank (with its quarantine), refused while any job of the chain exists (D-117) | built 2026-11-02, smoke-tested |

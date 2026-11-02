@@ -36,7 +36,8 @@ does, which the sequencer must not mistake for live jobs.
 
 `qstat -x -f <id>` prints a PBS-like record: job_state (Q, H, R, B, F),
 Exit_status when finished, resources_used.walltime, array_state_count for
-arrays. An unknown id prints `qstat: Unknown Job Id <id>` and exits 153.
+arrays, and (2026-11-02) Variable_List with the job's -v variables,
+wrapped like davinci's. An unknown id prints `qstat: Unknown Job Id <id>` and exits 153.
 While the file FAKE_PBS_QSTAT_FAIL_FILE names exists, every qstat prints
 `qstat: illegally formed job identifier: <id>` and exits 1 -- a davinci
 compute node of 2026-10-21, whose qstat answered that for every id (block
@@ -592,6 +593,11 @@ def cmd_qstat(argv):
         v = "fakehost:" + rec["out"]
         parts = [v[i:i + 54] for i in range(0, len(v), 54)]
         lines.append("    Output_Path = " + "\n\t".join(parts))
+    if rec.get("vars"):
+        # as PBS Pro: the -v variables, comma-separated, wrapped (newline + tab)
+        v = ",".join("%s=%s" % kv for kv in rec["vars"].items())
+        parts = [v[i:i + 54] for i in range(0, len(v), 54)]
+        lines.append("    Variable_List = " + "\n\t".join(parts))
     print("\n".join(lines))
     return 0
 
