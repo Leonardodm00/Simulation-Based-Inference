@@ -98,8 +98,8 @@ set has two arms, both built by the bench generator (sec. 2.4): a simulated
 arm S whose theta covers the whole parameter box, and a synthetic "real" arm
 R of three conditions on donors of two wells, whose theta is recorded and
 withheld from training, at gap severities pi = 0 and pi = 0.3 (D-119, D-120).
-Deliverables: the four searches (S-A2 and S-A5 on each arm-R bank) and their
-best fits, as above for any data set, every trial's record carrying the
+Deliverables: the five searches (S-A2 and S-A5 on each arm-R bank, and one
+S-A1, D-122) and their best fits, as above for any data set, every trial's record carrying the
 pseudo-real endpoint L_pseudo_real (sec. 2.4) beside the ledger's `nll`. The
 evaluation (the roadmap's step S6) is specified when it starts.
 
@@ -346,8 +346,12 @@ windows labelled by condition, over the C = 3 classes counted from b's
 labels (F-t; the roadmap's step S3); in S-A5 a trial with rep_on = 1 adds
 lambda_rep L_rep on pairs of windows from the two different wells of one
 donor of b (F-ab; step S3), and a cohort with no such pair refuses (F-aa); a
-trial with dsn_on = 0 (S-A2) or rep_on = 0 (S-A5) is arm A1. The project's
-core cap is 120 (D-120). Every trial's record carries L, the simulated
+trial with dsn_on = 0 (S-A2) or rep_on = 0 (S-A5) is arm A1. A fifth
+search, S-A1 (D-122), optimises arm A1 alone with the same budget: A1
+trains on arm S only, so one S-A1 search serves both cohorts -- its trials
+are run with R0 as the real stream (scored on R0, trained without it), and
+its best fit is scored on R3 at the evaluation. The project's core cap is
+120 (D-120). Every trial's record carries L, the simulated
 report split's NLL (the ledger's `nll`, sec. 2.3), and the pseudo-real
 endpoint
 
