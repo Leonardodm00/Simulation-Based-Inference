@@ -310,10 +310,10 @@ pi = 0.3 with the three modes of `latent_gap.py`:
 At pi = 0 every mode is the identity (`GapSpec.active`). The gap acts on
 arm R only (the builder refuses pi != 0 on arm S).
 
-**Seeds (D-120; F-aw).** Arm S is built with seed s_S and arm R with
-s_R != s_S. [Open, sec. 8: R0 and R3 with one s_R, so that they hold the
-same donors, theta, conditions, nuisance and realisation seeds and differ
-only by the gap.]
+**Seeds (D-120, D-121; F-aw).** Arm S is built with seed s_S, R0 with
+s_R0 and R3 with s_R3, pairwise distinct: R0 and R3 are independent cohorts
+of 27 donors (D-121), so the comparison of pi = 0 with pi = 0.3 carries the
+cohort-to-cohort spread of the separability (below) as well as the gap.
 
 **Separability, the reason for s (D-119, D-120).** For a cohort built as
 above at pi = 0, three accuracies of the condition, chance being 1/3:
@@ -354,8 +354,12 @@ endpoint
     L_pseudo_real = (1/n_R) sum_{i=1}^{n_R} -log q_omega(theta_{d(i)} | h_psi(x_i)),
 
 over the n_R windows x_i of b, d(i) the donor of window i and theta_{d(i)}
-its withheld parameter. [Open, sec. 8: which of the two the search ranks
-on.]
+its withheld parameter. The search ranks on L, as on real data whose theta
+is unknown (D-121); L_pseudo_real ranks nothing and is read by the
+evaluation, which compares, within each search, the best trial with the
+extra term on (dsn_on = 1 in S-A2, rep_on = 1 in S-A5) and the best A1
+trial, each picked on L, on L_pseudo_real paired by donor (the roadmap's
+step S6 specifies it).
 
 ### Notation
 
@@ -3031,8 +3035,10 @@ stated in the README.
 
 ## 8. Open questions
 
-- The synthetic experiment's search objective (sec. 2.4; raised 2026-11-03,
-  the roadmap's step S1): the search ranks trials on the ledger's `nll`, the
+- [closed 2026-11-03 by D-121: the searches rank on L, the evaluation reads
+  L_pseudo_real] The synthetic experiment's search objective (sec. 2.4;
+  raised 2026-11-03, the roadmap's step S1): the search ranks trials on the
+  ledger's `nll`, the
   simulated report split's NLL L (`npe_tune_joint.py:623`, `rec["nll"] =
   run["L"]`), which A2's and A5's real-data terms do not improve by
   construction; the pseudo-real endpoint L_pseudo_real is recorded for every
@@ -3041,7 +3047,8 @@ stated in the README.
   L_pseudo_real of every trial and of the best fits; or they rank on
   L_pseudo_real of a selection part of arm R's donors and the evaluation
   reads the rest (an oracle only synthetic data allow). The user's call.
-- R0 and R3 on one arm-R seed (sec. 2.4; raised 2026-11-03): with one s_R
+- [closed 2026-11-03 by D-121: two seeds, independent cohorts] R0 and R3
+  on one arm-R seed (sec. 2.4; raised 2026-11-03): with one s_R
   the two banks hold the same donors, theta, conditions, nuisance and
   realisation seeds, and the comparison of pi = 0 with pi = 0.3 is paired
   by donor; with two seeds they are independent cohorts. The user's call.
