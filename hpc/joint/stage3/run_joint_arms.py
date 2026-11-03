@@ -346,6 +346,81 @@ def is_campaign_bank(sidecar):
     return isinstance(spec, dict) and spec.get("kind") == "campaign"
 
 
+# [block 11, D-118] The latent_spec kinds whose prior is the unit box.
+UNIT_BOX_KINDS = ("campaign", "box")
+
+
+def unit_box_kind(sidecar):
+    """[block 11] 'campaign' (block 4: the Sbi-extractor bank of a
+    simulation campaign, D-078) or 'box' (a bench bank built with
+    `build_latent_bank.py --prior box`, the simulated arm of a synthetic data
+    set, D-118) when the bank's prior is the unit box (0, 1)^p; None for the
+    bench's mixture prior (eq. 7), whose latent_spec carries no kind."""
+    spec = sidecar.get("latent_spec") or {}
+    kind = spec.get("kind") if isinstance(spec, dict) else None
+    return kind if kind in UNIT_BOX_KINDS else None
+
+
+def refuse_shared_bench_seed(sim_side, real_side):
+    """[block 14, F-aw] Refuse a bench arm S and a bench arm R built with one
+    --seed: the builder's base seed is seed * 1000003 + shard and does not
+    see the arm, so the two banks would share their nuisance draws and
+    realisation seeds (and, both on the mixture prior, every theta). A bank
+    whose latent_spec carries no seed (a campaign bank, block 4) is not a
+    bench bank and is not checked."""
+    if real_side is None:
+        return
+    ls = sim_side.get("latent_spec") or {}
+    lr = real_side.get("latent_spec") or {}
+    if not (isinstance(ls, dict) and isinstance(lr, dict)):
+        return
+    if "seed" in ls and "seed" in lr and int(ls["seed"]) == int(lr["seed"]):
+        raise SystemExit(
+            "arms S and R were built with one --seed (%d): their shards of "
+            "one index share the nuisance draws and the realisation seeds "
+            "(F-aw); rebuild arm R with another --seed" % int(ls["seed"]))
+
+
+def spread_pairs(pairs, donor_ids, k):
+    """[block 14] At most k of the (P, 2) pairs, taken round-robin over the
+    donors of their first rows (donors in sorted order, each donor's pairs in
+    their enumeration order), so that k pairs cover min(k, n_donors) donors.
+    Deterministic; no generator."""
+    pairs = np.asarray(pairs, dtype=np.int64)
+    if pairs.shape[0] <= k:
+        return pairs
+    don = np.asarray(donor_ids).ravel()[pairs[:, 0]]
+    groups = [np.flatnonzero(don == d) for d in np.unique(don)]
+    out, depth = [], 0
+    while len(out) < k:
+        for g in groups:
+            if depth < g.size:
+                out.append(int(g[depth]))
+                if len(out) == k:
+                    break
+        depth += 1
+    return pairs[np.asarray(out, dtype=np.int64)]
+
+
+def metric_class_count(labels, source):
+    """[block 14, F-t] The number of classes of the metric term, counted on
+    the labels of its own source (the real arm for A0, A2, A3; the simulated
+    arm for A0s, A2s) rather than on the simulated bank's: a box arm S has
+    no class (cls -1). Negative labels are unlabelled rows and are not
+    counted; the classes must be 0..C-1 with C >= 2, which the DSN loss's
+    class mask and separation target assume."""
+    lab = np.asarray(labels).ravel()
+    classes = np.unique(lab[lab >= 0])
+    if classes.size < 2:
+        raise SystemExit("the metric term needs at least two classes on its "
+                         "%s source, which has %d (F-t)"
+                         % (source, classes.size))
+    if not np.array_equal(classes, np.arange(classes.size)):
+        raise SystemExit("the %s source's classes are %s, not 0..%d"
+                         % (source, classes.tolist(), classes.size - 1))
+    return int(classes.size)
+
+
 def default_sbi_hpc_dir():
     """[block 4] This repository's hpc/ tree, when it holds npe_diagnostics."""
     d = os.path.abspath(os.path.join(_HERE, "..", ".."))
@@ -564,14 +639,19 @@ def main(argv=None):
     needs_real = cfg_arm["dsn_domain"] == "real" or cfg_arm["lambda_rep"] > 0
     if needs_real and real is None:
         raise SystemExit("arm %s needs --real-shards" % args.arm)
+    refuse_shared_bench_seed(sim_side, real_side)
 
     W = int(sim_side["W"])
     d_theta = int(np.asarray(sim["theta"]).shape[1])
     E = FixedStatsSummary.N_STATS if cfg_arm["fixed_summary"] \
         else args.embedding_size
-    campaign = is_campaign_bank(sim_side)
+    # [block 11] the unit-box prior: a campaign bank (block 4) or a box bank
+    box_kind = unit_box_kind(sim_side)
+    campaign = box_kind is not None
+    prior_label = {"campaign": "campaign_unit_box",
+                   "box": "box_unit_box"}.get(box_kind, "bench_mixture")
 
-    stem_name = ("%s_seed%d" % (args.arm, args.seed) if split_seed == args.seed
+    stem_name =("%s_seed%d" % (args.arm, args.seed) if split_seed == args.seed
                  else "%s_split%d_seed%d" % (args.arm, split_seed, args.seed))
 
     if args.dry_run:
@@ -585,8 +665,9 @@ def main(argv=None):
               % (real["x"].shape[0] if real is not None else "-"))
         print("  embedding size   : %d%s"
               % (E, " (fixed summary)" if cfg_arm["fixed_summary"] else ""))
-        print("  prior            : %s" % ("campaign (unit box, D-078)" if campaign
-                                            else "bench mixture"))
+        print("  prior            : %s" % (
+            {"campaign": "campaign (unit box, D-078)",
+             "box": "box bank (unit box, D-118)"}.get(box_kind, "bench mixture")))
         print("  loader           : %s" % ("streamed, buffer %d shard(s)"
                                             % args.buffer_shards if streaming
                                             else "in memory"))
@@ -652,7 +733,8 @@ def main(argv=None):
         # [block 4, D-078] the campaign prior is the unit box: the floor is
         # that of a uniform density, 0 nats, and no LatentSBISpec is built.
         prior_fn = campaign_log_prob
-        print("prior            : campaign bank -- uniform on the unit box (D-078)",
+        print("prior            : %s bank -- uniform on the unit box (%s)"
+              % (box_kind, "D-078" if box_kind == "campaign" else "D-118"),
               flush=True)
     else:
         latent = sim_side["latent_spec"]
@@ -669,7 +751,12 @@ def main(argv=None):
     dsn_loss_fn = None
     if cfg_arm["dsn_domain"] is not None:
         from dsn_loss_adapter import DSNLossConfig, build_dsn_loss
-        n_classes = int(len(np.unique(sim["cls"])))
+        # [block 14, F-t] counted on the metric term's own source
+        n_classes = (metric_class_count(real["cls"], "real")
+                     if cfg_arm["dsn_domain"] == "real"
+                     else metric_class_count(sim["cls"], "simulated"))
+        print("metric classes   : %d (on the %s arm)"
+              % (n_classes, cfg_arm["dsn_domain"]), flush=True)
         # The separation ramp is driven by how many times l_DSN is EVALUATED.
         # For the two-stage arms that is the encoder pre-training, so the
         # horizon is --encoder-steps; for the joint arms it is the joint loop.
@@ -765,11 +852,13 @@ def main(argv=None):
         model.freeze_encoder()          # weights AND eval mode, see joint_model
 
     # ---- batches and criteria ---------------------------------------------
-    real_x = real_cls = real_donor = None
+    real_x = real_cls = real_donor = real_well = None
     if real is not None:
         real_x = torch.as_tensor(np.asarray(real["x"]), dtype=torch.float32)
         real_cls = torch.as_tensor(np.asarray(real["cls"]), dtype=torch.long)
         real_donor = np.asarray(real["donor"])
+        # [block 14, F-ab] a replicate pair is two wells of one donor
+        real_well = np.asarray(real["well"])
 
     # The metric stream reads the SIMULATED arm for the *s arms (A0s, A2s),
     # with the generator's labels, and the real arm otherwise.
@@ -790,11 +879,20 @@ def main(argv=None):
         if theta_stream is not None:
             stream.theta = theta_stream
         batcher = ThreeStreamBatcher(None, None, real_x, real_cls, real_donor, None,
-                                     spec_b, seed=args.seed, sim_stream=stream)
+                                     spec_b, seed=args.seed, sim_stream=stream,
+                                     real_well=real_well)
     else:
         batcher = ThreeStreamBatcher(theta_tr, x_tr, real_x, real_cls, real_donor,
-                                     None, spec_b, seed=args.seed, **met_kw)
+                                     None, spec_b, seed=args.seed,
+                                     real_well=real_well, **met_kw)
     print(batcher.report())
+    # [block 14, F-aa] arm A5 with no replicate pair would train as A1 with
+    # nothing to say so but the line above.
+    if cfg_arm["lambda_rep"] > 0 and batcher.pairs.shape[0] == 0:
+        raise SystemExit(
+            "arm %s has no replicate pair: no donor of the real arm has rows in "
+            "two different wells (%d donors without a pair; F-aa)"
+            % (args.arm, batcher.n_singleton_donors))
 
     # Sigma0 spans all d_theta = 26 axes, kernel axes included. Decision, not
     # oversight: D17 closed as option (c) -- accept and record the kernel-axis
@@ -906,7 +1004,7 @@ def main(argv=None):
                              else "simulated (arm R absent)"),
         "split_hash": split_hash,
         "backbone": bb_kind,
-        "prior": "campaign_unit_box" if campaign else "bench_mixture",
+        "prior": prior_label,
         "loader": {"buffer_shards": int(args.buffer_shards),
                    "n_shards": len(sim_paths), "streamed": bool(streaming)},
         "threads": int(n_threads),
@@ -939,13 +1037,26 @@ def main(argv=None):
 
     if real is not None:
         from joint_batches import enumerate_donor_pairs
-        pairs, n_single = enumerate_donor_pairs(real_donor)
+        # [block 14, F-ab] pairs of two wells of one donor, as the term's;
+        # the 64 the diagnostic scores are spread round-robin over the donors
+        # (the first 64 in donor order would be one or two donors' pairs).
+        pairs, n_single = enumerate_donor_pairs(real_donor, real_well)
+        pair_kind = "two wells of one donor"
+        if pairs.shape[0] == 0:
+            # No donor has two wells (a real bank whose donor is its well):
+            # the diagnostic falls back to rows of one donor, as before block
+            # 14, and the record says which pairs it scored. The training
+            # term has no such fallback (F-aa, above).
+            pairs, n_single = enumerate_donor_pairs(real_donor)
+            pair_kind = "rows of one well (no donor has two wells)"
         if pairs.shape[0]:
-            take = pairs[:min(64, pairs.shape[0])]
+            take = spread_pairs(pairs, real_donor, 64)
             rr = replicate_report(model, real_x[take[:, 0]],
                                   real_x[take[:, 1]], Sigma0,
                                   n_draws=args.n_posterior_draws)
             rr["n_pairs"] = int(take.shape[0])
+            rr["pair_kind"] = pair_kind
+            rr["n_donors_scored"] = int(np.unique(np.asarray(real_donor)[take[:, 0]]).size)
             rr["n_singleton_donors"] = int(n_single)
             rr["p_eff_gap"] = (None if p_eff_spec is None
                                else float(rr["p_eff_mean"] - p_eff_spec))

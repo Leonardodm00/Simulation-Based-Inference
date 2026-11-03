@@ -122,6 +122,12 @@ def phi_to_bench_params(phi, n_neurons, duration_s, overlap="merge",
         # lo + phi * (hi - lo), which misses U_k by 1 ulp (e.g.
         # 0.10 + (0.40 - 0.10) != 0.40 in binary64). Caught by E1b.
         a[k] = lo * (1.0 - phi[k]) + hi * phi[k]
+    # [block 13, D-120; F-av] fragment_duty is a fraction of a burst and
+    # BenchBurstParams refuses a value above 1, which a shifted range reaches
+    # for phi_7 > 1 - shift: the shifted duty is clipped at 1, so such a
+    # donor gets a smaller shift instead of a refused shard. The clip is the
+    # identity at shift 0 (the range then ends at U_7 = 1).
+    a[7] = min(a[7], 1.0)
     return BenchBurstParams(
         lambda_b=float(a[0]), sigma_d=float(a[1]), ibi_cv=float(a[2]),
         n_frag_mean=float(a[3]), lambda_burst=float(a[4]),

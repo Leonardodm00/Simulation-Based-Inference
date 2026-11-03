@@ -236,24 +236,40 @@ class ShardStream(object):
         return self
 
 
-def enumerate_donor_pairs(donor_ids):
+def enumerate_donor_pairs(donor_ids, well_ids=None):
     """All unordered within-donor index pairs.
+
+    With `well_ids` [block 14, F-ab], only pairs of rows of one donor in two
+    DIFFERENT wells: the replicate pair of plan S2.5 is two wells of one
+    donor, and two windows of one well (one realisation, one nuisance draw)
+    are not two conditionally independent recordings. Without it, every pair
+    of rows of one donor (the behaviour before block 14).
 
     Returns
     -------
     pairs : (P, 2) int64 array, i < j within each row
-    n_singleton_donors : int, donors contributing no pair (the D12 number)
+    n_singleton_donors : int, donors contributing no pair (the D12 number):
+        with `well_ids`, the donors with rows in fewer than two wells
     """
     donor_ids = np.asarray(donor_ids).ravel()
+    wells = None
+    if well_ids is not None:
+        wells = np.asarray(well_ids).ravel()
+        if wells.size != donor_ids.size:
+            raise ValueError("well_ids has %d entries, donor_ids %d"
+                             % (wells.size, donor_ids.size))
     pairs = []
     n_singleton = 0
     for d in np.unique(donor_ids):
         idx = np.flatnonzero(donor_ids == d)
-        if idx.size < 2:
+        if idx.size < 2 or (wells is not None
+                            and np.unique(wells[idx]).size < 2):
             n_singleton += 1
             continue
         for a in range(idx.size):
             for b in range(a + 1, idx.size):
+                if wells is not None and wells[idx[a]] == wells[idx[b]]:
+                    continue
                 pairs.append((int(idx[a]), int(idx[b])))
     if not pairs:
         return np.zeros((0, 2), dtype=np.int64), n_singleton
@@ -307,7 +323,10 @@ class ThreeStreamBatcher(object):
 
     def __init__(self, sim_theta, sim_x, real_x=None, real_cls=None,
                  real_donor=None, surrogate=None, spec=None, seed=0,
-                 met_x=None, met_cls=None, sim_stream=None):
+                 met_x=None, met_cls=None, sim_stream=None, real_well=None):
+        # [block 14, F-ab] `real_well`: the real rows' well ids; when given,
+        # a replicate pair is two rows of one donor in two different wells
+        # (enumerate_donor_pairs). None keeps the pairs by donor alone.
         # [block 5, D-084] `sim_stream` (a ShardStream) replaces the in-memory
         # simulated tensors: the simulated batches then come from the rolling
         # buffer of shards and sim_theta / sim_x are None. Everything else is
@@ -360,6 +379,7 @@ class ThreeStreamBatcher(object):
 
         self.pairs = np.zeros((0, 2), dtype=np.int64)
         self.n_singleton_donors = 0
+        self.pairs_across_wells = real_well is not None
         if real_donor is not None:
             donors = np.asarray(real_donor).ravel()
             # A surrogate row has no well identity, so it cannot be a
@@ -371,8 +391,10 @@ class ThreeStreamBatcher(object):
             # two surrogates became one donor and formed a bogus replicate
             # pair. Masking has no dtype dependence at all.
             keep = np.flatnonzero(~self.surrogate)
+            wells = (None if real_well is None
+                     else np.asarray(real_well).ravel()[keep])
             sub_pairs, self.n_singleton_donors = enumerate_donor_pairs(
-                donors[keep])
+                donors[keep], wells)
             self.pairs = (keep[sub_pairs] if sub_pairs.size
                           else np.zeros((0, 2), dtype=np.int64))
 
@@ -448,7 +470,10 @@ class ThreeStreamBatcher(object):
             "surrogate rows   : %d" % int(self.surrogate.sum()),
             "metric source    : %s" % ("real" if self._met_is_real else "sim"),
             "classes          : %s" % sorted(self.class_index),
-            "replicate pairs  : %d" % self.pairs.shape[0],
+            "replicate pairs  : %d  (%s)" % (
+                self.pairs.shape[0],
+                "two wells of one donor" if self.pairs_across_wells
+                else "any two rows of one donor"),
             "singleton donors : %d   <- D12: pairs are impossible for these"
             % self.n_singleton_donors,
         ])

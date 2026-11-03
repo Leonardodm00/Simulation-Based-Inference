@@ -195,6 +195,91 @@ def sample_prior(spec, n, rng):
     return c, phi
 
 
+def sample_prior_given_classes(spec, c, rng):
+    """[block 12, D-120] Draw phi given each row's class c, from eq. (7)'s
+    component of that class: truncated normals of scale tau_ov about the
+    class centre on the label axes, uniform on the free axes.
+
+    For a cohort whose conditions are fixed by design (a set number of
+    donors per condition) rather than drawn; `sample_prior` is this with c
+    drawn uniformly first, and stays as it is, draw for draw.
+
+    Parameters
+    ----------
+    c : (n,) int in {0, ..., C-1}
+    Returns
+    -------
+    phi : (n, n_latent) float64, strictly inside (0, 1) on every axis.
+    """
+    c = np.asarray(c, dtype=np.int64).ravel()
+    if c.size and (c.min() < 0 or c.max() >= spec.n_classes):
+        raise ValueError("classes must lie in 0..%d" % (spec.n_classes - 1))
+    n = c.size
+    phi = np.empty((n, spec.n_latent), dtype=np.float64)
+    for j, ax in enumerate(spec.label_idx):
+        for cls in range(spec.n_classes):
+            mask = (c == cls)
+            k = int(np.sum(mask))
+            if k:
+                d = _truncnorm(spec.class_centres[cls, j], spec.tau_ov)
+                phi[mask, ax] = d.rvs(size=k, random_state=rng)
+    for ax in spec.free_idx:
+        phi[:, ax] = rng.uniform(0.0, 1.0, size=n)
+    eps = np.finfo(np.float64).eps
+    phi = np.clip(phi, eps, 1.0 - eps)
+    if np.any(phi <= 0.0) or np.any(phi >= 1.0):
+        raise FloatingPointError("phi escaped the open unit box")
+    return phi
+
+
+def regular_centres(lbg, n_classes, n_label_axes, scale):
+    """[block 12, D-120] Class centres on the DSN generator's regular simplex
+    (`_class_center_vectors(C, L, "simplex")` of latent_burst_generator,
+    passed in as `lbg`: equal pairwise distances and centred cosine
+    -1/(C-1)), scaled about 0.5 by `scale`:
+
+        mu_c = 0.5 + scale * (m_c - 0.5).
+
+    The DSN function is private to its module; it is used rather than
+    re-derived so that the bench and the DSN generator share one simplex
+    (F-ba: `simplex_centres` is not regular for C >= 3).
+    """
+    s = float(scale)
+    if not (s > 0.0):
+        raise ValueError("--centre-scale must be > 0")
+    m = np.asarray(lbg._class_center_vectors(int(n_classes), int(n_label_axes),
+                                             "simplex"), dtype=np.float64)
+    if m.shape != (int(n_classes), int(n_label_axes)):
+        raise ValueError("the DSN's centres have shape %r, expected %r"
+                         % (m.shape, (int(n_classes), int(n_label_axes))))
+    return 0.5 + s * (m - 0.5)
+
+
+# [block 11] The class label of a row drawn from the box prior: no class.
+BOX_CLASS = -1
+
+
+def sample_box_prior(spec, n, rng):
+    """[block 11, D-118] Draw (c, phi) from the unit box, the prior of the
+    simulated arm of a synthetic data set: phi i.i.d. uniform on
+    (0, 1)^n_latent, and c = BOX_CLASS (-1, no class) for every row.
+
+    Returns
+    -------
+    c : (n,) int64, all BOX_CLASS
+    phi : (n, n_latent) float64, strictly inside (0, 1) on every axis -- the
+        same clip as `sample_prior`, since a boundary coordinate maps to
+        +/- infinity under `transform_to_unconstrained`.
+    """
+    n = int(n)
+    phi = rng.uniform(0.0, 1.0, size=(n, spec.n_latent))
+    eps = np.finfo(np.float64).eps
+    phi = np.clip(phi, eps, 1.0 - eps)
+    if np.any(phi <= 0.0) or np.any(phi >= 1.0):
+        raise FloatingPointError("phi escaped the open unit box")
+    return np.full(n, BOX_CLASS, dtype=np.int64), phi
+
+
 def prior_log_prob(spec, phi):
     """log p(phi) for the MIXTURE prior, eq. (7).
 

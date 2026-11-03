@@ -3006,6 +3006,158 @@ Claude; Confirmed: no]
   that does not load; the mutations `code` (a constant CODE) and `chain`
   (the chain scan off) each make a check FAIL.
 
+### Block 11: the box prior for arm S (added 2026-11-03; roadmap synth, step S2)
+
+- Modules: `hpc/joint/stage1/build_latent_bank.py` (`--prior`, the draw,
+  the sidecar's latent_spec), `hpc/joint/stage1/latent_sbi_simulator.py`
+  (`sample_box_prior`, `BOX_CLASS`), `hpc/joint/stage3/run_joint_arms.py`
+  (`UNIT_BOX_KINDS`, `unit_box_kind`, the prior block, the dry run, the
+  record's `prior`).
+- Public API: `build_latent_bank.py --prior {mixture, box}` (default
+  `mixture`); `sample_box_prior(spec, n, rng) -> (c, phi)`, c an (n,) int64
+  array all `BOX_CLASS` = -1, phi an (n, n_latent) float64 array;
+  `unit_box_kind(sidecar) -> "campaign" | "box" | None`.
+- Rule (sec. 2.4, arm S; D-118, D-120): with `--prior box`, refused on arm
+  R, each donor's theta_d ~ U((0, 1)^p) i.i.d., clipped to [eps, 1 - eps]
+  with eps the float64 machine epsilon (as `sample_prior`), its wells
+  sharing it; cls = -1 on every row; the sidecar's latent_spec is
+  `LatentSBISpec.to_dict()` plus `"kind": "box"`. The runner reads kind
+  `box` as block 4 reads `campaign`: prior_fn = `campaign_log_prob`, the
+  floors L_0 on the report rows and on arm R's rows are 0, no
+  `LatentSBISpec` is built; the record's `prior` is `box_unit_box`
+  (`campaign_unit_box` and `bench_mixture` as before). The default path is
+  unchanged draw for draw, and its latent_spec has exactly `to_dict()`'s
+  keys, so its contract digest is unchanged.
+- Test oracles (`hpc/joint/stage3/smoke_test_blocks_11_14.py`): B11 box
+  bank -- a KS test against U(0, 1) on each of 6 axes over 400 donors, p >
+  1e-3; cls = {-1}; kind `box`; the two wells of a donor share theta; the
+  refusal on arm R; B11 mixture keys; B14 runner arms -- the record's prior
+  `box_unit_box` and L0 = 0.
+- Data flow: arm S's bank of a synthetic data set (the roadmap's step S4
+  builds it as an array); consumed by the runner (blocks 4-7).
+- Confirmed: yes 2026-11-03 (D-118; D-120: arm S = 20,000 theta on the box,
+  2 wells x 1 window).
+- Status: smoke-tested 2026-11-03 (9 pass, 1 skip; the stage 1, 2 and 3
+  suites and the block 4-6 suite pass, sec. 7 lists what they skip).
+
+### Block 12: arm R's cohort and bank-wide ids (added 2026-11-03; roadmap synth, step S2)
+
+- Modules: `hpc/joint/stage1/build_latent_bank.py` (`--class-centres`,
+  `--centre-scale`, `--donors-per-class`, `class_centres_for`, `ID_STRIDE`,
+  the ids written), `hpc/joint/stage1/latent_sbi_simulator.py`
+  (`sample_prior_given_classes`, `regular_centres`).
+- Public API: `--class-centres {simplex, regular}` (default `simplex`, the
+  bench's `simplex_centres`), `--centre-scale s` (default 1.0; `regular`
+  only), `--donors-per-class N` (default 0: each donor's class drawn as eq.
+  (7) draws it); `regular_centres(lbg, C, L, s) -> (C, L)` float64;
+  `sample_prior_given_classes(spec, c, rng) -> phi`, (n, n_latent) float64;
+  `ID_STRIDE` = 1,000,000.
+- Rule (sec. 2.4, arm R; D-120): the centres are mu_c = 0.5 + s (m_c - 0.5),
+  m_c = `latent_burst_generator._class_center_vectors(C, L, "simplex")` (a
+  private function of the DSN module, used so that the bench and the DSN
+  generator share one simplex; F-ba); with N > 0 the classes are assigned
+  to the donor indices as `rng.permutation(repeat(arange(C), N))` with the
+  shard's generator, and phi_d given c_d is drawn by
+  `sample_prior_given_classes` (TN(mu_{c,k}, tau^2; (0, 1)) on the label
+  axes, U(0, 1) on the free axes); N > 0 requires --n-traces = C N
+  --wells-per-donor and refuses `--prior box` and `--max-records`;
+  `--provider dsn` refuses both centre options (its centres are the DSN
+  generator's own). Bank-wide ids (F-at): the arrays' `donor`, `well` and
+  `batch` of shard k are k * ID_STRIDE + the local id; the nuisance keys and
+  the realisation seeds still use the local ids, so every shard's `x`,
+  `theta`, `cls`, `nu` and `realisation_id` are unchanged byte for byte
+  (shard 0: every array). The design is recorded in latent_spec
+  (`class_centres_mode`, `centre_scale`, `donors_per_class`) only when it
+  departs from the defaults, so a default bank's digest is unchanged.
+- Test oracles: B12 cohort -- 150 donors per class exactly; the centres
+  recomputed from the DSN's simplex (to 1e-12) and equidistant (to 1e-12);
+  per class and label axis, the mean of theta within 5 standard errors of
+  the truncated normal's mean (scipy); every batch of 8 consecutive donors
+  but at most one in ten mixing the classes; the design keys; three
+  refusals. B12 ids -- on two shards, ids in [k ID_STRIDE, (k + 1)
+  ID_STRIDE), none shared, the local layouts equal, `concat_shards` finding
+  12 donors. One-off `[SANDBOX 2026-11-03]`: a default bench shard 0 and 1
+  built by the code before and after this block are equal in every array
+  but shard 1's ids, which are the old ones + 10^6, and have one digest.
+- Data flow: arm R's banks R0 and R3 (step S4); consumed by the runner.
+- Confirmed: yes 2026-11-03 (D-120: the regular simplex at 0.6 of the DSN
+  spacing, 9 donors per condition; D-118's Implies for F-at).
+- Status: smoke-tested 2026-11-03.
+
+### Block 13: the shifted duty clipped at 1 (added 2026-11-03; roadmap synth, step S2)
+
+- Module: `hpc/joint/stage1/bench_burst_provider.py` (`phi_to_bench_params`).
+- Rule (sec. 2.4, the gap (a); D-120; F-av): after the affine map, shifted
+  or not, a_7 = min(a_7, 1). At shift delta = 0.35 pi a donor with
+  theta_7 > 1 - delta gets duty 1, a smaller shift, where `BenchBurstParams`
+  refused the value and the shard; at shift 0 the clip is the identity (the
+  range ends at U_7 = 1). The generator hash `provider_sha256` (the source
+  of the `BenchBurstProvider` class) does not see the function and is
+  unchanged, as is every shard the code could build before: the clip acts
+  only where the old code refused.
+- Test oracles: B13 -- by hand, 0.41825 x 0.05 + 1.06825 x 0.95 = 1.0357
+  clipped to 1, 0.74325 unclipped (to 1e-15), duty 1 at theta_7 = 1 and
+  shift 0; a pi = 0.3 bench cohort of 3 x 9 donors x 2 wells with the three
+  modes builds, 4 of its 27 donors clipped at seed 31.
+- Confirmed: yes 2026-11-03 (D-120).
+- Status: smoke-tested 2026-11-03.
+
+### Block 14: arms A2 and A5 on a cohort (added 2026-11-03; roadmap synth, step S3)
+
+- Modules: `hpc/joint/stage2/joint_batches.py` (`enumerate_donor_pairs(
+  donor_ids, well_ids=None)`, `ThreeStreamBatcher(..., real_well=None)`, the
+  report line), `hpc/joint/stage3/run_joint_arms.py`
+  (`refuse_shared_bench_seed`, `metric_class_count`, `spread_pairs`, the
+  batcher's `real_well`, the A5 refusal, the replicate diagnostic),
+  `hpc/joint/stage3/smoke_test_joint_arms.py` (R5's two seeds).
+- Rule (sec. 2.4, the searches):
+  - F-ab: with well ids, a replicate pair is two rows of one donor in two
+    different wells; the runner passes the real arm's `well` to the batcher
+    (the training term of A5) and to the replicate diagnostic; without well
+    ids `enumerate_donor_pairs` pairs any two rows of one donor, as before.
+    The diagnostic scores at most 64 pairs taken round-robin over the
+    donors (`spread_pairs`; before, the first 64 in donor order) and, when
+    no donor has two wells (a real bank whose donor is its well), falls back
+    to rows of one donor; its block records `pair_kind` and
+    `n_donors_scored`.
+  - F-aa: an arm with lambda_rep > 0 whose batcher holds no pair stops
+    ("has no replicate pair").
+  - F-t: the DSN loss's class count is counted on its source's labels (the
+    real `cls` for A0, A2, A3; the simulated `cls` for A0s, A2s), negative
+    labels excluded; the classes must be 0..C-1 with C >= 2, or the run
+    stops; the count is printed (`metric classes   : C (on the <domain>
+    arm)`).
+  - F-aw: a bench arm S and a bench arm R whose latent_spec seeds are equal
+    stop the run ("built with one --seed"); a bank whose latent_spec has no
+    seed (a campaign bank, block 4) is not checked.
+  - Seen on the other projects' banks (diagnostic and refusal only; the
+    training of arm A1 is unchanged): on a real bank whose donor is its
+    well (DUP15HD as banked) the replicate diagnostic keeps within-well
+    pairs, now labelled and spread over the donors instead of the first 64
+    of the first donor, and arm A5 refuses instead of training on
+    within-well pairs.
+- Test oracles: B14 pairs -- by hand on 8 rows (5 cross-well pairs, one
+  singleton donor; 8 pairs without wells; the round-robin order); B14 class
+  count; B14 runner arms -- A1, A2 and A5 to completion on a box arm S (40
+  donors x 2 wells x 2 windows) and a cohort (3 x 4 donors x 2 wells x 2
+  windows): prior `box_unit_box`, L0 = 0, the pseudo-real endpoint scored,
+  `replicate pairs  : 48  (two wells of one donor)`, 48 pairs over 12
+  donors in the replicate block, `metric classes   : 3 (on the real arm)`
+  for A2 alone; B14 runner refusals -- A5 on one well per donor (and the
+  diagnostic's fallback for A1 there: 12 within-well pairs over 12 donors),
+  A1 on one seed, A2s on a box bank. Regression `[SANDBOX 2026-11-03]`:
+  the Stage 3 suite (R5 on seeds 1 and 2), the stage 2 suites, the block
+  4-6 suite (B4's 12 pairs through the fallback) pass. End to end on the
+  bench generator at the decided shape (180-s windows at 100 Hz, W 18,000;
+  arm S 120 theta x 2 wells x 1 window; R0 and R3 of 3 x 9 donors x 2
+  wells x 6 windows, regular x 0.6, R3 at pi = 0.3 with the three modes):
+  A1, A2 and A5 on R0 and A5 on R3 exit 0 in 13-17 s each at 2 epochs of
+  3 steps, with the DSN backbone, 972 cross-well pairs and the diagnostic's
+  64 over all 27 donors `[SANDBOX 2026-11-03]`.
+- Confirmed: yes 2026-11-03 (D-118's Implies: F-ab, F-aa; D-119's: F-t;
+  D-120: distinct seeds for S and R).
+- Status: smoke-tested 2026-11-03.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
@@ -3032,6 +3184,15 @@ bank_plan_fixture.py`, `sim_reextract/smoke_test_sim_reextract.py`, `extractor/
 smoke_test_stage_d_jobs.py`) on a stand-in `/davinci-1` tree. The first real
 run on davinci is `--dry-run`, then the plain command; the pass lines are
 stated in the README.
+
+Blocks 11-14 (2026-11-03): the sandbox installs torch 2.10.0, sbi 0.27.0,
+zuko 1.6.0 and pytorch-metric-learning 1.6.3 (CPU) and runs the arms at
+2 epochs of 3 steps; the searches and the full banks run on davinci (the
+roadmap's step S5). `hpc/joint/stage1/smoke_test_bench_burst.py` stops at
+its check B4 in the sandbox -- scipy 1.18.1's `kstest(x, "norm",
+args=...)` raises a TypeError, on the code before block 11 as after it --
+so its checks from B4 on were not run here; blocks 11-14 do not touch the
+generator it tests (`bench_burst_generator.py`).
 
 ## 8. Open questions
 

@@ -219,15 +219,17 @@ def test_r5():
     try:
         s1 = os.path.abspath(os.path.join(_HERE, "..", "stage1"))
         env = dict(os.environ)
-        for arm, n, extra in (("S", 40, []), ("R", 16, ["--pi", "0.4",
-                                                        "--gap-modes",
-                                                        "range_shift,drift"])):
+        # [block 14, F-aw] the two arms on two seeds: the runner refuses one
+        for arm, n, extra in (("S", 40, ["--seed", "1"]),
+                              ("R", 16, ["--seed", "2", "--pi", "0.4",
+                                         "--gap-modes",
+                                         "range_shift,drift"])):
             cmd = [sys.executable, os.path.join(s1, "build_latent_bank.py"),
                    "--out-dir", os.path.join(tmp, arm), "--arm", arm,
                    "--n-traces", str(n), "--wells-per-donor", "2",
                    "--n-windows", "4", "--T-win", "1.28", "--fs", "50",
                    "--n-neurons", "20", "--n-classes", "3",
-                   "--provider", "reference", "--seed", "1"] + extra
+                   "--provider", "reference"] + extra
             r = subprocess.run(cmd, cwd=s1, env=env, capture_output=True,
                                text=True)
             if r.returncode:

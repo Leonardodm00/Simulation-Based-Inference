@@ -43,7 +43,13 @@ from latent_gap import GAP_MODES, GapSpec
 from latent_nuisance import NuisanceSpec, sample_nuisance
 from latent_realisation import RealisationSpec
 from latent_sbi_simulator import (LatentSBISpec, provider_sha256, sample_prior,
+                                  sample_box_prior, sample_prior_given_classes,
                                   simulate_windows, simplex_centres)
+
+# [block 12, F-at] The stride between the id ranges of consecutive shards: a
+# shard holds fewer than this many wells, so shard k's ids lie in
+# [k * ID_STRIDE, (k + 1) * ID_STRIDE).
+ID_STRIDE = 1000000
 
 
 def build_parser():
@@ -66,6 +72,28 @@ def build_parser():
     p.add_argument("--n-label-axes", type=int, default=3)
     p.add_argument("--n-classes", type=int, default=3)
     p.add_argument("--tau-ov", type=float, default=0.10)
+    p.add_argument("--prior", choices=("mixture", "box"), default="mixture",
+                   help="theta's prior: the bench's class mixture (eq. 7; the "
+                        "default), or the unit box (arm S of a synthetic data "
+                        "set, D-118: theta i.i.d. uniform on (0, 1)^p, cls -1, "
+                        "latent_spec kind 'box'); box is refused on arm R")
+    p.add_argument("--class-centres", choices=("simplex", "regular"),
+                   default="simplex",
+                   help="the class centres of eq. (7): the bench's own "
+                        "simplex_centres (the default; not a regular simplex "
+                        "for C >= 3, F-ba), or the DSN generator's regular "
+                        "simplex scaled about 0.5 by --centre-scale (D-120); "
+                        "providers reference and bench")
+    p.add_argument("--centre-scale", type=float, default=1.0,
+                   help="s in mu_c = 0.5 + s (m_c - 0.5), with "
+                        "--class-centres regular only (D-120: 0.6)")
+    p.add_argument("--donors-per-class", type=int, default=0,
+                   help="a cohort with exactly this many donors per class, the "
+                        "classes assigned to donor indices by a permutation "
+                        "seeded like the rest of the shard, so batches mix "
+                        "them (D-120); requires --n-traces = C * N * "
+                        "--wells-per-donor; 0 (the default) draws each donor's "
+                        "class uniformly, as eq. (7) does")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--pi", type=float, default=0.0,
                    help="gap severity; must be 0 on arm S")
@@ -85,6 +113,20 @@ def build_parser():
     p.add_argument("--dry-run", action="store_true",
                    help="print the plan and the expected output, write nothing")
     return p
+
+
+def class_centres_for(args, n_label_axes):
+    """[block 12] The class centres of eq. (7) for providers reference and
+    bench: the bench's `simplex_centres` (the default, unchanged), or the DSN
+    generator's regular simplex scaled about 0.5 (D-120)."""
+    if args.class_centres == "regular":
+        from latent_sbi_simulator import load_dsn_modules, regular_centres
+        lbg, _gbd = load_dsn_modules(args.dsn_main_dir)
+        return regular_centres(lbg, args.n_classes, n_label_axes,
+                               args.centre_scale)
+    if args.centre_scale != 1.0:
+        raise SystemExit("--centre-scale needs --class-centres regular")
+    return simplex_centres(args.n_classes, n_label_axes)
 
 
 def make_provider_and_spec(args):
@@ -116,8 +158,7 @@ def make_provider_and_spec(args):
         spec = LatentSBISpec(
             n_latent=len(BENCH_AXES),
             label_idx=BENCH_LABEL_IDX,
-            class_centres=simplex_centres(args.n_classes,
-                                          len(BENCH_LABEL_IDX)),
+            class_centres=class_centres_for(args, len(BENCH_LABEL_IDX)),
             tau_ov=args.tau_ov, n_windows_per_trace=args.n_windows,
             T_win=args.T_win, fs=args.fs, n_neurons=args.n_neurons,
             seed=args.seed)
@@ -126,6 +167,11 @@ def make_provider_and_spec(args):
     if args.provider == "dsn":
         from latent_sbi_simulator import (latent_spec_from_dsn,
                                           load_dsn_modules, DSNBurstProvider)
+        if args.class_centres != "simplex" or args.centre_scale != 1.0:
+            raise SystemExit(
+                "--class-centres / --centre-scale are for providers reference "
+                "and bench: the dsn provider's centres are the DSN "
+                "generator's own (latent_spec_from_dsn)")
         lbg, gbd = load_dsn_modules(args.dsn_main_dir)
         dsn_spec = lbg.LatentSpec(n_classes=args.n_classes,
                                   class_overlap=args.tau_ov,
@@ -146,7 +192,7 @@ def make_provider_and_spec(args):
     spec = LatentSBISpec(
         n_latent=args.n_latent,
         label_idx=tuple(range(args.n_label_axes)),
-        class_centres=simplex_centres(args.n_classes, args.n_label_axes),
+        class_centres=class_centres_for(args, args.n_label_axes),
         tau_ov=args.tau_ov, n_windows_per_trace=args.n_windows,
         T_win=args.T_win, fs=args.fs, n_neurons=args.n_neurons,
         seed=args.seed)
@@ -159,6 +205,10 @@ def main(argv=None):
 
     if args.arm == "S" and args.pi != 0.0:
         raise SystemExit("--pi must be 0 on arm S; the gap defines arm R")
+    if args.prior == "box" and args.arm != "S":
+        raise SystemExit("--prior box is arm S's (the simulated bank over the "
+                         "whole box, D-118); arm R draws its theta from the "
+                         "conditions' prior")
     if args.n_traces % args.wells_per_donor:
         raise SystemExit("--n-traces must be a multiple of --wells-per-donor")
     # theta is drawn per DONOR and each WELL draws its own realisation, so the
@@ -174,6 +224,23 @@ def main(argv=None):
             "(--wells-per-donor is %d): theta is per donor and the realisation "
             "is per well, so wells_per_donor IS the realisation count per "
             "theta." % (args.n_per_theta, args.wells_per_donor))
+    # [block 12] a cohort of a set number of donors per class
+    if args.donors_per_class < 0:
+        raise SystemExit("--donors-per-class must be >= 0")
+    if args.donors_per_class:
+        if args.prior == "box":
+            raise SystemExit("--donors-per-class needs the classes of eq. (7); "
+                             "--prior box has none")
+        need = args.n_classes * args.donors_per_class * args.wells_per_donor
+        if args.n_traces != need:
+            raise SystemExit(
+                "--donors-per-class %d with %d classes and %d wells per donor "
+                "is %d wells, but --n-traces is %d"
+                % (args.donors_per_class, args.n_classes,
+                   args.wells_per_donor, need, args.n_traces))
+        if args.max_records:
+            raise SystemExit("--max-records would unbalance the cohort of "
+                             "--donors-per-class; build the cohort whole")
 
     n_traces = args.n_traces
     if args.max_records:
@@ -201,6 +268,20 @@ def main(argv=None):
         print("  rows                : %d" % (n_traces * spec.n_windows_per_trace))
         print("  W                   : %d" % spec.W)
         print("  provider            : %s" % args.provider)
+        print("  prior               : %s" % (
+            "box (theta uniform on (0, 1)^%d, cls -1)" % spec.n_latent
+            if args.prior == "box" else "mixture (eq. 7)"))
+        if args.prior != "box":
+            print("  classes             : %d, centres %s%s, tau_ov %.3f, %s"
+                  % (spec.n_classes, args.class_centres,
+                     (" x %.3f" % args.centre_scale
+                      if args.class_centres == "regular" else ""),
+                     spec.tau_ov,
+                     ("%d donors per class" % args.donors_per_class
+                      if args.donors_per_class else "drawn per donor")))
+        print("  ids                 : donor, well, batch + %d (shard %d x "
+              "ID_STRIDE)" % (int(args.shard_index) * ID_STRIDE,
+                              args.shard_index))
         print("  gap                 : modes=%s pi=%.3f"
               % (list(gspec.modes), gspec.pi))
         print("  theta_withheld      : %s" % (args.arm == "R"))
@@ -211,11 +292,33 @@ def main(argv=None):
     rng = np.random.default_rng(base_seed)
 
     # One theta per DONOR. This is the line the whole construction rests on.
-    cls_donor, phi_donor = sample_prior(spec, n_donors, rng)
+    # [block 11] --prior box draws it from the unit box instead of eq. (7);
+    # the default path is unchanged, draw for draw.
+    if args.prior == "box":
+        cls_donor, phi_donor = sample_box_prior(spec, n_donors, rng)
+    elif args.donors_per_class:
+        # [block 12, D-120] each class on exactly N donor indices, in the
+        # order of a permutation drawn from this shard's generator, so that
+        # the batches of consecutive donors mix the classes.
+        cls_donor = rng.permutation(np.repeat(np.arange(spec.n_classes),
+                                              args.donors_per_class))
+        phi_donor = sample_prior_given_classes(spec, cls_donor, rng)
+    else:
+        cls_donor, phi_donor = sample_prior(spec, n_donors, rng)
 
+    # The shard-local ids key the nuisance and the realisation seeds, as they
+    # always have (so a shard's windows are unchanged byte for byte); the
+    # arrays carry them offset by the shard (below).
     donors = np.repeat(np.arange(n_donors), args.wells_per_donor)
     wells = np.arange(n_traces)
     batches = donors // max(1, args.donors_per_batch)
+    # [block 12, F-at] bank-wide ids: shard k's donor, well and batch ids are
+    # k * ID_STRIDE + the local id, so the shards of one bank never share an
+    # id and concat_shards needs no offset; shard 0's ids are the local ones.
+    if n_traces >= ID_STRIDE:
+        raise SystemExit("a shard of %d wells is at or above ID_STRIDE %d"
+                         % (n_traces, ID_STRIDE))
+    id_off = int(args.shard_index) * ID_STRIDE
 
     nu, _ = sample_nuisance(nspec, ["b%d" % b for b in batches],
                             ["d%d" % d for d in donors],
@@ -248,9 +351,9 @@ def main(argv=None):
         CL[sl] = int(cls_donor[d])
         NU[sl] = nu[i].astype(np.float32)
         RID[sl] = info["realisation_id"]
-        DON[sl] = d
-        WEL[sl] = int(wells[i])
-        BAT[sl] = int(batches[i])
+        DON[sl] = id_off + d
+        WEL[sl] = id_off + int(wells[i])
+        BAT[sl] = id_off + int(batches[i])
         WIN[sl] = np.arange(J)
         CON[sl] = info["contaminated"]
 
@@ -258,12 +361,26 @@ def main(argv=None):
               "donor": DON, "well": WEL, "batch": BAT, "subregion": SUB,
               "window_idx": WIN, "contaminated": CON}
 
+    # [block 11] a box bank says so in its latent_spec, which is what the
+    # runner reads (run_joint_arms.unit_box_kind); a mixture bank's dict is
+    # unchanged, so its contract digest is too.
+    latent = spec.to_dict()
+    if args.prior == "box":
+        latent["kind"] = "box"
+    # [block 12] the cohort's design, recorded only when it departs from the
+    # defaults, so every earlier bank's digest is unchanged.
+    if args.class_centres != "simplex":
+        latent["class_centres_mode"] = args.class_centres
+        latent["centre_scale"] = float(args.centre_scale)
+    if args.donors_per_class:
+        latent["donors_per_class"] = int(args.donors_per_class)
+
     sidecar = build_sidecar(
         param_names=["phi%d" % k for k in range(spec.n_latent)],
         bounds_theta=[(0.0, 1.0)] * spec.n_latent,
         coord="unit_box", fs=spec.fs, w_size=1.0 / spec.fs, T_win=spec.T_win,
         W=spec.W, scale_convention=scale_conv,
-        latent_spec=spec.to_dict(), nuisance_spec=nspec.to_dict(),
+        latent_spec=latent, nuisance_spec=nspec.to_dict(),
         realisation_spec=rspec.to_dict(), gap_spec=gspec.to_dict(),
         generator_sha256=provider_tag + ":" + provider_sha256(provider),
         theta_withheld=(args.arm == "R"), arm=args.arm,
