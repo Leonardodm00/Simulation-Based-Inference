@@ -606,7 +606,7 @@ class SearchStage(Stage):
         tr.setdefault("env_faults", []).append({"host": host, "job": job["id"], "why": why,
                                                 "utc": CM.utc_now()})
         tr.pop("nll", None)
-        n, stop = CM.note_env_fault(sub, host, why, "search", log, CM.avoid_file(cfg))
+        n, stop = CM.note_env_fault(sub, host, why, self.name, log, CM.avoid_file(cfg))
         if stop is not None:
             tr["status"] = "waiting"
             tr["resume_next"] = True
@@ -710,7 +710,7 @@ class SearchStage(Stage):
                                                  "record": os.path.basename(aside),
                                                  "jobs": list(tr["jobs"]), "utc": CM.utc_now()})
         # the count per host, and the avoid list at AVOID_FAULTS (D-102)
-        n_host, _ = CM.note_node_fault(sub, host, why, "search", log, CM.avoid_file(cfg))
+        n_host, _ = CM.note_node_fault(sub, host, why, self.name, log, CM.avoid_file(cfg))
         tr.pop("nll", None)
         if tr["resubmits"] < int(s["trial"]["max_resubmits"]):
             tr["resubmits"] += 1
@@ -904,7 +904,7 @@ class SearchStage(Stage):
             if s["resubmit_node_faults"]:
                 self._sweep_failed(cfg, st, log)
             # D-102: a host cleared from the avoid list by hand is counted again from now
-            CM.sync_avoid_list(sub, CM.avoid_file(cfg), log, "search")
+            CM.sync_avoid_list(sub, CM.avoid_file(cfg), log, self.name)
             # the throttle: fill the free slots with waiting trials, earliest round first
             # (a revived trial of an earlier round after a --retry comes first)
             running = sum(1 for tr in sub["trials"].values() if tr["status"] == "running")

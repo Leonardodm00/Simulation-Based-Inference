@@ -82,10 +82,21 @@ def paths_of(cfg):
 def shard_globs(cfg):
     """(sim glob, real glob or None): the real bank goes to the runner only
     for a campaign whose arm needs it (S-A1 trains on simulated windows
-    alone, D-039; A2/A5 need the recordings)."""
+    alone, D-039; A2/A5 need the recordings).
+
+    [block 15] On a synthetic data set's run view: the simulated bank and
+    the run's real bank `<tag>_real_<real>`, for every campaign (D-122: the
+    S-A1 trials are scored on the real bank, never trained on it)."""
     d = cfg.data
     tag = d["dataset"]
     sim = os.path.join(d["paths"]["banks_root"], tag + "_sim", "shard_*.npz")
+    if d.get("kind") == "synthetic":
+        run = (d.get("synthetic") or {}).get("run")
+        if not run:
+            raise ValueError("shard_globs: a synthetic data set's banks belong to one of its "
+                             "searches; pass that search's view (stages/synthetic.py RunView)")
+        return sim, os.path.join(d["paths"]["banks_root"], "%s_real_%s" % (tag, run["real"]),
+                                 "shard_*.npz")
     real = os.path.join(d["paths"]["banks_root"], tag + "_real", "shard_*.npz")
     return sim, (real if d["search"]["campaign"] != "S-A1" else None)
 

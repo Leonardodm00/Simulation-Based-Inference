@@ -10,6 +10,10 @@ the sequencer can say so instead of guessing.
 
 Nothing here names a project (D-091): every path comes from the config.
 
+A synthetic data set (block 15) has its own graph, built from its
+configuration by stages/synthetic.py: its banks, then a search and a best
+fit per entry of `synthetic.searches` (specs/SPEC.md sec. 2.1).
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
@@ -216,7 +220,12 @@ class NotBuiltStage(Stage):
 # ---------------------------------------------------------------------------
 
 def default_graph(cfg):
-    """The eight stages, built classes where a block registered one."""
+    """The eight stages, built classes where a block registered one; for a
+    synthetic data set (block 15) the graph its configuration names
+    (stages/synthetic.py, synthetic_set_graph)."""
+    if (cfg.data or {}).get("kind") == "synthetic":
+        from .synthetic import synthetic_set_graph
+        return synthetic_set_graph(cfg)
     graph = []
     for name in STAGE_ORDER:
         cls = BUILT.get(name)

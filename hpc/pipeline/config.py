@@ -13,6 +13,11 @@ value the code cannot carry to the trainer must never look as if it ran.
 
 The pipeline is data-set-agnostic (D-091): nothing here names a project.
 
+A synthetic data set (block 15, `"kind": "synthetic"`) has its own schema,
+SCHEMA_SYNTHETIC: no recordings, no simulation campaign, the banks built by
+the bench generator from `synthetic.*`, one search per entry of
+`synthetic.searches`; `load_config` refuses it unless `synthetic_ok`.
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
@@ -22,7 +27,7 @@ import os
 import re
 
 __all__ = ["Config", "ConfigError", "load_config", "unhonoured_keys",
-           "SCHEMA", "NEEDS_CODE", "CONFIG_VERSION"]
+           "SCHEMA", "SCHEMA_SYNTHETIC", "is_synthetic", "NEEDS_CODE", "CONFIG_VERSION"]
 
 CONFIG_VERSION = 10          # v10, 2026-10-19: D-101 (values only: gp_seed, max_cores)
 
@@ -144,9 +149,52 @@ SCHEMA = (
     ("resources.max_cores", "int>=1"),
 )
 
+# [block 15, D-118..D-123] A synthetic data set (`"kind": "synthetic"`): no
+# recordings and no simulation campaign, so the keys of S1-S4 and the bank's
+# go; the banks are the bench builder's (`synthetic.*`), and every search of
+# `synthetic.searches` carries its own campaign, so search.campaign and
+# search.arm go too. Everything else is the recorded-data schema's.
+_NOT_SYNTHETIC = ("real.", "sim.", "freeze.", "bank.")
+SCHEMA_SYNTHETIC = tuple(
+    (k, kind) for k, kind in SCHEMA
+    if not k.startswith(_NOT_SYNTHETIC)
+    and k not in ("search.campaign", "search.arm", "paths.sbix_dir")) + (
+    ("kind", "synthetic_kind"),
+    ("synthetic.builder.provider", "synthetic_provider"),
+    ("synthetic.builder.fs", "float>0"),
+    ("synthetic.builder.T_win", "float>0"),
+    ("synthetic.builder.n_neurons", "int>=1"),
+    ("synthetic.builder.wells_per_donor", "int>=1"),
+    ("synthetic.builder.donors_per_batch", "int>=1"),
+    ("synthetic.builder.n_classes", "int>=1"),
+    ("synthetic.builder.tau_ov", "float>0"),
+    ("synthetic.builder.class_centres", "synthetic_centres"),
+    ("synthetic.builder.centre_scale", "float>0"),
+    ("synthetic.sim.seed", "int>=0"),
+    ("synthetic.sim.n_theta", "int>=1"),
+    ("synthetic.sim.n_windows", "int>=1"),
+    ("synthetic.sim.traces_per_shard", "int>=1"),
+    ("synthetic.real", "synthetic_real_list"),
+    ("synthetic.searches", "synthetic_search_list"),
+    ("synthetic.bank_job.ncpus", "int>=1"),
+    ("synthetic.bank_job.mem", "mem"),
+    ("synthetic.bank_job.walltime", "walltime"),
+    ("synthetic.bank_job.queue", "str"),
+    ("synthetic.bank_job.max_resubmits", "int>=0"),
+)
+_GAP_MODES = ("range_shift", "drift", "contamination")
+_REAL_KEYS = ("name", "seed", "donors_per_class", "n_windows", "pi", "gap_modes")
+_SEARCH_KEYS = ("name", "campaign", "real")
+
 # D-099: the cap must hold the sequencer's job and the largest single job the
 # configuration sizes (a smaller one would leave that job waiting for ever)
 _SIZED_JOBS = ("search.trial.ncpus", "best_fit.ncpus", "sim.ncpus", "bank.verify.ncpus")
+_SIZED_JOBS_SYNTHETIC = ("search.trial.ncpus", "best_fit.ncpus", "synthetic.bank_job.ncpus")
+
+
+def is_synthetic(data):
+    """[block 15] True for a synthetic data set's configuration."""
+    return isinstance(data, dict) and data.get("kind") == "synthetic"
 
 # Keys whose values the pipeline can only honour once a later block exists:
 # (key, block number, what the block adds, the stages that use the key).
@@ -250,6 +298,19 @@ def _check_value(key, kind, v):
             return bad + "must be a non-empty list of integers >= 0, got %r" % (v,)
         if len(set(v)) != len(v):
             return bad + "the seeds must be distinct, got %r" % (v,)
+    elif kind == "synthetic_kind":
+        if v != "synthetic":
+            return bad + "must be 'synthetic' (or absent, for a recorded data set), got %r" % (v,)
+    elif kind == "synthetic_provider":
+        if v != "bench":
+            return bad + "must be 'bench' (the bench generator, D-119), got %r" % (v,)
+    elif kind == "synthetic_centres":
+        if v not in ("simplex", "regular"):
+            return bad + "must be 'simplex' or 'regular', got %r" % (v,)
+    elif kind == "synthetic_real_list":
+        return _check_list(bad, v, _REAL_KEYS, _check_real_item)
+    elif kind == "synthetic_search_list":
+        return _check_list(bad, v, _SEARCH_KEYS, _check_search_item)
     elif kind == "space_overrides":
         if not isinstance(v, dict):
             return bad + "must be an object axis -> [lo, hi] or [levels]"
@@ -266,15 +327,138 @@ def _check_value(key, kind, v):
     return None
 
 
+# [block 15] the lists of a synthetic configuration: objects with exactly the
+# listed keys, each item checked by its own function
+
+_REAL_NAME = re.compile(r"^[A-Za-z0-9]+$")
+_RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+def _check_list(bad, v, keys, item_check):
+    if not (isinstance(v, list) and v):
+        return bad + "must be a non-empty list of objects, got %r" % (v,)
+    probs = []
+    for i, item in enumerate(v):
+        if not isinstance(item, dict):
+            probs.append("[%d] must be an object, got %r" % (i, item))
+            continue
+        missing = [k for k in keys if k not in item]
+        unknown = sorted(k for k in item if k not in keys)
+        if missing or unknown:
+            probs.append("[%d] must have exactly the keys %s (missing %s, unknown %s)"
+                         % (i, ", ".join(keys), missing or "none", unknown or "none"))
+            continue
+        p = item_check(item)
+        if p:
+            probs.append("[%d] %s" % (i, p))
+    return (bad + "; ".join(probs)) if probs else None
+
+
+def _check_real_item(r):
+    if not (isinstance(r["name"], str) and _REAL_NAME.match(r["name"])):
+        return "name must match [A-Za-z0-9]+, got %r" % (r["name"],)
+    if not (_is_int(r["seed"]) and r["seed"] >= 0):
+        return "%s: seed must be an integer >= 0, got %r" % (r["name"], r["seed"])
+    for k in ("donors_per_class", "n_windows"):
+        if not (_is_int(r[k]) and r[k] >= 1):
+            return "%s: %s must be an integer >= 1, got %r" % (r["name"], k, r[k])
+    if not (_is_num(r["pi"]) and 0.0 <= r["pi"] <= 1.0):
+        return "%s: pi must be a number in [0, 1], got %r" % (r["name"], r["pi"])
+    m = r["gap_modes"]
+    if not (isinstance(m, list) and m and all(isinstance(x, str) for x in m)):
+        return "%s: gap_modes must be a non-empty list of modes, got %r" % (r["name"], m)
+    if any(x not in _GAP_MODES for x in m) or len(set(m)) != len(m):
+        return "%s: gap_modes must be distinct modes among %s, got %r" % (
+            r["name"], ", ".join(_GAP_MODES), m)
+    return None
+
+
+def _check_search_item(q):
+    if not (isinstance(q["name"], str) and _RUN_NAME.match(q["name"])):
+        return "name must match [A-Za-z0-9][A-Za-z0-9_-]*, got %r" % (q["name"],)
+    if q["campaign"] not in _CAMPAIGNS:
+        return "%s: campaign must be one of %s, got %r" % (q["name"], ", ".join(_CAMPAIGNS),
+                                                           q["campaign"])
+    if not (isinstance(q["real"], str) and q["real"]):
+        return "%s: real must name an entry of synthetic.real, got %r" % (q["name"], q["real"])
+    return None
+
+
+def _synthetic_cross_checks(data, problems):
+    """[block 15] The rules between keys of a synthetic configuration, on the
+    keys that passed their own checks (sec. 3.1, the synthetic kind)."""
+    failed = set(p.split(":")[0] for p in problems)
+
+    def ok(*keys):
+        return not any(k in failed for k in keys)
+
+    def obj(d, k):
+        v = d.get(k) if isinstance(d, dict) else None
+        return v if isinstance(v, dict) else {}
+
+    out = []
+    syn = obj(data, "synthetic")
+    b = obj(syn, "builder")
+    sim = obj(syn, "sim")
+    if ok("synthetic.builder.wells_per_donor") and b["wells_per_donor"] < 2:
+        out.append("synthetic.builder.wells_per_donor: must be >= 2 (the builder's two realisations "
+                   "per theta; arm A5's pairs of two wells), got %r" % (b["wells_per_donor"],))
+    if ok("synthetic.builder.n_classes") and b["n_classes"] < 2:
+        out.append("synthetic.builder.n_classes: must be >= 2 (the DSN loss's classes, F-t), got %r"
+                   % (b["n_classes"],))
+    if ok("synthetic.builder.class_centres", "synthetic.builder.centre_scale") \
+            and b["class_centres"] != "regular" and b["centre_scale"] != 1.0:
+        out.append("synthetic.builder.centre_scale: %r needs class_centres 'regular' (the builder "
+                   "scales only the regular simplex)" % (b["centre_scale"],))
+    if ok("synthetic.builder.wells_per_donor", "synthetic.sim.n_theta",
+          "synthetic.sim.traces_per_shard"):
+        wpd, tps = b["wells_per_donor"], sim["traces_per_shard"]
+        n_w = sim["n_theta"] * wpd
+        if tps % wpd or n_w % tps:
+            out.append("synthetic.sim.traces_per_shard: %d must be a multiple of wells_per_donor %d "
+                       "that divides n_theta * wells_per_donor = %d (one donor's wells in one "
+                       "shard; equal shards)" % (tps, wpd, n_w))
+    if ok("synthetic.real", "synthetic.searches", "synthetic.sim.seed"):
+        names = [r["name"] for r in syn["real"]]
+        dup = sorted(set(n for n in names if names.count(n) > 1))
+        if dup:
+            out.append("synthetic.real: the names must be unique, %s repeated" % ", ".join(dup))
+        seeds = [("synthetic.sim", sim["seed"])] + [(r["name"], r["seed"]) for r in syn["real"]]
+        for i in range(len(seeds)):
+            for j in range(i + 1, len(seeds)):
+                if seeds[i][1] == seeds[j][1]:
+                    out.append("synthetic.real: %s and %s share the seed %d; the arms' seeds must "
+                               "be pairwise distinct (D-120, D-121; F-aw)"
+                               % (seeds[i][0], seeds[j][0], seeds[i][1]))
+        runs = [q["name"] for q in syn["searches"]]
+        dup = sorted(set(n for n in runs if runs.count(n) > 1))
+        if dup:
+            out.append("synthetic.searches: the names must be unique, %s repeated" % ", ".join(dup))
+        seen = {}
+        for q in syn["searches"]:
+            if q["real"] not in names:
+                out.append("synthetic.searches: %s names the real bank %r, which synthetic.real "
+                           "does not list (%s)" % (q["name"], q["real"], ", ".join(names)))
+            key = (q["campaign"], q["real"])
+            if key in seen:
+                out.append("synthetic.searches: %s and %s are the same search (%s on %s)"
+                           % (seen[key], q["name"], key[0], key[1]))
+            seen.setdefault(key, q["name"])
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Loading
 # ---------------------------------------------------------------------------
 
 def _strip_docs(obj):
-    """Drop every key starting with '_' recursively (documentation keys)."""
+    """Drop every key starting with '_' recursively (documentation keys),
+    into the objects of lists too (block 15: the synthetic lists)."""
     if isinstance(obj, dict):
         return dict((k, _strip_docs(v)) for k, v in obj.items()
                     if not (isinstance(k, str) and k.startswith("_")))
+    if isinstance(obj, list):
+        return [_strip_docs(x) for x in obj]
     return obj
 
 
@@ -326,11 +510,18 @@ class Config(object):
 
 
 def validate(data):
-    """Every problem of a (documentation-stripped) configuration dict."""
+    """Every problem of a (documentation-stripped) configuration dict: the
+    recorded-data schema, or with `"kind": "synthetic"` the synthetic one
+    and its cross-checks (block 15)."""
+    if "kind" in data and data["kind"] != "synthetic":
+        return [_check_value("kind", "synthetic_kind", data["kind"])]
+    synthetic = is_synthetic(data)
+    schema = SCHEMA_SYNTHETIC if synthetic else SCHEMA
+    sized = _SIZED_JOBS_SYNTHETIC if synthetic else _SIZED_JOBS
     problems = []
     present = set(_walk(data))
-    expected = set(k for k, _ in SCHEMA)
-    for key, kind in SCHEMA:
+    expected = set(k for k, _ in schema)
+    for key, kind in schema:
         try:
             v = _lookup(data, key)
         except KeyError:
@@ -344,20 +535,26 @@ def validate(data):
         # the schema enumerates; only true strangers are unknown.
         if any(e.startswith(key + ".") for e in expected):
             continue
-        problems.append("%s: unknown key (not in the schema)" % key)
-    named = ("resources.max_cores", "driver.ncpus") + _SIZED_JOBS
+        problems.append("%s: unknown key (not in the schema%s)"
+                        % (key, " of the synthetic kind" if synthetic else ""))
+    named = ("resources.max_cores", "driver.ncpus") + sized
     if not any(p.split(":")[0] in named for p in problems):
         cap = int(_lookup(data, "resources.max_cores"))
         drv = int(_lookup(data, "driver.ncpus"))
-        key, size = max(((k, int(_lookup(data, k))) for k in _SIZED_JOBS), key=lambda kv: kv[1])
+        key, size = max(((k, int(_lookup(data, k))) for k in sized), key=lambda kv: kv[1])
         if cap < drv + size:
             problems.append("resources.max_cores: %d cannot hold the sequencer's job (driver.ncpus %d) "
                             "and the largest job (%s %d)" % (cap, drv, key, size))
+    if synthetic:
+        problems.extend(_synthetic_cross_checks(data, problems))
     return problems
 
 
-def load_config(path):
-    """Load and validate; raise ConfigError with every problem."""
+def load_config(path, synthetic_ok=False):
+    """Load and validate; raise ConfigError with every problem. A synthetic
+    data set's configuration (block 15) is refused unless `synthetic_ok`:
+    only the sequencer (pipeline.py) runs one; the tools that read a
+    recorded data set's single search or its S1-S6 refuse it."""
     with open(path, "rb") as fh:
         blob = fh.read()
     try:
@@ -372,6 +569,11 @@ def load_config(path):
     problems = validate(data)
     if problems:
         raise ConfigError(problems)
+    if is_synthetic(data) and not synthetic_ok:
+        raise ConfigError(["%s: a synthetic data set's configuration (\"kind\": \"synthetic\", block "
+                           "15); this tool reads a recorded data set (its single search, its "
+                           "S1-S6) and does not run on one -- the synthetic kind runs through "
+                           "pipeline.py" % path])
     return Config(data, os.path.abspath(path), hashlib.sha256(blob).hexdigest())
 
 

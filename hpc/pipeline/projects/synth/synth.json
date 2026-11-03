@@ -1,0 +1,117 @@
+{
+  "_comment": "The synthetic A2/A5 experiment's pipeline configuration, v1 (2026-11-03; decisions D-118..D-123 of claude/SBI_decisions_and_ideas_log.md, project knowledge; specs/SPEC.md secs. 1.1, 2.4 and blocks 11-17; the roadmap specs/roadmap/synth.yaml, step S4). A synthetic data set (\"kind\": \"synthetic\", block 15): both arms built by the bench generator, the simulated arm S on the whole parameter box and the synthetic 'real' cohorts R0 (pi = 0) and R3 (pi = 0.3), whose theta is recorded and withheld; five searches and their best fits under one command and one core cap (D-123). Values marked [Claude's] are not the user's: they are logistics proposed with this file and can change before the first submission (--dry-run first). Every key is required; a key starting with '_' documents the key after it and is ignored.",
+  "config_version": 10,
+  "kind": "synthetic",
+  "dataset": "synth",
+
+  "_paths": "On davinci (absolute; no '~'), beside Giulia's and LindDUP's: the SBI checkout the jobs run from, and the experiment's own folders. The banks land in <banks_root>/synth_sim and synth_real_<name>; the searches in <tune_root>/<search>/<campaign>; the best fits in <runs_root>/<search>/synth_best.",
+  "paths": {
+    "sbi_dir": "/davinci-1/home/ldellamea/SBI",
+    "work_root": "/davinci-1/home/ldellamea/pipeline/synth",
+    "banks_root": "/davinci-1/home/ldellamea/banks",
+    "runs_root": "/davinci-1/home/ldellamea/runs/synth",
+    "tune_root": "/davinci-1/home/ldellamea/tune_joint_synth"
+  },
+
+  "_envs": "As Giulia's: the sequencer in sbi_export (the standard library only), the bank jobs, the trials and the members in sbi_env (numpy, scipy, torch).",
+  "envs": {"extract": "sbi_export", "train": "sbi_env"},
+
+  "synthetic": {
+    "_builder": "The bench generator (D-119) at the decided shape (D-120): 180-s windows at 100 Hz (W 18,000), 100 units, two wells per donor (D-119), batches of 8 donors (the builder's default, SPEC sec. 2.4), three conditions, tau_ov 0.10, the DSN's regular simplex scaled by 0.6 about the box's centre ('medium', D-120). The centres are recorded in arm S's sidecar too and unused by its box draw.",
+    "builder": {
+      "provider": "bench",
+      "fs": 100.0,
+      "T_win": 180.0,
+      "n_neurons": 100,
+      "wells_per_donor": 2,
+      "donors_per_batch": 8,
+      "n_classes": 3,
+      "tau_ov": 0.10,
+      "class_centres": "regular",
+      "centre_scale": 0.6
+    },
+    "_sim": "Arm S (D-120): 20,000 theta i.i.d. on the box, 2 wells x 1 window each, 40,000 windows. seed 1000 [Claude's; D-120 asks only that the arms' seeds differ]. 2,000 wells per shard [Claude's]: 20 shards of about 120 MB, one job each, about 4 min each at the sandbox's 0.1 s per well.",
+    "sim": {"seed": 1000, "n_theta": 20000, "n_windows": 1, "traces_per_shard": 2000},
+    "_real": "Arm R (D-120, D-121): two independent cohorts of 3 conditions x 9 donors x 2 wells x 6 windows (324 windows each), R0 at pi = 0 and R3 at pi = 0.3 with the three modes of the gap (D-119; at pi = 0 they are the identity). Seeds 2000 and 3000 [Claude's]: pairwise distinct from arm S's and from each other (D-120, D-121).",
+    "real": [
+      {"name": "R0", "seed": 2000, "donors_per_class": 9, "n_windows": 6, "pi": 0.0,
+       "gap_modes": ["range_shift", "drift", "contamination"]},
+      {"name": "R3", "seed": 3000, "donors_per_class": 9, "n_windows": 6, "pi": 0.3,
+       "gap_modes": ["range_shift", "drift", "contamination"]}
+    ],
+    "_searches": "The five searches (D-122, D-123): S-A1 once (its trials scored on R0, its best fit scored on R3 at the evaluation), S-A2 and S-A5 on each cohort. The order is the priority under the core cap: the free cores go to the earliest search and its best fit first.",
+    "searches": [
+      {"name": "S-A1", "campaign": "S-A1", "real": "R0"},
+      {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0"},
+      {"name": "S-A5-R0", "campaign": "S-A5", "real": "R0"},
+      {"name": "S-A2-R3", "campaign": "S-A2", "real": "R3"},
+      {"name": "S-A5-R3", "campaign": "S-A5", "real": "R3"}
+    ],
+    "_bank_job": "[Claude's] One core per shard job (the builder is single-threaded), 8gb, 2 h (about 30 times the sandbox's time for a shard), queue cpu; a job that ends without its shard is submitted again twice at most.",
+    "bank_job": {"ncpus": 1, "mem": "8gb", "walltime": "02:00:00", "queue": "cpu", "max_resubmits": 2}
+  },
+
+  "_split": "Giulia's (D-088): train / selection / report = 85 / 10 / 5 % of arm S's donors.",
+  "split": {"fractions": [0.85, 0.10, 0.05]},
+
+  "search": {
+    "_shape_anchors": "The bench's theta width, 10 (the record job checks it on the bank); embedding_dim 64 as Giulia's and LindDUP's (D-123: the agreed space on the bench's anchors).",
+    "shape_anchors": {"p": 10, "d_theta": 10, "embedding_dim": 64},
+    "_space_overrides": "The agreed default space (D-123, the user: 'All the parameters that we have agreed on to be searched by default'): Giulia's and LindDUP's overrides (D-085, D-086), depth_exponent [3, 5], embedding_size [16, 64], head_pool_ops [0, 1]; the other axes at the code's ranges.",
+    "space_overrides": {"depth_exponent": [3, 5], "embedding_size": [16, 64], "head_pool_ops": [0, 1]},
+    "_flow": "Giulia's: 2-hidden-layer conditioners, 10 bins.",
+    "flow": {"conditioner_hidden_layers": 2, "num_bins": 10},
+    "_budget": "The small budget (D-119): 20 initial points, then 4 GP rounds of 10, 60 trials per search.",
+    "n_initial_points": 20,
+    "gp_rounds": 4,
+    "trials_per_round": 10,
+    "_max_concurrent_trials": "Giulia's 25 per search; the cap (120 cores) holds 14 trials of 8 beside the sequencer's 4, shared by the five searches in their order.",
+    "max_concurrent_trials": 25,
+    "_seeds": "Giulia's: gp_seed 1, train_seed 0 (one donor split of arm S for every search).",
+    "gp_seed": 1,
+    "train_seed": 0,
+    "gp_noise_sigma": null,
+    "_trial": "D-123 (the card's option '8 cores, 32 GB, 24 h'): 8 cores, 32gb, 24 h, queue cpu; 6 passes in 20 epochs and 2 resubmissions, Giulia's (D-088). The budget gate measures the costliest configuration first and stops the run unless it projects within 24 h / 1.5.",
+    "trial": {
+      "passes": 6.0,
+      "epochs": 20,
+      "ncpus": 8,
+      "mem": "32gb",
+      "walltime": "24:00:00",
+      "queue": "cpu",
+      "max_resubmits": 2
+    },
+    "_budget_gate": "Giulia's.",
+    "budget_gate": {"probe_steps": 20, "probe_val_rows": 5000, "safety_factor": 1.5},
+    "_max_total_walltime_h": "Giulia's 400 h (D-090), per search, from its first trial's submission.",
+    "max_total_walltime_h": 400,
+    "walltime_reading": "elapsed",
+    "resubmit_killed": true,
+    "resubmit_node_faults": true
+  },
+
+  "_best_fit": "D-123 (the card's option '5 members, 8 cores each'): an ensemble of 5 members on one shared split (seed 1); 40 passes in 40 epochs, patience 10, 512 posterior draws, Giulia's (D-089, D-087); 32gb as the trials and 120 h [Claude's: about 40 / 6 of the trial's budget; a member killed at its walltime resumes from its checkpoint, twice at most].",
+  "best_fit": {
+    "split_seed": 1,
+    "member_seeds": [1, 2, 3, 4, 5],
+    "passes": 40.0,
+    "epochs": 40,
+    "patience_epochs": 10,
+    "n_posterior_draws": 512,
+    "ncpus": 8,
+    "mem": "32gb",
+    "walltime": "120:00:00",
+    "queue": "cpu",
+    "max_resubmits": 2,
+    "resubmit_node_faults": true
+  },
+
+  "_loader": "[Claude's] The whole of arm S in the buffer (20 shards, about 2.9 GB of windows): exactly i.i.d. batches (D-084's buffer, at its limit).",
+  "loader": {"buffer_shards": 20},
+
+  "_driver": "Giulia's (D-098): the sequencer as a chain of PBS jobs pl_synth, 4 cores, 16gb, 24 h each.",
+  "driver": {"queue": "cpu", "ncpus": 4, "mem": "16gb", "walltime": "24:00:00", "poll_seconds": 60},
+
+  "_resources": "D-120 (the user: '120 are ok'): the experiment's jobs, the sequencer's included, never ask for more than 120 cores at once. Each pipeline counts only its own jobs (Giulia's and LindDUP's caps are separate).",
+  "resources": {"max_cores": 120}
+}

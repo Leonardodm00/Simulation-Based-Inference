@@ -217,7 +217,7 @@ class BestFitStage(Stage):
                 host = CM.host_of_log(text) or "?"
                 m.setdefault("node_faults", []).append({"host": host, "why": why, "job": job["id"],
                                                         "utc": CM.utc_now()})
-                CM.note_node_fault(st["sub"], host, why, "best_fit", log, CM.avoid_file(cfg))
+                CM.note_node_fault(st["sub"], host, why, self.name, log, CM.avoid_file(cfg))
                 if m["resubmits"] < int(b["max_resubmits"]):
                     m["resubmits"] += 1
                     self._resubmit_member(cfg, st, pbs, seed)
@@ -228,8 +228,8 @@ class BestFitStage(Stage):
                     return
                 m["status"] = "failed"
                 m["why"] = ("member seed %d: node fault on %s (%s) after %d resubmission(s); raise "
-                            "best_fit.max_resubmits, then --retry best_fit (finished members are "
-                            "kept)" % (int(seed), host, why, m["resubmits"]))
+                            "best_fit.max_resubmits, then --retry %s (finished members are "
+                            "kept)" % (int(seed), host, why, m["resubmits"], self.name))
                 log("best_fit: member seed %d NODE FAULT on %s (%s); no resubmission left"
                     % (int(seed), host, why))
                 return
@@ -249,9 +249,9 @@ class BestFitStage(Stage):
             return
         m["status"] = "failed"
         m["why"] = ("member seed %d: %d job(s) ended without a record (last %s exit %s); "
-                    "raise best_fit.max_resubmits or fix the cause, then --retry best_fit "
+                    "raise best_fit.max_resubmits or fix the cause, then --retry %s "
                     "(finished members are kept)" % (int(seed), len(m["jobs"]), job["id"],
-                                                     job.get("exit_status")))
+                                                     job.get("exit_status"), self.name))
 
     def _after_env_fault(self, cfg, st, pbs, seed, job, why, text, log):
         """D-111: the member's job ended without a record because it could not
@@ -265,7 +265,7 @@ class BestFitStage(Stage):
         host = CM.host_of_log(text) or job.get("host") or "?"
         m.setdefault("env_faults", []).append({"host": host, "job": job["id"], "why": why,
                                                "utc": CM.utc_now()})
-        n, stop = CM.note_env_fault(sub, host, why, "best_fit", log, CM.avoid_file(cfg))
+        n, stop = CM.note_env_fault(sub, host, why, self.name, log, CM.avoid_file(cfg))
         if stop is not None:
             m["status"] = "waiting"
             m["resume_next"] = True
@@ -427,7 +427,7 @@ class BestFitStage(Stage):
                 sub["fail"] = sub.pop("env_stop")
                 return "finished"
             # D-102: a host cleared from the avoid list by hand is counted again from now
-            CM.sync_avoid_list(sub, CM.avoid_file(cfg), log, "best_fit")
+            CM.sync_avoid_list(sub, CM.avoid_file(cfg), log, self.name)
             self._submit_waiting(cfg, st, pbs)
             statuses = [sub["members"][str(s)]["status"] for s in b["member_seeds"]]
             if any(s_ in ("running", "waiting") for s_ in statuses):

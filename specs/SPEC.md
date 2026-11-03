@@ -53,6 +53,13 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   the runner under `hpc/joint/stage2/` and `stage3/`, the pipeline's
   synthetic kind and `hpc/pipeline/projects/synth/`) are listed per block in
   sec. 5 as they are written (added 2026-11-03)
+- the synthetic kind of the pipeline (blocks 15-17, the roadmap's step S4;
+  added 2026-11-03): `hpc/pipeline/stages/synthetic.py`,
+  `hpc/pipeline/tools/synth_bank_record.py`,
+  `hpc/pipeline/projects/synth/synth.json`,
+  `hpc/pipeline/tests/test_smoke_synthetic.py`, and the changes they make to
+  `config.py`, `stages/__init__.py`, `stages/common.py`, `stages/search.py`,
+  `stages/best_fit.py` and `pipeline.py`
 
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
@@ -136,6 +143,27 @@ with the reason -- never a silent reuse of a half-written artefact.
 For the Giulia data set on 2026-10-15, S1-S6 are done (their artefacts exist
 on davinci; the bank chain's last line `BANK CHAIN DONE` was reported by the
 user), so the first real run starts at S7.
+
+**The synthetic kind (block 15; D-118..D-123; added 2026-11-03).** A
+configuration with `"kind": "synthetic"` (sec. 3.1) has no S1-S6: its graph
+is built from the configuration. With R the entries of `synthetic.real` and
+Q the entries of `synthetic.searches`, its stages are, in this order:
+
+| s | name | dep(s) | done(s): the artefact of record |
+|---|---|---|---|
+| B_S | `sim_bank` | -- | `<banks_root>/<dataset>_sim/BANK_RECORD.json` with a matching `.sha256` whose `build` equals the configuration's (block 16) |
+| B_r, each r in R | `real_bank_<r.name>` | -- | `<banks_root>/<dataset>_real_<r.name>/BANK_RECORD.json`, the same rule |
+| S_q, each q in Q | `search_<q.name>` | B_S, B_{q.real} | `<tune_root>/<q.name>/<q.campaign>/SEARCH_COMPLETE.json` |
+| F_q, each q in Q | `best_fit_<q.name>` | S_q | `<runs_root>/<q.name>/<dataset>_best/BEST_FIT_COMPLETE.json` |
+
+S_q and F_q of one q are adjacent, in the order of `synthetic.searches`.
+They are stages S7 and S8 run on q's view of the configuration:
+`paths.tune_root` and `paths.runs_root` joined with q.name, `search.campaign`
+= q.campaign, the simulated bank B_S and the real bank B_{q.real} -- passed
+for every campaign, S-A1 included (D-122: its trials are scored on R0). The
+sequencer ticks the stages in this order, and every stage's submissions
+share `resources.max_cores` (D-099), so the free cores go to the earliest
+search (and its best fit) first.
 
 ### 2.2 The resume rule
 
@@ -444,6 +472,33 @@ Claude's as the log records (D-085..D-090).
 | `driver.{queue, mem, walltime}` | str | the sequencer's PBS jobs (D-098; v8): queue, PBS memory, `hh:mm:ss` |
 | `driver.{ncpus, poll_seconds}` | int | >= 1: the jobs' cores; seconds between two ticks |
 | `resources.max_cores` | int | >= 1 (D-099; v9): the most cores the pipeline's jobs request at once, queued, held or running, the sequencer's job included; at least `driver.ncpus` + the largest single job of the configuration. Giulia: 300 (D-115, 2026-10-30; 400 under D-101, 200 under D-099); LindDUP: 200 (D-109) |
+
+**The synthetic kind (block 15; added 2026-11-03).** `"kind": "synthetic"`
+selects this schema: every key above except `real.*`, `sim.*`, `freeze.*`,
+`bank.*`, `search.campaign`, `search.arm` and `paths.sbix_dir`, plus
+
+| Key | Type | Constraint |
+|---|---|---|
+| `kind` | str | `synthetic`; absent for a recorded data set (any other value is refused) |
+| `synthetic.builder.provider` | str | `bench` (the bench generator, D-119) |
+| `synthetic.builder.{fs, T_win, tau_ov, centre_scale}` | float | > 0 (Hz, s, --, --); a `centre_scale` other than 1 needs `class_centres` `regular` |
+| `synthetic.builder.{n_neurons, wells_per_donor, donors_per_batch, n_classes}` | int | >= 1; `wells_per_donor` >= 2 (the builder's two realisations per theta; A5's pairs); `n_classes` >= 2 (F-t) |
+| `synthetic.builder.class_centres` | str | `simplex` or `regular` |
+| `synthetic.sim.{seed, n_theta, n_windows, traces_per_shard}` | int | `seed` >= 0, the rest >= 1; `traces_per_shard` a multiple of `wells_per_donor` that divides `n_theta * wells_per_donor` |
+| `synthetic.real` | [object] | non-empty; each exactly {`name` `[A-Za-z0-9]+`, `seed` int >= 0, `donors_per_class` int >= 1, `n_windows` int >= 1, `pi` a number in [0, 1], `gap_modes` a non-empty list of distinct modes among `range_shift`, `drift`, `contamination`}; the names unique |
+| `synthetic.searches` | [object] | non-empty; each exactly {`name` `[A-Za-z0-9][A-Za-z0-9_-]*`, `campaign` in {S-A1, S-A2, S-A5, S-A25}, `real` the name of an entry of `synthetic.real`}; the names unique, no (campaign, real) twice |
+| `synthetic.bank_job.{ncpus, max_resubmits}` | int | >= 1; >= 0 |
+| `synthetic.bank_job.{mem, walltime, queue}` | str | PBS memory, `hh:mm:ss`, a queue |
+
+`synthetic.sim.seed` and the seeds of `synthetic.real` are pairwise distinct
+(D-120, D-121; F-aw), and `resources.max_cores` holds the sequencer's job
+and the largest of `search.trial.ncpus`, `best_fit.ncpus` and
+`synthetic.bank_job.ncpus`. A list item may carry `_` documentation keys
+too. The tools that read a recorded data set's single search or its S1-S6
+(`tools/inputs_check.py`, `perrow_check.py`, `purge_outputs.py`,
+`search_report.py`, `search_reset.py`) refuse a synthetic configuration:
+`load_config(path)` refuses one unless called with `synthetic_ok=True`, as
+`pipeline.py` calls it.
 
 Keys whose code is not built yet (the NEEDS-CODE keys) are refused by
 `pipeline.py run` with the block that builds them named, until that block
@@ -3162,6 +3217,203 @@ Claude; Confirmed: no]
   D-120: distinct seeds for S and R).
 - Status: smoke-tested 2026-11-03.
 
+### Block 15: the synthetic kind -- configuration, graph and run views (added 2026-11-03; roadmap synth, step S4)
+
+- Modules: `hpc/pipeline/config.py` (`SCHEMA_SYNTHETIC`, `is_synthetic`,
+  the synthetic kinds of `_check_value`, `validate`'s cross-checks,
+  `load_config(path, synthetic_ok=False)`, `_strip_docs` into lists),
+  `hpc/pipeline/stages/synthetic.py` (new: `RunView`, `RunSearchStage`,
+  `RunBestFitStage`, `synthetic_set_graph`), `stages/__init__.py`
+  (`default_graph` dispatching on the kind), `stages/common.py`
+  (`shard_globs`' synthetic branch), `stages/search.py` and
+  `stages/best_fit.py` (the stage's own `name` passed to the fault and
+  avoid-list helpers), `pipeline.py` (`_load` with `synthetic_ok=True`).
+- Public API: `config.is_synthetic(data) -> bool`; `config.load_config(
+  path, synthetic_ok=False) -> Config`; `synthetic.RunView(base, run)`: a
+  `Config` with `base`'s path and sha256 whose data is a copy of
+  `base.data` with `paths.tune_root` and `paths.runs_root` joined with
+  `run["name"]`, `search.campaign` = `run["campaign"]` and `synthetic.run`
+  = run; `RunSearchStage(run)`, `RunBestFitStage(run)`;
+  `synthetic_set_graph(cfg) -> [Stage]`, the stages of sec. 2.1's synthetic
+  table in that order.
+- Rule (secs. 2.1 and 3.1, the synthetic kind):
+  - validation reports every problem at once, as for a recorded data set;
+    the cross-checks run on the keys that passed their own checks;
+  - S_q and F_q run the code of S7 and S8 on q's view; a view passed to
+    `RunSearchStage._view` or `RunBestFitStage._view` is returned as it is
+    (S7's and S8's methods call the stage's own `is_done` with the view);
+    their log lines (`search: ...`, `best_fit: ...`) carry the stage's name
+    (`search_<q.name>: ...`), and the fault and avoid-list helpers are given
+    the stage's name, so a stop's hint says `--retry search_<q.name>`;
+  - `shard_globs(view)` = (`<banks_root>/<dataset>_sim/shard_*.npz`,
+    `<banks_root>/<dataset>_real_<q.real>/shard_*.npz`) for every campaign;
+    a synthetic configuration that is not a view raises (a programming
+    error);
+  - on a recorded configuration nothing changes: `default_graph` returns
+    the eight stages, `shard_globs` its pair, every log line is the same
+    (the names passed to the helpers are the literals of before).
+- Test oracles (`hpc/pipeline/tests/test_smoke_synthetic.py`): T15 config --
+  the committed `synth.json` loads; one refusal each for a shared seed (S
+  and R0; R0 and R3), an unknown real bank, a duplicated search name, the
+  same (campaign, real) twice, traces that do not divide, one well per
+  donor, one class, a centre scale without regular centres, pi > 0 without
+  a mode, an unknown mode, a `kind` other than synthetic, a recorded key in
+  a synthetic file, a missing key, a cap below the bank job; every problem
+  of a file with three listed at once; `load_config` refuses the file
+  without `synthetic_ok`; T15 graph -- 13 stage names and dependencies in
+  the order of sec. 2.1, `default_graph` of a recorded configuration the
+  eight of before; the views' folders, campaign, real glob (S-A1's
+  included) and idempotence; the log prefix; T15 dry run -- the committed
+  file's dry run lists the 13 stages, a qsub line per kind of job and no
+  REFUSE line.
+- Data flow: the configuration -> the graph -> the sequencer (block 1).
+- Confirmed: yes 2026-11-03 (D-122: five searches; D-123: one project,
+  one command, one core cap).
+- Status: smoke-tested 2026-11-03 (`test_smoke_synthetic.py`: T15 config,
+  graph and dry run pass; with blocks 16-17, 6 pass and 1 skip in 124 s
+  `[SANDBOX]`). Regression `[SANDBOX 2026-11-03]`: the recorded kind
+  unchanged -- `test_smoke_pipeline` 6 pass 1 skip, `block1b` 6 pass 1
+  skip, `block1c` 6 pass 2 skip (its launcher check needs SBIX_CLONE),
+  `block2` 14 of 15, `block3` 8 of 9, `block7` 7 of 8 (now with torch,
+  sbi and skopt), `block7b` 6 of 7, `block7c` 6 of 7, `block8` 1 of 2,
+  `inputs_check` 7 of 8, `purge` 6 pass 1 skip, `report`, `reset` and
+  `perrow` pass; every skip is a convergence check or the SBIX_CLONE one.
+
+### Block 16: the synthetic banks (added 2026-11-03; roadmap synth, step S4)
+
+- Modules: `hpc/pipeline/stages/synthetic.py` (`SynthBankStage`, `build_of`),
+  `hpc/pipeline/tools/synth_bank_record.py` (new; run in `envs.train`).
+- Public API: `SynthBankStage(bank)`, bank `"sim"` or the name of an entry
+  of `synthetic.real`; `build_of(cfg, bank) -> dict`; `synth_bank_record.py
+  --bank-dir <dir> --expect <json> --out <dir>/BANK_RECORD.json`.
+- Rule (sec. 2.4's arms S and R; D-120's shapes):
+  - B_S: n_w = `n_theta` * `wells_per_donor` wells in K = n_w /
+    `traces_per_shard` shards; shard k = 0, ..., K - 1 is one job of
+    `hpc/joint/stage1/build_latent_bank.py --out-dir <dir> --arm S --prior
+    box --shard-index k --n-traces <traces_per_shard> --n-windows
+    <sim.n_windows> --seed <sim.seed>` and the builder options (`--provider`,
+    `--fs`, `--T-win`, `--n-neurons`, `--wells-per-donor`,
+    `--donors-per-batch`, `--n-classes`, `--tau-ov`, `--class-centres`,
+    `--centre-scale`, from `synthetic.builder`): theta i.i.d. on the box per
+    donor (block 11), bank-wide ids (block 12); the centres are recorded in
+    its latent_spec and unused by the box's draw.
+  - B_r: one shard (k = 0): `--arm R --shard-index 0 --n-traces <n_classes
+    * r.donors_per_class * wells_per_donor> --donors-per-class
+    <r.donors_per_class> --n-windows <r.n_windows> --pi <r.pi> --gap-modes
+    <r.gap_modes joined by commas> --seed <r.seed>` and the builder options.
+  - Every job: `jobs/run_argv.pbs` in `envs.train` (working directory
+    `hpc/joint/stage1` for a shard, `hpc/pipeline` for the record), the
+    resources of `synthetic.bank_job`, the avoid list (D-102), the job
+    names `sb_<bank>_<k>` and `sr_<bank>` (bank `sim` or r.name); a job
+    is submitted only when it fits under
+    `resources.max_cores` (D-099); logs and argv files in
+    `<work_root>/bank_jobs/<stage>/`.
+  - build_of(cfg, b) = {`schema` `synth_bank_build/1`, `bank`, `arm`,
+    `n_shards` K, `rows_per_shard` (per shard, its wells times its
+    windows), `argv` (per shard, the builder's arguments without
+    `--out-dir` and its value; floats as Python's repr)}, all strings and
+    integers.
+    A shard is built when its `.npz` and its `.json` exist and the
+    sidecar's `provenance.argv` without `--out-dir` and its value equals the
+    shard's argv of build_of.
+  - start: a bank folder holding a sidecar of another argv, a shard index
+    >= K, or a `BANK_RECORD.json` whose `build` differs is refused, and
+    nothing in it is overwritten (move it aside or change
+    `paths.banks_root`, then `--retry <stage>`); a shard already built is
+    not built again; an `.npz` without its `.json` is built again, and a
+    `.json` that cannot be read is set aside as `.unreadable<k>` first.
+  - A shard job that ends without its shard: held off a listed node (exit
+    94) or an environment fault (exit 96, PBS's exec faults; D-111) is
+    submitted again, not counted (D-111's streak guard stops the stage);
+    otherwise it is submitted again up to `bank_job.max_resubmits` times,
+    then the stage fails with the job's id, its exit and the tail of its
+    log.
+  - When every shard is built: one job of `tools/synth_bank_record.py`,
+    same resources, which checks the bank and writes the record, or prints
+    `REFUSE: <problem>` lines, writes nothing and exits 4. The checks:
+    exactly the K pairs `shard_%04d.{npz,json}`, k < K (no other index);
+    every zip member's CRC (`ZipFile.testzip`); every sidecar's digest
+    recomputed (`latent_bank.contract_digest`) and one digest for the bank;
+    `arm`; `theta_withheld` true exactly on arm R; `W` = round(T_win f_s);
+    theta's width = `search.shape_anchors.d_theta`; latent_spec `kind`
+    `box` on arm S and absent on arm R; each sidecar's argv = build_of's;
+    per shard, its rows = rows_per_shard and every donor with exactly
+    `wells_per_donor` wells; arm S: every cls = -1; arm R: for c = 0, ...,
+    n_classes - 1, exactly donors_per_class * wells_per_donor * n_windows
+    rows of cls c. The record: {`schema` `synth_bank_record/1`, `bank`,
+    `dir`, `n_shards`, `n_rows`, `W`, `d_theta`, `contract_digest`, `arm`,
+    `latent_kind`, `theta_withheld`, `shards` [{`file`, `sha256`, `bytes`,
+    `rows`, `sidecar`, `sidecar_sha256`, `contract_digest`}], `build`,
+    `created_utc`, `tool`}, written atomically and fsynced, then
+    `BANK_RECORD.json.sha256` the same way; the pass line `SYNTH BANK
+    RECORD OK: <path> (<K> shard(s), <n> rows, digest <16 hex>)`. A record job that refused
+    fails the stage with its lines (it is not resubmitted); one that ended
+    otherwise without the record is resubmitted as a shard job is.
+  - done(b): the record with a matching `.sha256` and its `build` =
+    build_of(cfg, b).
+- Test oracles: T16 banks (the fake PBS, the bench generator at f_s = 10
+  Hz, T_win = 12.8 s, W = 128) -- B_S of 3 shards and B_R0, B_R3 built
+  through their 8 jobs, their records' rows, kinds and builds, R3's pi 0.3
+  and the cohorts' seeds in their sidecars; a re-run on a fresh state skips
+  the three stages and submits nothing; with shard 2 deleted only shard 2
+  and the record are submitted, shards 0 and 1 unchanged byte for byte; a
+  shard the builder cannot write (`IsADirectoryError`) stops the stage
+  after max_resubmits + 1 = 2 jobs with the log's tail quoted, and `--retry
+  sim_bank` after the fix submits only that shard and the record; a job
+  PBS cannot start (Exit_status -2) is submitted again with no resubmission
+  counted; a folder holding a shard of another seed is refused ("holds a
+  bank of another build", the other `--seed` quoted) and its files are
+  unchanged; a corrupt shard makes the record job refuse and the stage
+  stop. T16 record tool, by hand -- a shard of another digest (two digests
+  in one bank), a shard index too many, bytes flipped in an archive (its
+  CRC or its deflate stream), one row of a cohort moved from class 0 to
+  class 1 (7 and 9 rows, 8 expected): each refused with exit 4 and nothing
+  written; the clean banks recorded with their builds.
+- Data flow: `synthetic.*` -> the banks -> S_q and F_q (block 15) -> the
+  runner (blocks 4-7, 11-14).
+- Confirmed: yes 2026-11-03 (D-120: arm S 20,000 theta x 2 wells x 1
+  window, arm R 3 x 9 donors x 2 wells x 6 windows, W 18,000; D-121: two
+  independent cohorts; D-123: the bank jobs' layout is Claude's, below).
+- Status: smoke-tested 2026-11-03 (T16 record 7.9 s and T16 banks 32.4 s
+  pass `[SANDBOX]`; the builder at the decided shape takes about 0.1 s per
+  well of one window, so a shard of 2,000 wells about 3.5 min, and 5 s
+  for 6 wells of 6 windows `[SANDBOX 2026-11-03]`). Not run on davinci.
+
+### Block 17: the synthetic project (added 2026-11-03; roadmap synth, step S4)
+
+- Files: `hpc/pipeline/projects/synth/synth.json`, the README's run sheet
+  `synth`, `hpc/pipeline/tests/test_smoke_synthetic.py`.
+- Values (D-118..D-123; each key's `_` note names its source): the bench
+  generator at f_s = 100 Hz, T_win = 180 s, n_n = 100, 2 wells per donor,
+  batches of 8 donors, 3 classes, tau_ov = 0.10, regular centres x 0.6; arm
+  S: 20,000 theta, 1 window, seed 1000, 2,000 wells per shard (K = 20);
+  R0: seed 2000, 9 donors per class, 6 windows, pi = 0; R3: seed 3000, the
+  same at pi = 0.3; both with the three modes; the five searches S-A1 (on
+  R0), S-A2-R0, S-A5-R0, S-A2-R3, S-A5-R3, in that order; 20 + 4 x 10
+  trials of 8 cores, 32gb, 24 h (6 passes in 20 epochs, Giulia's); the
+  space: Giulia's overrides (depth_exponent [3, 5], embedding_size [16,
+  64], head_pool_ops [0, 1]) on the anchors p = d_theta = 10,
+  embedding_dim 64; the best fit: 5 members of 8 cores (40 passes in 40
+  epochs, patience 10, Giulia's), 32gb and 120 h (Claude's); the loader's
+  buffer the whole arm S (20 shards); the bank jobs 1 core, 8gb, 2 h
+  (Claude's); the sequencer Giulia's (4 cores); `resources.max_cores` 120
+  (D-120).
+- Test oracles: T17 end to end (the training environment: torch, sbi,
+  zuko, scikit-optimize) -- a reduced copy of the project (W 128, a
+  restricted space, 3 trials per search, 2 members) with two searches,
+  S-A1 and S-A2 on R0, runs to `PIPELINE DONE` under the fake PBS: both
+  SEARCH_COMPLETE.json and BEST_FIT_COMPLETE.json in their run folders,
+  every trial record with `L_pseudo_real`, the S-A1 trials given R0's
+  windows and every S-A1 trial arm A1, at least one S-A2 trial arm A2 (the
+  metric term on; gp_seed 3 of the reduced copy), both ensembles of 2
+  members, nothing over the cap in the fake PBS's records.
+- Confirmed: yes 2026-11-03 (D-120, D-122, D-123; the values marked
+  Claude's in the file are proposals, D-123's Statement).
+- Status: smoke-tested 2026-11-03 (T17 end to end in 83.5 s `[SANDBOX]`:
+  S-A1's 3 trials all A1, S-A2's 3 trials with one A2, every trial record
+  with L_pseudo_real, both ensembles of 2 members). Not run on davinci (the
+  roadmap's step S5).
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
@@ -3177,6 +3429,8 @@ Claude; Confirmed: no]
 | `python3 hpc/pipeline/tests/test_smoke_inputs_check.py` | block 9: the inputs check (D-112's and D-113's rows included) | the Sbi-extractor checkout at or after D-113, numpy | about 1 s |
 | `python3 hpc/pipeline/tools/purge_outputs.py --config <file> --what search,best_fit,sim_bank [--confirm <CODE>]` | block 10: the list-then-delete of a project's search, best fit and simulated bank | davinci (the tests: a synthetic project) | seconds to list; minutes to delete hundreds of GB |
 | `python3 hpc/pipeline/tests/test_smoke_purge.py` | block 10's smoke test under the fake PBS | none (stdlib) | about 15 s |
+| `bash hpc/pipeline/run_pipeline.sh --project synth --dry-run` | blocks 15-17: the synthetic experiment's 13 stages and every kind of qsub line; submits nothing | the committed `synth.json`; davinci paths need not exist | seconds |
+| `python3 hpc/pipeline/tests/test_smoke_synthetic.py` | blocks 15-17's smoke test: T15 and T16 under the fake PBS, T17 end to end | numpy and scipy (the bench generator); T17 the training environment (torch, sbi, zuko, scikit-optimize) | about 40 s; 1.5 min more for T17 |
 
 ## 7. Not executable in the sandbox
 

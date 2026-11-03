@@ -948,7 +948,8 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
 
 def _load(path):
     try:
-        return C.load_config(path)
+        # block 15: the sequencer runs a synthetic data set too (its own graph)
+        return C.load_config(path, synthetic_ok=True)
     except C.ConfigError as exc:
         print("REFUSE: the configuration %s has %d problem(s):" % (path, len(exc.problems)))
         for p in exc.problems:
