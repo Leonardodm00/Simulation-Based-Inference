@@ -63,7 +63,7 @@ implementation:
     needs_hpc: false
   - id: S5
     title: "Runs on davinci"
-    summary: "One arm-S bank, two arm-R banks (pi 0 and 0.3), the four searches (S-A2 and S-A5 on each) of about 60 trials, and their best fits."
+    summary: "One arm-S bank, two arm-R banks (pi 0 and 0.3), the five searches (S-A2 and S-A5 on each, one S-A1, D-122) of about 60 trials, and their best fits."
     depends_on: [S4]
     needs_theory: []
     needs_hpc: true
