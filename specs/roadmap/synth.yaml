@@ -1,0 +1,75 @@
+# Roadmap of the subproject synth. Source of truth for the stages and the
+# theory statuses; the implementation statuses are computed by
+# specs/roadmap/roadmap.py (never written by hand).
+#
+# Drafted by `roadmap.py init --plan`: one implementation step S<k> per
+# plan step (a group; its blocks are added while the step is carried out,
+# with `roadmap.py add block`) and one theory group TS<k> per step (its
+# topics with `roadmap.py add topic`). Lines marked DRAFT are guesses.
+schema: 1
+name: synth
+title: "Synthetic A2/A5: arms A2 and A5 through the pipeline on a synthetic cohort (D-118..D-120)"
+repo: Leonardodm00/simulation-based-inference
+branch: sci/pipeline
+spec: specs/SPEC.md
+hpc_branch: hpc-status
+stale_after_hours: 48      # a running HPC marker older than this is reported as failing
+
+theory:
+  - id: TS1
+    title: "Separability of the conditions and the gap"
+    summary: "How separable the conditions are from theta against from the windows (the Bayes ceiling, the reference classifier); the gap modes as misspecification."
+    refs: []
+    depends_on: []
+    # no status line: a group, coloured by its topics (add topic ... --parent TS1)
+  - id: TS3
+    title: "The metric term and the replicate term"
+    summary: "What the metric term and the replicate term pull the encoder toward (E3, E5); the replicate target when the wells share nuisance (F-bm)."
+    refs: []
+    depends_on: []
+    # no status line: a group, coloured by its topics (add topic ... --parent TS3)
+  - id: TS6
+    title: "The endpoints and the paired comparison"
+    summary: "The pseudo-real endpoint, coverage and the comparison paired by donor (E7)."
+    refs: []
+    depends_on: []
+    # no status line: a group, coloured by its topics (add topic ... --parent TS6)
+
+implementation:
+  # ---- steps of the plan (groups; blocks are added under them as they are written)
+  - id: S1
+    title: "Design and SPEC"
+    summary: "The synthetic experiment in full notation in specs/SPEC.md -- arm S on the unit box, arm R's three conditions on donors of two wells, the gap at pi 0 and 0.3, the 180-s windows, the sizes and the seeds -- with the separability check that fixed \"medium\"."
+    depends_on: []
+    needs_theory: [TS1]
+    needs_hpc: false
+  - id: S2
+    title: "Synthetic banks"
+    summary: "The bank builder gains a box prior for arm S that the runner reads as the unit box, balanced conditions on regular centres with a scale, distinct seeds for the two arms (F-aw), bank-wide ids (F-at), and the range shift at pi > 0 with fragment_duty clipped at 1 (F-av)."
+    depends_on: [S1]
+    needs_theory: []
+    needs_hpc: false
+  - id: S3
+    title: "Arms A2 and A5 on a cohort"
+    summary: "A2's class count taken from the metric source (F-t), replicate pairs across the two wells of one donor (F-ab), and a refusal when A5 has no pair (F-aa)."
+    depends_on: [S1]
+    needs_theory: [TS3]
+    needs_hpc: false
+  - id: S4
+    title: "The pipeline's synthetic data set"
+    summary: "A synthetic data-set kind -- S1-S4 not applicable, S5 and S6 build the banks with the bench builder as job arrays -- and the project synth (tag synth, 120 cores)."
+    depends_on: [S2, S3]
+    needs_theory: []
+    needs_hpc: false
+  - id: S5
+    title: "Runs on davinci"
+    summary: "One arm-S bank, two arm-R banks (pi 0 and 0.3), the four searches (S-A2 and S-A5 on each) of about 60 trials, and their best fits."
+    depends_on: [S4]
+    needs_theory: []
+    needs_hpc: true
+  - id: S6
+    title: Evaluation
+    summary: "Per arm and gap level, the NLL of the withheld theta, the coverage and the condition recovered; A2 - A1 and A5 - A1 paired by donor."
+    depends_on: [S5]
+    needs_theory: [TS6]
+    needs_hpc: false
