@@ -22,6 +22,12 @@ theory:
     refs: []
     depends_on: []
     # no status line: a group, coloured by its topics (add topic ... --parent TS1)
+  - id: TS2
+    title: "The synthetic benchmark's generator"
+    summary: "The concepts the synthetic banks rest on: how the bench generator turns theta into a window (the user, 2026-11-03)."
+    refs: []
+    depends_on: []
+    # no status line: a group, coloured by its topics (add topic ... --parent TS2)
   - id: TS3
     title: "The metric term and the replicate term"
     summary: "What the metric term and the replicate term pull the encoder toward (E3, E5); the replicate target when the wells share nuisance (F-bm)."
@@ -34,6 +40,15 @@ theory:
     refs: []
     depends_on: []
     # no status line: a group, coloured by its topics (add topic ... --parent TS6)
+  - id: T2.1
+    title: "How the synthetic traces are generated"
+    summary: "From theta to a window: the affine map to 10 physical burst parameters (7 condition-bearing, 3 free); the spike generator for 100 units (gamma-renewal burst onsets, lognormal envelopes, fragmentation, beta participation, Poisson spikes); the IFR binned at 100 Hz, Gaussian-smoothed and divided by the units, cut into 180-s windows; the nuisance x_obs = A(nu) x + b(nu, t), nested batch : donor : well; the two priors (the box for arm S, the conditions' truncated normals for arm R); the gap's three modes."
+    refs: ["SPEC 2.4", "hpc/joint/stage1/bench_burst_generator.py eqs. (1)-(13)", "bench_burst_provider.py (BENCH_AXES)", latent_sbi_simulator.py, "latent_nuisance.py (eq. N1)", latent_gap.py, "hpc/joint/docs/P7_UPSTREAM_AND_JOBS.md Table P7.2", D-119, D-120]
+    parent: TS2
+    depends_on: []
+    status: open
+    closed_on:
+    decision:
 
 implementation:
   # ---- steps of the plan (groups; blocks are added under them as they are written)
@@ -47,7 +62,7 @@ implementation:
     title: "Synthetic banks"
     summary: "The bank builder gains a box prior for arm S that the runner reads as the unit box, balanced conditions on regular centres with a scale, distinct seeds for the two arms (F-aw), bank-wide ids (F-at), and the range shift at pi > 0 with fragment_duty clipped at 1 (F-av)."
     depends_on: [S1]
-    needs_theory: []
+    needs_theory: [TS2]
     needs_hpc: false
   - id: S3
     title: "Arms A2 and A5 on a cohort"
@@ -57,7 +72,7 @@ implementation:
     needs_hpc: false
   - id: S4
     title: "The pipeline's synthetic data set"
-    summary: "A synthetic data-set kind -- S1-S4 not applicable, S5 and S6 build the banks with the bench builder as job arrays -- and the project synth (tag synth, 120 cores)."
+    summary: "A synthetic data-set kind of the pipeline -- no S1-S6 of a recorded data set; the banks built by the bench builder, one job per shard and a record job; a search and a best fit per entry -- and the project synth (tag synth, 120 cores)."
     depends_on: [S2, S3]
     needs_theory: []
     needs_hpc: false
@@ -106,6 +121,33 @@ implementation:
     block: 14
     parent: S3
     depends_on: [I11, I12]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I15
+    title: "the synthetic kind: configuration, graph and run views"
+    summary: "\"kind\": \"synthetic\" -- its schema and cross-checks (distinct seeds, shard sizes, the real banks the searches name); the graph of 13 stages; each search and best fit is S7 and S8 on its own view (folders, campaign, the simulated bank and its real bank, S-A1 included)."
+    block: 15
+    parent: S4
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I16
+    title: "the synthetic banks"
+    summary: "One job per shard of build_latent_bank.py, then a record job (tools/synth_bank_record.py: CRCs, digests, rows, wells per donor, classes); a shard already built is kept, a folder of another build refused."
+    block: 16
+    parent: S4
+    depends_on: [I11, I12, I13, I15]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I17
+    title: "the project synth"
+    summary: "projects/synth/synth.json (D-118..D-123: arm S in 20 shards, R0 and R3, five searches of 60 trials on 8-core trials, best fits of 5 members, 120 cores) and its run sheet Y1-Y4; end to end on a reduced copy under the fake PBS."
+    block: 17
+    parent: S4
+    depends_on: [I14, I15, I16]
     needs_theory: []
     needs_hpc: false
     jobs: []
