@@ -73,3 +73,39 @@ implementation:
     depends_on: [S5]
     needs_theory: [TS6]
     needs_hpc: false
+  - id: I11
+    title: "the box prior for arm S"
+    summary: "build_latent_bank.py --prior box: theta uniform on the unit box, cls -1, latent_spec kind box; the runner reads it as the unit box (L0 = 0)."
+    block: 11
+    parent: S2
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I12
+    title: "arm R's cohort and bank-wide ids"
+    summary: "Regular class centres from the DSN's simplex with a scale, a set number of donors per class on a seeded permutation, and donor/well/batch ids unique across shards (F-at)."
+    block: 12
+    parent: S2
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I13
+    title: "the shifted duty clipped at 1"
+    summary: "fragment_duty clipped at 1 under the range shift, so a pi = 0.3 bench cohort builds (F-av)."
+    block: 13
+    parent: S2
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I14
+    title: "arms A2 and A5 on a cohort"
+    summary: "Replicate pairs across two wells of one donor (F-ab), A5 refuses without pairs (F-aa), the DSN loss's classes counted on its source (F-t), a refusal when arms S and R share a seed (F-aw)."
+    block: 14
+    parent: S3
+    depends_on: [I11, I12]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
