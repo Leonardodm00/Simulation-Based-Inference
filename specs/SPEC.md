@@ -3381,8 +3381,9 @@ Claude; Confirmed: no]
 
 ### Block 17: the synthetic project (added 2026-11-03; roadmap synth, step S4)
 
-- Files: `hpc/pipeline/projects/synth/synth.json`, the README's run sheet
-  `synth`, `hpc/pipeline/tests/test_smoke_synthetic.py`.
+- Modules: `hpc/pipeline/projects/synth/synth.json`,
+  `hpc/pipeline/tests/test_smoke_synthetic.py`, `hpc/pipeline/README.md`
+  (its run sheet "synth: the first submission").
 - Values (D-118..D-123; each key's `_` note names its source): the bench
   generator at f_s = 100 Hz, T_win = 180 s, n_n = 100, 2 wells per donor,
   batches of 8 donors, 3 classes, tau_ov = 0.10, regular centres x 0.6; arm
