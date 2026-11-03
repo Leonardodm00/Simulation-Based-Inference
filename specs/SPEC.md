@@ -47,6 +47,13 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   `stage4/npe_tune_joint.py` (the runner flags, `--space-overrides`,
   `--gp-seed`, `--runner-extra`, `costliest`)
 
+- the synthetic A2/A5 experiment (D-118..D-120; roadmap
+  `specs/roadmap/synth.yaml`): its formulation is sec. 2.4; the paths its
+  blocks change (the bank builder under `hpc/joint/stage1/`, the batcher and
+  the runner under `hpc/joint/stage2/` and `stage3/`, the pipeline's
+  synthetic kind and `hpc/pipeline/projects/synth/`) are listed per block in
+  sec. 5 as they are written (added 2026-11-03)
+
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
 
@@ -79,6 +86,22 @@ digest or resource may appear in `hpc/pipeline/*.py`, `stages/*.py` or
 `run_pipeline.sh`; every such value is read from the project's configuration
 `hpc/pipeline/projects/<tag>/<tag>.json`. A new data set is a new project
 folder and the same command.
+
+### 1.1 The synthetic A2/A5 experiment (D-118..D-120; added 2026-11-03)
+
+The same command, run on a synthetic data set whose parameters are known, to
+test arms A2 and A5 -- the two joint arms whose extra term reads the real
+windows (A2: the DSN metric loss on the real windows' condition labels; A5:
+the replicate-consistency term on pairs of real windows from two wells of one
+donor) -- end to end, through the search and the best fit (D-118). The data
+set has two arms, both built by the bench generator (sec. 2.4): a simulated
+arm S whose theta covers the whole parameter box, and a synthetic "real" arm
+R of three conditions on donors of two wells, whose theta is recorded and
+withheld from training, at gap severities pi = 0 and pi = 0.3 (D-119, D-120).
+Deliverables: the four searches (S-A2 and S-A5 on each arm-R bank) and their
+best fits, as above for any data set, every trial's record carrying the
+pseudo-real endpoint L_pseudo_real (sec. 2.4) beside the ledger's `nll`. The
+evaluation (the roadmap's step S6) is specified when it starts.
 
 ## 2. Mathematical formulation
 
@@ -198,6 +221,142 @@ e - e_best >= `patience_epochs` and restores e_best's weights. The search
 trials have no patience (every epoch runs; the best epoch is restored); the
 best fit's patience is `best_fit.patience_epochs` (10).
 
+### 2.4 The synthetic A2/A5 experiment (D-118..D-120; added 2026-11-03)
+
+**The generator.** The bench provider (`hpc/joint/stage1/
+bench_burst_provider.py`, the builder's `--provider bench`; D-119). A
+parameter vector theta = (theta_0, ..., theta_9) in the open unit box
+(0, 1)^10 is the coordinate of the affine map
+
+    a_k(theta_k) = L_k (1 - theta_k) + U_k theta_k,   k = 0, ..., 9,
+
+onto axis k's physical range [L_k, U_k] (`BENCH_AXES`). The class-bearing
+axes are K_L = {0, ..., 6} (`burst_rate`, `irregularity`, `ibi_cv`,
+`n_fragments`, `intraburst_rate`, `participation_mean`, `burst_duration`),
+the free axes K_F = {7, 8, 9} (`fragment_duty`, `participation_kappa`,
+`background`). For one well g with parameter theta, realisation seed r_g and
+nuisance vector nu_g, the builder's `simulate_windows` returns J windows
+x_{g,j} in R^W, j = 1, ..., J: the provider's per-unit-mean IFR trace (the
+spikes of the burst process at a(theta), smoothed by `compute_ifr_trace`
+with a 40-ms Gaussian and divided by the n_n = 100 units) at f_s = 100 Hz,
+cut into J disjoint windows of T_win = 180 s, W = f_s T_win = 18,000
+samples (D-120), then mapped by the observation model
+
+    x_obs(t) = A(nu_g) x(t) + b(nu_g, t)        (`latent_nuisance.py`, eq. N1)
+
+with the default `NuisanceSpec`, nested batch : donor : well (batches of 8
+consecutive donor indices). In arm R at pi > 0 the gap acts before the
+nuisance (below).
+
+**Arm S, the simulated bank.** N_S = 20,000 parameter vectors theta_d,
+d = 1, ..., N_S, i.i.d. from the box prior
+
+    p_S(theta) = 1  for theta in (0, 1)^10   (D-118, D-120);
+
+each "donor" d of arm S has two wells at theta_d, each with its own
+realisation seed, and J_S = 1 window per well: 2 N_S J_S = 40,000 windows;
+pi = 0. Every row's condition label is cls = -1 (arm S has no conditions).
+The bank's sidecar declares the box prior (`latent_spec["kind"]` = `box`),
+which the runner reads as block 4 reads `campaign`: no `LatentSBISpec`, the
+prior floor L_0 = 0 on the report rows (the roadmap's step S2).
+
+**Arm R, the synthetic cohort.** C = 3 conditions c in {0, 1, 2}, n_c = 9
+donors per condition, N_R = 27 donors (D-120). The condition c_d of donor d
+is fixed by the design, not drawn: each condition is assigned to exactly 9
+donor indices, in the order of a permutation seeded by the arm's seed, so
+that the batches of 8 consecutive donor indices mix the conditions. For each
+fixed c in {0, 1, 2}, independently over the donors d with c_d = c,
+
+    theta_d | c_d = c  ~  p_R(theta | c)
+        = prod_{k in K_L} TN(theta_k ; mu_{c,k}, tau^2 ; (0, 1))
+          * prod_{k in K_F} 1{0 < theta_k < 1},
+
+where TN(. ; mu, tau^2 ; (0, 1)) is the density of a normal law with mean mu
+and standard deviation tau truncated to (0, 1) and renormalised, tau =
+tau_ov = 0.10, and the condition centres are (D-120)
+
+    mu_c = 0.5 * 1_7 + s (m_c - 0.5 * 1_7),   s = 0.6,
+
+with 1_7 the all-ones vector of R^7 and m_c in [0, 1]^7 the DSN generator's
+regular simplex centres for three classes on seven axes
+(`hpc/dsn/latent_burst_generator.py`, `_class_center_vectors(3, 7,
+"simplex")`): for every c != c', ||m_c - m_c'||_2 = 0.7366 and the centred
+centres have cosine -1/2, so ||mu_c - mu_c'||_2 = 0.442 `[SANDBOX
+2026-11-03]`. Each donor has two wells at theta_d, each with its own
+realisation seed, and J_R = 6 windows per well (1080 s per well; DUP15HD's
+six windows per subregion trace): 2 N_R = 54 wells, 2 N_R J_R = 324
+windows. Every row carries cls = c_d. The bank records theta and marks it
+withheld (`theta_withheld` true): the runner never trains on arm R's theta
+and scores the pseudo-real endpoint on it.
+
+**The gap (D-119, D-120).** Two arm-R banks: R0 at pi = 0, and R3 at
+pi = 0.3 with the three modes of `latent_gap.py`:
+
+- (a) range shift: for k in K_F the range is displaced by
+  delta = 0.35 pi = 0.105 of its width w_k = U_k - L_k,
+  a_k = (L_k + delta w_k)(1 - theta_k) + (U_k + delta w_k) theta_k, and for
+  `fragment_duty` (k = 7) the shifted value is clipped at 1:
+  a_7 = min((L_7 + delta w_7)(1 - theta_7) + (U_7 + delta w_7) theta_7, 1)
+  (D-120), so a donor with theta_7 > 0.895 gets duty 1 and a smaller shift;
+- (c) drift: for each well g one phase phi_g ~ U(0, 2 pi), and
+  x_g(t) <- x_g(t) + 0.5 pi xbar_g sin(2 pi t / (120 s) + phi_g) over the
+  well's absolute time t, xbar_g the mean of x_g over its J_R windows;
+- (d) contamination: for each well g, n_g = floor(f J_R) + B_g of its
+  windows, f = 0.2 pi = 0.06, B_g ~ Bernoulli(f J_R - floor(f J_R)) -- at
+  J_R = 6 one window with probability 0.36, none otherwise -- chosen
+  uniformly; a chosen window becomes max(u x + e, 0) elementwise, u ~
+  U(2, 5), e_t ~ N(0, sd(x)^2) i.i.d. over its samples t.
+
+At pi = 0 every mode is the identity (`GapSpec.active`). The gap acts on
+arm R only (the builder refuses pi != 0 on arm S).
+
+**Seeds (D-120; F-aw).** Arm S is built with seed s_S and arm R with
+s_R != s_S. [Open, sec. 8: R0 and R3 with one s_R, so that they hold the
+same donors, theta, conditions, nuisance and realisation seeds and differ
+only by the gap.]
+
+**Separability, the reason for s (D-119, D-120).** For a cohort built as
+above at pi = 0, three accuracies of the condition, chance being 1/3:
+
+- the theta ceiling A_theta = E[ max_c P(c_d = c | theta_d) ], the Bayes
+  accuracy of the condition given the donor's theta under equal condition
+  probabilities; by the data-processing inequality along
+  c_d -> theta_d -> x (the nuisance independent of (c_d, theta_d)), no
+  classifier of a donor's windows exceeds it;
+- the one-window accuracy A_win of a fixed reference classifier: the
+  runner's eight fixed window statistics (`FixedStatsSummary`, arm A_ref's
+  summary), standardised, multinomial logistic regression, five folds
+  grouped by donor;
+- the one-donor accuracy A_don: the same classifier's log-probabilities
+  summed over the donor's 2 J_R windows.
+
+At s = 0.6, tau = 0.10 and 180-s windows, over six distinct cohorts of 72 to
+150 donors, A_win = 0.648-0.730 (mean 0.68), A_don = 0.650-0.825 (mean 0.73)
+and A_theta = 0.973-0.976 `[SANDBOX 2026-11-03]`; "medium" (D-119) is this
+setting -- one window near 2/3, halfway between chance and certainty. A
+cohort of 27 donors is one draw of this law, so the built R0's own
+separability is measured on the bank and recorded (the roadmap's step S2).
+
+**The searches (D-119, D-120).** For each arm-R bank b in {R0, R3} and each
+campaign k in {S-A2, S-A5}, one search (sec. 2.3) with arm S as the
+simulated stream and b's windows as the real stream: n_initial_points = 20,
+gp_rounds = 4, trials_per_round = 10, so N = 60 trials, then the best fit of
+the search. In S-A2 a trial with dsn_on = 1 adds lambda_dsn L_DSN on b's
+windows labelled by condition, over the C = 3 classes counted from b's
+labels (F-t; the roadmap's step S3); in S-A5 a trial with rep_on = 1 adds
+lambda_rep L_rep on pairs of windows from the two different wells of one
+donor of b (F-ab; step S3), and a cohort with no such pair refuses (F-aa); a
+trial with dsn_on = 0 (S-A2) or rep_on = 0 (S-A5) is arm A1. The project's
+core cap is 120 (D-120). Every trial's record carries L, the simulated
+report split's NLL (the ledger's `nll`, sec. 2.3), and the pseudo-real
+endpoint
+
+    L_pseudo_real = (1/n_R) sum_{i=1}^{n_R} -log q_omega(theta_{d(i)} | h_psi(x_i)),
+
+over the n_R windows x_i of b, d(i) the donor of window i and theta_{d(i)}
+its withheld parameter. [Open, sec. 8: which of the two the search ranks
+on.]
+
 ### Notation
 
 | Symbol | Meaning | Type / shape | Units |
@@ -210,6 +369,14 @@ best fit's patience is `best_fit.patience_epochs` (10).
 | q_omega(theta \| h_psi(x)) | the flow's density at theta given the encoder's summary of x | density on (0, 1)^p | -- |
 | l_{m,i}, L_bar | member m's NLL on report row i; the ensemble's mean NLL | float64 | nats per row |
 | L_sel(e), e_best | selection-split NLL after epoch e; the best epoch | float; int | nats per row; epochs |
+| theta_k, a_k, [L_k, U_k] | sec. 2.4: bench coordinate k, its physical value, its range | float in (0, 1); per axis | -- ; the axis's units |
+| K_L, K_F | the bench's class-bearing and free axes | index sets {0..6}, {7, 8, 9} | -- |
+| c, c_d, C, n_c | a condition; donor d's condition; the number of conditions; donors per condition | int | -- |
+| mu_c, m_c, s, tau | condition c's centre; the DSN's regular centre; the spacing factor; tau_ov | (7,), (7,), float, float | -- (unit box) |
+| N_S, N_R, J_S, J_R | arm S's and arm R's donors; windows per well in each arm | int | donors; windows |
+| pi, delta, f | gap severity; range shift; contaminated fraction | float | --; fraction of an axis's width; fraction of windows |
+| A_theta, A_win, A_don | theta ceiling; one-window and one-donor accuracy of the condition | float in [0, 1] | -- |
+| L_pseudo_real, n_R | mean NLL of arm R's withheld theta over its windows; arm R's windows | float; int | nats per row; windows |
 
 ## 3. Data contracts
 
@@ -2863,6 +3030,21 @@ run on davinci is `--dry-run`, then the plain command; the pass lines are
 stated in the README.
 
 ## 8. Open questions
+
+- The synthetic experiment's search objective (sec. 2.4; raised 2026-11-03,
+  the roadmap's step S1): the search ranks trials on the ledger's `nll`, the
+  simulated report split's NLL L (`npe_tune_joint.py:623`, `rec["nll"] =
+  run["L"]`), which A2's and A5's real-data terms do not improve by
+  construction; the pseudo-real endpoint L_pseudo_real is recorded for every
+  trial and ranks nothing. Either the searches rank on L, as the pipeline
+  does on real data (whose theta is unknown), and the evaluation reads
+  L_pseudo_real of every trial and of the best fits; or they rank on
+  L_pseudo_real of a selection part of arm R's donors and the evaluation
+  reads the rest (an oracle only synthetic data allow). The user's call.
+- R0 and R3 on one arm-R seed (sec. 2.4; raised 2026-11-03): with one s_R
+  the two banks hold the same donors, theta, conditions, nuisance and
+  realisation seeds, and the comparison of pi = 0 with pi = 0.3 is paired
+  by donor; with two seeds they are independent cohorts. The user's call.
 
 - D-111's residuals (raised 2026-10-29): a driver job PBS cannot start
   while no stage job runs (between two stages, or once every trial of the
