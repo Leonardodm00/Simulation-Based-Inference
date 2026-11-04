@@ -3378,6 +3378,9 @@ Claude; Confirmed: no]
   pass `[SANDBOX]`; the builder at the decided shape takes about 0.1 s per
   well of one window, so a shard of 2,000 wells about 3.5 min, and 5 s
   for 6 wells of 6 windows `[SANDBOX 2026-11-03]`). Not run on davinci.
+  [2026-11-04: run on davinci 2026-11-03, the three banks built and
+  recorded -- 20 shards and 40,000 rows for arm S, 324 rows each for R0
+  and R3, every record's sha256 matching its sidecar `[CLUSTER]`.]
 
 ### Block 17: the synthetic project (added 2026-11-03; roadmap synth, step S4)
 
@@ -3391,11 +3394,16 @@ Claude; Confirmed: no]
   R0: seed 2000, 9 donors per class, 6 windows, pi = 0; R3: seed 3000, the
   same at pi = 0.3; both with the three modes; the five searches S-A1 (on
   R0), S-A2-R0, S-A5-R0, S-A2-R3, S-A5-R3, in that order; 20 + 4 x 10
-  trials of 8 cores, 32gb, 24 h (6 passes in 20 epochs, Giulia's); the
+  trials of 8 cores, 96gb, 24 h (6 passes in 20 epochs, Giulia's)
+  [amended 2026-11-04, D-125: 32gb at first; on davinci the budget gate
+  measured the costliest configuration's peak at 19.0, 32.4 and 59.3 GB
+  for batch 256, 512 and 1024 and its trial within 4.5 h, x 1.5 within
+  6.7 h; 96gb is 1.5 x 59.3 GB rounded up to 8 GB]; the
   space: Giulia's overrides (depth_exponent [3, 5], embedding_size [16,
   64], head_pool_ops [0, 1]) on the anchors p = d_theta = 10,
   embedding_dim 64; the best fit: 5 members of 8 cores (40 passes in 40
-  epochs, patience 10, Giulia's), 32gb and 120 h (Claude's); the loader's
+  epochs, patience 10, Giulia's), 96gb (D-125; 32gb at first) and 120 h
+  (Claude's); the loader's
   buffer the whole arm S (20 shards); the bank jobs 1 core, 8gb, 2 h
   (Claude's); the sequencer Giulia's (4 cores); `resources.max_cores` 120
   (D-120).
@@ -3414,6 +3422,13 @@ Claude; Confirmed: no]
   S-A1's 3 trials all A1, S-A2's 3 trials with one A2, every trial record
   with L_pseudo_real, both ensembles of 2 members). Not run on davinci (the
   roadmap's step S5).
+  [2026-11-04: submitted on davinci 2026-11-03 (step S5): the banks built,
+  then the run stopped at search_S-A2-R0's budget gate on memory (59.3 GB
+  against 32gb), the other four gates undecided `[CLUSTER]`; D-125's
+  96gb; the restart (`--retry search_S-A2-R0 --accept-config-change`,
+  README Z1-Z3) rehearsed on the stand-in in that situation: the probe
+  files reused, no probe job submitted twice, `PIPELINE DONE` in 76 s
+  `[SANDBOX]`.]
 
 ## 6. Pipeline entry points
 

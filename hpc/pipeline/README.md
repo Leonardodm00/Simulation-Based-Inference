@@ -403,7 +403,7 @@ included, starts through the job protocol `jobs/stage_job.sh` (D-113).
 A2/A5 experiment (D-118..D-123) -- arm S, 20,000 theta on the box in 20 shards; the
 cohorts R0 (pi = 0) and R3 (pi = 0.3) of 3 conditions x 9 donors x 2 wells x 6 windows;
 the five searches S-A1, S-A2-R0, S-A5-R0, S-A2-R3, S-A5-R3 of 20 + 4 x 10 trials (8 cores,
-32gb, 24 h) and their best fits of 5 members; `resources.max_cores` 120 (D-120). The
+96gb, 24 h; 96gb since 2026-11-04, D-125, was 32gb) and their best fits of 5 members (96gb too); `resources.max_cores` 120 (D-120). The
 values marked `[Claude's]` in its `_` keys are logistics proposed with the file (seeds,
 shard size, the bank jobs, the members' memory and walltime, the loader's buffer).
 
@@ -745,6 +745,32 @@ cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth
 #     done or skipped". A STOP names the stage and its cause (a bank's: the shard, its job and its log's last
 #     lines, or the record tool's REFUSE lines); after the fix: Y2 and Y3 with --retry <stage>
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project synth --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/synth/pipeline.log
+```
+
+### synth: the restart after the budget gate (2026-11-04)
+
+The first submission stopped at `search_S-A2-R0`'s budget gate: the costliest configuration
+peaks at 59.3 GB against `search.trial.mem` 32gb. The five gates measured the same (19.0, 32.4
+and 59.2-59.3 GB at batch 256, 512 and 1024; every trial projected within 6.7 h with the
+safety factor, against 24 h). D-125 raises the trials' and the members' memory to 96gb (1.5 x
+59.3 GB, rounded up to 8 GB). The restart reuses the 15 probe files: no probe job is submitted
+again, and each gate decides at the sequencer's first ticks (rehearsed on the stand-in in this
+situation, one search failed at its gate and one with its probes ended unread: the same two
+lines, then `PIPELINE DONE`, four probe jobs in all).
+
+```
+# Z1. the code: step 1 above; pass line PIPELINE CODE OK, git log at the D-125 commit or later
+
+# Z2. the dry run; pass: exit 0, no REFUSE or STOP line, "search_S-A2-R0 reset to pending (--retry)",
+#     the other four searches "running", and "search_<q>: would run" for all five
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --dry-run --retry search_S-A2-R0 --accept-config-change 2>&1 | tee ~/pipeline_synth_dry2.log | grep -E "REFUSE|STOP|FAILED|reset to pending|would|\| search" ; echo "exit ${PIPESTATUS[0]}"
+
+# Z3. the run; pass lines: "search_S-A2-R0: --retry accepted; the first sequencer job resets it to pending",
+#     then "SUBMITTED the sequencer: job <id> (pl_synth)"
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --retry search_S-A2-R0 --accept-config-change
+
+# then Y4 at any time; next in the log: five "search_<q>: budget gate passed: worst projected ... <= 24:00:00;
+# peak 59.xx GB <= 96gb", then each search's round 0 (at most 14 trials at once under the 120-core cap)
 ```
 
 ## Tests

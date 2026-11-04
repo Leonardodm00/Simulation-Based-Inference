@@ -1,5 +1,5 @@
 {
-  "_comment": "The synthetic A2/A5 experiment's pipeline configuration, v1 (2026-11-03; decisions D-118..D-123 of claude/SBI_decisions_and_ideas_log.md, project knowledge; specs/SPEC.md secs. 1.1, 2.4 and blocks 11-17; the roadmap specs/roadmap/synth.yaml, step S4). A synthetic data set (\"kind\": \"synthetic\", block 15): both arms built by the bench generator, the simulated arm S on the whole parameter box and the synthetic 'real' cohorts R0 (pi = 0) and R3 (pi = 0.3), whose theta is recorded and withheld; five searches and their best fits under one command and one core cap (D-123). Values marked [Claude's] are not the user's: they are logistics proposed with this file and can change before the first submission (--dry-run first). Every key is required; a key starting with '_' documents the key after it and is ignored.",
+  "_comment": "The synthetic A2/A5 experiment's pipeline configuration, v2 (v1 2026-11-03; v2 2026-11-04, D-125: the trials' and the members' memory 96gb, was 32gb; decisions D-118..D-123 and D-125 of claude/SBI_decisions_and_ideas_log.md, project knowledge; specs/SPEC.md secs. 1.1, 2.4 and blocks 11-17; the roadmap specs/roadmap/synth.yaml, step S4). A synthetic data set (\"kind\": \"synthetic\", block 15): both arms built by the bench generator, the simulated arm S on the whole parameter box and the synthetic 'real' cohorts R0 (pi = 0) and R3 (pi = 0.3), whose theta is recorded and withheld; five searches and their best fits under one command and one core cap (D-123). Values marked [Claude's] are not the user's: they are logistics proposed with this file and can change before the first submission (--dry-run first). Every key is required; a key starting with '_' documents the key after it and is ignored.",
   "config_version": 10,
   "kind": "synthetic",
   "dataset": "synth",
@@ -71,12 +71,12 @@
     "gp_seed": 1,
     "train_seed": 0,
     "gp_noise_sigma": null,
-    "_trial": "D-123 (the card's option '8 cores, 32 GB, 24 h'): 8 cores, 32gb, 24 h, queue cpu; 6 passes in 20 epochs and 2 resubmissions, Giulia's (D-088). The budget gate measures the costliest configuration first and stops the run unless it projects within 24 h / 1.5.",
+    "_trial": "D-123 (the card's option '8 cores, 32 GB, 24 h'): 8 cores, 24 h, queue cpu; 96gb since 2026-11-04 (D-125: 1.5 x the peak the budget gate measured on davinci, 59.3 GB at batch 1024, rounded up to 8 GB; 32gb at first); 6 passes in 20 epochs and 2 resubmissions, Giulia's (D-088). The budget gate measures the costliest configuration first and stops the run unless it projects within 24 h / 1.5.",
     "trial": {
       "passes": 6.0,
       "epochs": 20,
       "ncpus": 8,
-      "mem": "32gb",
+      "mem": "96gb",
       "walltime": "24:00:00",
       "queue": "cpu",
       "max_resubmits": 2
@@ -90,7 +90,7 @@
     "resubmit_node_faults": true
   },
 
-  "_best_fit": "D-123 (the card's option '5 members, 8 cores each'): an ensemble of 5 members on one shared split (seed 1); 40 passes in 40 epochs, patience 10, 512 posterior draws, Giulia's (D-089, D-087); 32gb as the trials and 120 h [Claude's: about 40 / 6 of the trial's budget; a member killed at its walltime resumes from its checkpoint, twice at most].",
+  "_best_fit": "D-123 (the card's option '5 members, 8 cores each'): an ensemble of 5 members on one shared split (seed 1); 40 passes in 40 epochs, patience 10, 512 posterior draws, Giulia's (D-089, D-087); 96gb as the trials (D-125; 32gb at first) and 120 h [Claude's: about 40 / 6 of the trial's budget; a member killed at its walltime resumes from its checkpoint, twice at most].",
   "best_fit": {
     "split_seed": 1,
     "member_seeds": [1, 2, 3, 4, 5],
@@ -99,7 +99,7 @@
     "patience_epochs": 10,
     "n_posterior_draws": 512,
     "ncpus": 8,
-    "mem": "32gb",
+    "mem": "96gb",
     "walltime": "120:00:00",
     "queue": "cpu",
     "max_resubmits": 2,
