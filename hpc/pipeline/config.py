@@ -184,7 +184,13 @@ SCHEMA_SYNTHETIC = tuple(
 )
 _GAP_MODES = ("range_shift", "drift", "contamination")
 _REAL_KEYS = ("name", "seed", "donors_per_class", "n_windows", "pi", "gap_modes")
-_SEARCH_KEYS = ("name", "campaign", "real")
+_SEARCH_KEYS = ("name", "campaign", "real", "alt_best_fit")
+
+# [block 18, D-126] the campaigns of two arms, A1 and the arm of the extra
+# term: a search of one of them may fit the best trial of the arm its
+# finalist is not (`alt_best_fit`, the stage best_fit_alt_<q>). S-A1 has one
+# arm; S-A25's other arm is not defined.
+ALT_ARMS = {"S-A2": ("A1", "A2"), "S-A5": ("A1", "A5")}
 
 # D-099: the cap must hold the sequencer's job and the largest single job the
 # configuration sizes (a smaller one would leave that job waiting for ever)
@@ -381,6 +387,12 @@ def _check_search_item(q):
                                                            q["campaign"])
     if not (isinstance(q["real"], str) and q["real"]):
         return "%s: real must name an entry of synthetic.real, got %r" % (q["name"], q["real"])
+    if not isinstance(q["alt_best_fit"], bool):
+        return "%s: alt_best_fit must be true or false, got %r" % (q["name"], q["alt_best_fit"])
+    if q["alt_best_fit"] and q["campaign"] not in ALT_ARMS:
+        return ("%s: alt_best_fit true needs a campaign of two arms (%s), got %s: the best fit of "
+                "the other arm is not defined there (block 18)"
+                % (q["name"], ", ".join(sorted(ALT_ARMS)), q["campaign"]))
     return None
 
 

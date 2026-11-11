@@ -1,5 +1,5 @@
 {
-  "_comment": "The synthetic A2/A5 experiment's pipeline configuration, v2 (v1 2026-11-03; v2 2026-11-04, D-125: the trials' and the members' memory 96gb, was 32gb; decisions D-118..D-123 and D-125 of claude/SBI_decisions_and_ideas_log.md, project knowledge; specs/SPEC.md secs. 1.1, 2.4 and blocks 11-17; the roadmap specs/roadmap/synth.yaml, step S4). A synthetic data set (\"kind\": \"synthetic\", block 15): both arms built by the bench generator, the simulated arm S on the whole parameter box and the synthetic 'real' cohorts R0 (pi = 0) and R3 (pi = 0.3), whose theta is recorded and withheld; five searches and their best fits under one command and one core cap (D-123). Values marked [Claude's] are not the user's: they are logistics proposed with this file and can change before the first submission (--dry-run first). Every key is required; a key starting with '_' documents the key after it and is ignored.",
+  "_comment": "The synthetic A2/A5 experiment's pipeline configuration, v3 (v1 2026-11-03; v2 2026-11-04, D-125: the trials' and the members' memory 96gb, was 32gb; v3 2026-11-11, D-126: the best fit of the other arm for the four searches with a term, `alt_best_fit`, block 18; decisions D-118..D-123, D-125 and D-126 of claude/SBI_decisions_and_ideas_log.md, project knowledge; specs/SPEC.md secs. 1.1, 2.4, 2.5 and blocks 11-18; the roadmap specs/roadmap/synth.yaml, steps S4 and S6). A synthetic data set (\"kind\": \"synthetic\", block 15): both arms built by the bench generator, the simulated arm S on the whole parameter box and the synthetic 'real' cohorts R0 (pi = 0) and R3 (pi = 0.3), whose theta is recorded and withheld; five searches and their best fits under one command and one core cap (D-123). Values marked [Claude's] are not the user's: they are logistics proposed with this file and can change before the first submission (--dry-run first). Every key is required; a key starting with '_' documents the key after it and is ignored.",
   "config_version": 10,
   "kind": "synthetic",
   "dataset": "synth",
@@ -39,13 +39,13 @@
       {"name": "R3", "seed": 3000, "donors_per_class": 9, "n_windows": 6, "pi": 0.3,
        "gap_modes": ["range_shift", "drift", "contamination"]}
     ],
-    "_searches": "The five searches (D-122, D-123): S-A1 once (its trials scored on R0, its best fit scored on R3 at the evaluation), S-A2 and S-A5 on each cohort. The order is the priority under the core cap: the free cores go to the earliest search and its best fit first.",
+    "_searches": "The five searches (D-122, D-123): S-A1 once (its trials scored on R0, its best fit scored on R3 at the evaluation), S-A2 and S-A5 on each cohort. The order is the priority under the core cap: the free cores go to the earliest search and its best fits first. alt_best_fit (D-126, block 18, added 2026-11-11 after the run of v2): true fits, beside the search's best fit, the best trial on the simulated report split's nll of the arm the search's finalist is not (A1 or the term's arm), in <runs_root>/<search>/synth_best_alt with the same best_fit values, so the evaluation has an ensemble of 5 members per arm; S-A1 has one arm (false).",
     "searches": [
-      {"name": "S-A1", "campaign": "S-A1", "real": "R0"},
-      {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0"},
-      {"name": "S-A5-R0", "campaign": "S-A5", "real": "R0"},
-      {"name": "S-A2-R3", "campaign": "S-A2", "real": "R3"},
-      {"name": "S-A5-R3", "campaign": "S-A5", "real": "R3"}
+      {"name": "S-A1", "campaign": "S-A1", "real": "R0", "alt_best_fit": false},
+      {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0", "alt_best_fit": true},
+      {"name": "S-A5-R0", "campaign": "S-A5", "real": "R0", "alt_best_fit": true},
+      {"name": "S-A2-R3", "campaign": "S-A2", "real": "R3", "alt_best_fit": true},
+      {"name": "S-A5-R3", "campaign": "S-A5", "real": "R3", "alt_best_fit": true}
     ],
     "_bank_job": "[Claude's] One core per shard job (the builder is single-threaded), 8gb, 2 h (about 30 times the sandbox's time for a shard), queue cpu; a job that ends without its shard is submitted again twice at most.",
     "bank_job": {"ncpus": 1, "mem": "8gb", "walltime": "02:00:00", "queue": "cpu", "max_resubmits": 2}

@@ -28,6 +28,10 @@ NLL (block 7; D-089; specs/SPEC.md sec. 2.3).
               L_bar = -(1/n) sum_i [logsumexp_m(-l_{m,i}) - log M]
     artefact  `<runs_root>/<tag>_best/BEST_FIT_COMPLETE.json`
 
+[block 18] The other arm's best fit of a synthetic search
+(stages/synthetic.py, `RunAltBestFitStage`) is this class with its own
+folder suffix (`_best_alt`), job-name prefix (`ba`) and finalist.
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
@@ -44,12 +48,16 @@ class BestFitStage(Stage):
     name = "best_fit"
     deps = DEPS["best_fit"]
     max_resubmits = 0           # the members carry their own resubmissions
+    # [block 18] the folder's suffix and the members' job-name prefix; the
+    # other arm's best fit (stages/synthetic.py) sets its own
+    root_suffix = "_best"
+    job_prefix = "bf"
 
     # ------------------------------------------------------------ paths ---
 
     def _dirs(self, cfg):
         d = cfg.data
-        root = os.path.join(d["paths"]["runs_root"], d["dataset"] + "_best")
+        root = os.path.join(d["paths"]["runs_root"], d["dataset"] + self.root_suffix)
         return {"root": root, "jobs": os.path.join(root, "jobs"),
                 "finalist_config": os.path.join(root, "finalist_config.json"),
                 "ensemble": os.path.join(root, "ensemble_nll.json"),
@@ -143,8 +151,9 @@ class BestFitStage(Stage):
         argv_file = self._member_argv_file(cfg, st, seed, resume, self._log_path(cfg))
         n = len(m["jobs"])
         log_path = os.path.join(dirs["jobs"], "member_seed%d.%d.log" % (int(seed), n))
-        line = CM.qsub_line(cfg, "bf_%s_s%d" % (cfg.data["dataset"][:6], int(seed)), b["queue"],
-                            b["ncpus"], b["mem"], b["walltime"], log_path, argv_file,
+        name = "%s_%s_s%d" % (self.job_prefix, cfg.data["dataset"][:6], int(seed))
+        line = CM.qsub_line(cfg, name, b["queue"], b["ncpus"], b["mem"], b["walltime"], log_path,
+                            argv_file,
                             CM.paths_of(cfg)["stage4"], avoid_file=CM.avoid_file(cfg))
         job_id = pbs.submit(line, role="member seed %d%s" % (int(seed), " resume" if resume else ""),
                             log_path=log_path)
@@ -463,11 +472,12 @@ class BestFitStage(Stage):
         dirs = self._dirs(cfg)
         p = CM.paths_of(cfg)
         sim, real = CM.shard_globs(cfg)
-        q = CM.qsub_line(cfg, "bf_<tag>_s<k>", b["queue"], b["ncpus"], b["mem"], b["walltime"],
+        q = CM.qsub_line(cfg, self.job_prefix + "_<tag>_s<k>", b["queue"], b["ncpus"], b["mem"],
+                         b["walltime"],
                          os.path.join(dirs["jobs"], "member_seed<k>.<n>.log"),
                          os.path.join(dirs["jobs"], "member_seed<k>.<n>.argv"), p["stage4"],
                          avoid_file=CM.avoid_file(cfg))
-        q[2] = "bf_%s_s<k>" % d["dataset"][:6]
+        q[2] = "%s_%s_s<k>" % (self.job_prefix, d["dataset"][:6])
         return ["cores (D-099): at most %s member(s) at once -- the cap leaves room for %s of %d "
                 "cores each" % (CM.cap_room(cfg, b["ncpus"], len(b["member_seeds"])),
                                 CM.cap_room(cfg, b["ncpus"]), int(b["ncpus"])),

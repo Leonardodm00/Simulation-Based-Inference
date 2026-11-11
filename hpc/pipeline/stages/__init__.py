@@ -98,6 +98,10 @@ def artefact_of(name, cfg):
     if name == "best_fit":
         return "file", os.path.join(d["paths"]["runs_root"], tag + "_best",
                                     "BEST_FIT_COMPLETE.json")
+    if name == "best_fit_alt":
+        # [block 18] the best fit of the arm the search's finalist is not
+        return "file", os.path.join(d["paths"]["runs_root"], tag + "_best_alt",
+                                    "BEST_FIT_COMPLETE.json")
     raise KeyError(name)
 
 

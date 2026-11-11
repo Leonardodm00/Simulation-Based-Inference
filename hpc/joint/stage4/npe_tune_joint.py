@@ -30,6 +30,7 @@ Subcommands
   evaluate    run one configuration (or --dry-run) and write a TrialRecord
   status      ledger table + escalation verdict against measured sigma_seed
   finalists   the top-k by ranking split, with the gate split named
+              ([block 18] --arm: one arm's trials only; --out: the file)
   costliest   [block 7] the space's costliest configuration at each
               searched batch size (the pipeline's budget gate probes it)
   controls    per-finalist shuffled controls: plan them, or score them
@@ -660,9 +661,25 @@ def cmd_status(args) -> int:
     return 0
 
 
+def _arm_or_none(config: Dict[str, Any]) -> Optional[str]:
+    """[block 18] arm_for_config, or None for a configuration that maps to
+    no Stage 3 arm (both terms on)."""
+    try:
+        return arm_for_config(config)
+    except ValueError:
+        return None
+
+
 def cmd_finalists(args) -> int:
     spec = _spec_from_args(args)
     obs = load_observations(args.results_dir, args.campaign, spec)
+    arm = getattr(args, "arm", None)
+    if arm is not None:
+        # [block 18, D-126] the ranking restricted to one arm's trials (the
+        # pipeline's best fit of the arm the search's finalist is not)
+        obs = [(c, y) for c, y in obs if _arm_or_none(c) == arm]
+        if not obs:
+            raise SystemExit("no completed trials of arm %s to rank" % arm)
     if not obs:
         raise SystemExit("no completed trials to rank")
     order = np.argsort([y for _, y in obs])[:int(args.top_k)]
@@ -681,13 +698,20 @@ def cmd_finalists(args) -> int:
         fin.append(entry)
     payload = {"campaign": args.campaign, "K": len(fin),
                "rank_split": args.rank_split, "gate_split": args.gate_split,
-               "finalists": fin}
-    os.makedirs(os.path.join(args.results_dir, args.campaign), exist_ok=True)
-    path = os.path.join(args.results_dir, args.campaign, FINALISTS_FILE)
+               "arm": arm, "finalists": fin}
+    out = getattr(args, "out", None)
+    if out:
+        # [block 18] the file where the caller says; the campaign folder untouched
+        path = os.path.abspath(out)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    else:
+        os.makedirs(os.path.join(args.results_dir, args.campaign), exist_ok=True)
+        path = os.path.join(args.results_dir, args.campaign, FINALISTS_FILE)
     with open(path, "w", encoding="ascii") as fh:
         json.dump(payload, fh, indent=2, sort_keys=True)
-    print("[finalists] K=%d ranked on %r; the gate will run on %r"
-          % (len(fin), args.rank_split, args.gate_split))
+    print("[finalists] K=%d ranked on %r%s; the gate will run on %r"
+          % (len(fin), args.rank_split,
+             " (the trials of arm %s only)" % arm if arm else "", args.gate_split))
     if args.rank_split == args.gate_split:
         print("[warn] ranking and gating on the SAME split. The finalists "
               "are the argmax of that split over the whole search, so a null "
@@ -984,6 +1008,12 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--top-k", type=int, default=3)
     q.add_argument("--rank-split", default="sel")
     q.add_argument("--gate-split", default="gate")
+    q.add_argument("--arm", default=None, choices=("A1", "A2", "A5"),
+                   help="[block 18] rank only the trials of this arm "
+                        "(arm_for_config); default every trial")
+    q.add_argument("--out", default=None,
+                   help="[block 18] write the finalists file here; default "
+                        "<results-dir>/<campaign>/finalists.json")
 
     q = common(sub.add_parser("costliest"))
     q.add_argument("--out-dir", required=True,

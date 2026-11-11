@@ -8,13 +8,16 @@ Checks (specs/SPEC.md blocks 15-17, "Test oracles")
                         rule of sec. 3.1's synthetic kind; three problems
                         of one file listed at once; load_config refuses
                         the file without synthetic_ok
-    test_t15_graph      the 13 stages and their dependencies in sec. 2.1's
-                        order; a recorded configuration's graph unchanged;
+    test_t15_graph      the stages (13, and since block 18 the four best
+                        fits of the other arm: 17) and their dependencies
+                        in sec. 2.1's order; a recorded configuration's graph unchanged;
                         the run views' folders, campaign and real glob
                         (S-A1's included), their idempotence; the renamed
                         log lines
-    test_t15_dry_run    the committed file's dry run: 13 stages, a qsub
+    test_t15_dry_run    the committed file's dry run: its stages, a qsub
                         line per kind of job, no REFUSE line, exit 0
+                        (skipped where the project's work root exists:
+                        davinci, whose run sheet has its own dry run)
     test_t16_record     the record tool by hand: a shard of another digest,
                         a cohort with one class short, a shard index too
                         many, a corrupt zip: each refused, nothing written;
@@ -38,11 +41,30 @@ Checks (specs/SPEC.md blocks 15-17, "Test oracles")
                         and its record carrying L_pseudo_real; at least one
                         S-A2 trial with the metric term on; nothing over
                         the core cap
+    test_t18_config     [block 18] the committed v3 loads; alt_best_fit
+                        true on S-A1, true on an S-A25 search, not a bool,
+                        missing: each refused
+    test_t18_graph      the committed v3's 17 stages, each best_fit_alt_<q>
+                        after best_fit_<q>, its dependency, folder, job
+                        prefix and renamed log lines; S-A1's view has no
+                        other arm
+    test_t18_dry_run    the committed v3's dry run: four best fits of the
+                        other arm, their ba_ qsub lines, no REFUSE (skipped
+                        as test_t15_dry_run)
+    test_t18_end_to_end the training environment: a reduced project with
+                        the search S-A2-R0 runs to PIPELINE DONE; with
+                        alt_best_fit turned on, the run refuses without
+                        --accept-config-change, then runs the other arm's
+                        best fit alone: two ba_ member jobs, the search's
+                        and the best fit's artefacts unchanged, the finalist
+                        the lowest-nll trial of the arm the search's
+                        finalist is not (from the ledger), members of that
+                        arm
 
 Run
     python3 hpc/pipeline/tests/test_smoke_synthetic.py [check ...]
         About 1 minute without the training environment (T17 then skips);
-        about 5 more minutes with it. Needs numpy and scipy (the bench
+        about 5 more minutes with it (T17, T18 end to end). Needs numpy and scipy (the bench
         generator); names of checks run only those. Nothing touches davinci.
 
 Pure ASCII, LF only.
@@ -105,8 +127,9 @@ def _small(root, searches=None, **over):
          "gap_modes": ["range_shift", "drift", "contamination"]},
         {"name": "R3", "seed": 33, "donors_per_class": 2, "n_windows": 2, "pi": 0.3,
          "gap_modes": ["range_shift", "drift", "contamination"]}]
-    d["synthetic"]["searches"] = searches or [{"name": "S-A1", "campaign": "S-A1", "real": "R0"},
-                                              {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0"}]
+    d["synthetic"]["searches"] = searches or [
+        {"name": "S-A1", "campaign": "S-A1", "real": "R0", "alt_best_fit": False},
+        {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0", "alt_best_fit": False}]
     d["synthetic"]["bank_job"] = {"ncpus": 1, "mem": "1gb", "walltime": "00:10:00",
                                   "queue": "test", "max_resubmits": 1}
     d["search"].update({
@@ -275,7 +298,7 @@ def test_t15_graph():
     names = [s.name for s in graph]
     want = ["sim_bank", "real_bank_R0", "real_bank_R3"]
     for q in ("S-A1", "S-A2-R0", "S-A5-R0", "S-A2-R3", "S-A5-R3"):
-        want += ["search_" + q, "best_fit_" + q]
+        want += ["search_" + q, "best_fit_" + q] + (["best_fit_alt_" + q] if q != "S-A1" else [])
     assert names == want, names
     deps = dict((s.name, tuple(s.deps)) for s in graph)
     assert deps["search_S-A1"] == ("sim_bank", "real_bank_R0")
@@ -303,11 +326,15 @@ def test_t15_graph():
         sim, rg = CM.shard_globs(v)
         assert sim == os.path.join(p["banks_root"], "synth_sim", "shard_*.npz")
         assert rg == os.path.join(p["banks_root"], "synth_real_" + real, "shard_*.npz"), rg
-        assert st.is_done(cfg)[1].endswith(os.path.join(p["tune_root"], q, camp,
-                                                         "SEARCH_COMPLETE.json absent"))
+        # the reason names the artefact, absent or present (amended 2026-11-11: on davinci the
+        # run of 2026-11-07 made them, and this check runs there too)
+        why = st.is_done(cfg)[1]
+        art = os.path.join(p["tune_root"], q, camp, "SEARCH_COMPLETE.json")
+        assert why in (art, art + " absent"), why
         bf = by["best_fit_" + q]
-        assert bf.is_done(cfg)[1].endswith(os.path.join(p["runs_root"], q, "synth_best",
-                                                        "BEST_FIT_COMPLETE.json absent"))
+        why = bf.is_done(cfg)[1]
+        art = os.path.join(p["runs_root"], q, "synth_best", "BEST_FIT_COMPLETE.json")
+        assert why in (art, art + " absent"), why
         try:
             by["search_S-A5-R0"]._view(v)
             raise AssertionError("a stage accepted another run's view")
@@ -344,7 +371,17 @@ def test_t15_graph():
     assert json.loads(json.dumps(b)) == b, "the build survives its JSON copy unchanged"
 
 
+def _skip_where_run():
+    """[amended 2026-11-11] The committed project's dry run reads its state file where its work
+    root exists (on davinci, since the run of 2026-11-03): there the run sheet's own dry run is the
+    check, not this one."""
+    if os.path.isdir(cfg_work_root()):
+        raise unittest.SkipTest("%s exists (the committed project ran here): the run sheet's dry "
+                                "run is the check" % cfg_work_root())
+
+
 def test_t15_dry_run():
+    _skip_where_run()
     root = _tmp()
     try:
         env = dict(os.environ)
@@ -640,12 +677,199 @@ def test_t17_end_to_end():
         shutil.rmtree(root, ignore_errors=True)
 
 
+# ------------------------------------------------------- block 18 (T18) ---
+
+def test_t18_config():
+    cfg = C.load_config(SYNTH, synthetic_ok=True)
+    flags = dict((q["name"], q["alt_best_fit"]) for q in cfg.data["synthetic"]["searches"])
+    assert flags == {"S-A1": False, "S-A2-R0": True, "S-A5-R0": True, "S-A2-R3": True,
+                     "S-A5-R3": True}, flags
+    assert C.ALT_ARMS == {"S-A2": ("A1", "A2"), "S-A5": ("A1", "A5")}, C.ALT_ARMS
+
+    def problems(mutate):
+        d = _committed()
+        mutate(d)
+        return C.validate(d)
+
+    def refused(mutate, needle):
+        p = problems(mutate)
+        assert any(needle in x for x in p), (needle, p)
+
+    q = lambda d, i: d["synthetic"]["searches"][i]                         # noqa: E731
+    refused(lambda d: q(d, 0).update(alt_best_fit=True),
+            "S-A1: alt_best_fit true needs a campaign of two arms (S-A2, S-A5), got S-A1")
+    refused(lambda d: d["synthetic"]["searches"].append(
+        {"name": "S-A25-R0", "campaign": "S-A25", "real": "R0", "alt_best_fit": True}),
+        "S-A25-R0: alt_best_fit true needs a campaign of two arms")
+    refused(lambda d: q(d, 1).update(alt_best_fit="yes"),
+            "S-A2-R0: alt_best_fit must be true or false, got 'yes'")
+    refused(lambda d: q(d, 1).update(alt_best_fit=1),
+            "S-A2-R0: alt_best_fit must be true or false, got 1")
+    refused(lambda d: q(d, 2).pop("alt_best_fit"), "must have exactly the keys")
+    # an S-A25 search without the alternative is accepted, as before
+    p = problems(lambda d: d["synthetic"]["searches"].append(
+        {"name": "S-A25-R0", "campaign": "S-A25", "real": "R0", "alt_best_fit": False}))
+    assert p == [], p
+
+
+def test_t18_graph():
+    import stages as S
+    from stages import synthetic as SY
+    cfg = C.load_config(SYNTH, synthetic_ok=True)
+    graph = S.topological_order(S.default_graph(cfg))
+    names = [s.name for s in graph]
+    assert len(names) == 17, names
+    by = dict((s.name, s) for s in graph)
+    p = cfg.data["paths"]
+    for q in ("S-A2-R0", "S-A5-R0", "S-A2-R3", "S-A5-R3"):
+        st = by["best_fit_alt_" + q]
+        assert isinstance(st, SY.RunAltBestFitStage), type(st)
+        assert names.index("best_fit_alt_" + q) == names.index("best_fit_" + q) + 1, names
+        assert tuple(st.deps) == ("search_" + q,), st.deps
+        root = os.path.join(p["runs_root"], q, "synth_best_alt")
+        done, why = st.is_done(cfg)
+        art = os.path.join(root, "BEST_FIT_COMPLETE.json")
+        assert why == (art if done else art + " absent"), why
+        v = st._view(cfg)
+        assert st._dirs(v)["root"] == root and st._dirs(v)["complete"] == os.path.join(
+            root, "BEST_FIT_COMPLETE.json"), st._dirs(v)
+        assert st._dirs(v)["search_complete"] == by["best_fit_" + q]._dirs(v)["search_complete"]
+        assert by["best_fit_" + q]._dirs(v)["root"] == os.path.join(p["runs_root"], q, "synth_best")
+        assert st.job_prefix == "ba" and by["best_fit_" + q].job_prefix == "bf"
+        assert st._arms(v) == C.ALT_ARMS[v.data["search"]["campaign"]]
+    assert "best_fit_alt_S-A1" not in by
+    # S-A1's view has no other arm: the alternative refuses before any tuner call
+    alt = SY.RunAltBestFitStage(dict(by["search_S-A1"].run))
+    try:
+        alt._arms(alt._view(cfg))
+        raise AssertionError("an S-A1 view gave arms for the other arm's best fit")
+    except RuntimeError as exc:
+        assert "campaign S-A1 has no other arm" in str(exc), exc
+    # S8's lines carry the stage's own name
+    seen = []
+
+    class Rec(object):
+        def log(self, t):
+            seen.append(t)
+
+    r = by["best_fit_alt_S-A5-R3"]._rec(Rec())
+    r.log("best_fit: member seed 2 done: L 1.0 (x)")
+    r.log("best_fit_alt: not a prefix of S8")
+    assert seen == ["best_fit_alt_S-A5-R3: member seed 2 done: L 1.0 (x)",
+                    "best_fit_alt: not a prefix of S8"], seen
+
+
+def test_t18_dry_run():
+    _skip_where_run()
+    root = _tmp()
+    try:
+        env = dict(os.environ)
+        env["PIPELINE_SKIP_CONDA"] = "1"
+        r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config", SYNTH,
+                            "--dry-run"], cwd=root, env=env, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, universal_newlines=True, timeout=120)
+        out = r.stdout
+        assert r.returncode == 0 and "REFUSE" not in out, out[-4000:]
+        assert out.count("qsub -N ba_synth_s<k>") == 4, out.count("qsub -N ba_synth_s<k>")
+        assert out.count("qsub -N bf_synth_s<k>") == 5, out.count("qsub -N bf_synth_s<k>")
+        assert out.count("the best fit of the other arm (D-126) in ") == 4, out
+        for q, arms in (("S-A2-R0", "A1/A2"), ("S-A5-R3", "A1/A5")):
+            assert "best_fit_alt_%s: would wait for search_%s" % (q, q) in out, (q, out[-3000:])
+            assert ("the arm of %s that the finalist of /davinci-1/home/ldellamea/tune_joint_synth/"
+                    "%s/%s/SEARCH_COMPLETE.json is not" % (arms, q, q[:4])) in out, (q, out[-3000:])
+            assert ("/davinci-1/home/ldellamea/runs/synth/%s/synth_best_alt/finalists_<a>.json"
+                    % q) in out, q
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_t18_end_to_end():
+    try:
+        import torch  # noqa: F401
+        import sbi    # noqa: F401
+        import skopt  # noqa: F401
+        import zuko   # noqa: F401
+    except ImportError as exc:
+        raise unittest.SkipTest("the training environment is needed (%s)" % exc)
+    root = _tmp()
+    saved = dict(os.environ)
+    try:
+        search = {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0", "alt_best_fit": False}
+        path, d = _small(root, searches=[search],
+                         **{"synthetic.sim": {"seed": 11, "n_theta": 60, "n_windows": 1,
+                                              "traces_per_shard": 40}})
+        spool = os.path.join(root, "spool")
+        env = _fake_env(spool)
+
+        def run(*extra):
+            r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config", path,
+                                "--poll-seconds", "0.5"] + list(extra), cwd=root, env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               universal_newlines=True, timeout=1800)
+            return r.returncode, r.stdout
+
+        rc, out = run()
+        assert rc == 0 and "PIPELINE DONE: every stage done or skipped" in out, out[-6000:]
+        p = d["paths"]
+        camp_dir = os.path.join(p["tune_root"], "S-A2-R0", "S-A2")
+        best_dir = os.path.join(p["runs_root"], "S-A2-R0", "synth_best")
+        alt_dir = os.path.join(p["runs_root"], "S-A2-R0", "synth_best_alt")
+        assert not os.path.exists(alt_dir), "alt_best_fit false made the other arm's folder"
+        before = dict((f, _sha(f)) for f in (os.path.join(camp_dir, "SEARCH_COMPLETE.json"),
+                                             os.path.join(best_dir, "BEST_FIT_COMPLETE.json")))
+        n_jobs = len(_records(spool))
+        recs = [json.load(open(f)) for f in glob.glob(os.path.join(camp_dir, "trials", "*.json"))]
+        arms = sorted(set(r["arm"] for r in recs if r["status"] == "ok"))
+        assert arms == ["A1", "A2"], ("the fixture needs trials of both arms at gp_seed %d, got %s"
+                                      % (d["search"]["gp_seed"], arms))
+        # the configuration change: alt_best_fit turned on
+        cfg_d = json.load(open(path))
+        cfg_d["synthetic"]["searches"][0]["alt_best_fit"] = True
+        with open(path, "w") as fh:
+            json.dump(cfg_d, fh, indent=1, sort_keys=True)
+        rc, out = run()
+        assert rc == 2 and "REFUSE: the configuration changed since this run started" in out, out[-3000:]
+        assert len(_records(spool)) == n_jobs, "a refused run submitted a job"
+        rc, out = run("--accept-config-change")
+        assert rc == 0 and "PIPELINE DONE: every stage done or skipped" in out, out[-6000:]
+        assert "best_fit_alt_S-A2-R0: BEST FIT COMPLETE: M=2 members" in out, out[-3000:]
+        new = _records(spool)[n_jobs:]
+        assert sorted(r["name"] for r in new) == ["ba_synth_s1", "ba_synth_s2"], [r["name"] for r in new]
+        for f, h in before.items():
+            assert _sha(f) == h, "%s changed" % f
+        # the oracle: the lowest-nll trial of the arm the search's finalist is not
+        sc = json.load(open(os.path.join(camp_dir, "SEARCH_COMPLETE.json")))
+        fin_arm = [r["arm"] for r in recs if r["trial_id"] == sc["finalist"]["trial_id"]][0]
+        other = min((r for r in recs if r["status"] == "ok" and r["arm"] != fin_arm),
+                    key=lambda r: r["nll"])
+        fc = json.load(open(os.path.join(alt_dir, "finalist_config.json")))
+        assert fc["trial_id"] == other["trial_id"] and fc["arm"] == other["arm"], (fc, other)
+        assert fc["search_finalist"] == {"trial_id": sc["finalist"]["trial_id"], "arm": fin_arm}, fc
+        bf = json.load(open(os.path.join(alt_dir, "BEST_FIT_COMPLETE.json")))
+        assert bf["ensemble"]["M"] == 2 and bf["finalist"]["arm"] == other["arm"], bf["finalist"]
+        main = json.load(open(os.path.join(best_dir, "BEST_FIT_COMPLETE.json")))
+        assert bf["split_seed"] == main["split_seed"] and bf["member_seeds"] == main["member_seeds"]
+        for k in (1, 2):
+            mrec = sorted(glob.glob(os.path.join(alt_dir, "member_seed%d" % k, "*_seed%d.json" % k)))
+            assert len(mrec) == 1, mrec
+            m = json.load(open(mrec[0]))
+            assert m["arm"] == other["arm"] and m["seed"] == k and m["split_seed"] == 1, (
+                m["arm"], m["seed"], m["split_seed"])
+        assert _peak(_records(spool)) <= 4, "over the 4 cores the cap leaves"
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # ------------------------------------------------------------------ main ---
 
 CHECKS = [("test_t15_config", test_t15_config), ("test_t15_graph", test_t15_graph),
           ("test_t15_dry_run", test_t15_dry_run), ("test_t16_record", test_t16_record),
           ("test_t16_banks", test_t16_banks), ("test_convergence", test_convergence),
-          ("test_t17_end_to_end", test_t17_end_to_end)]
+          ("test_t17_end_to_end", test_t17_end_to_end), ("test_t18_config", test_t18_config),
+          ("test_t18_graph", test_t18_graph), ("test_t18_dry_run", test_t18_dry_run),
+          ("test_t18_end_to_end", test_t18_end_to_end)]
 
 
 def main():

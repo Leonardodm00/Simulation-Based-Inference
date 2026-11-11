@@ -350,6 +350,7 @@ and its best fit. Its graph, in this order:
 | `real_bank_<r>`, each entry r of `synthetic.real` | `<banks_root>/<tag>_real_<r>/BANK_RECORD.json`, the same | -- |
 | `search_<q>`, each entry q of `synthetic.searches` | `<tune_root>/<q>/<campaign>/SEARCH_COMPLETE.json` | `sim_bank`, `real_bank_<q.real>` |
 | `best_fit_<q>` | `<runs_root>/<q>/<tag>_best/BEST_FIT_COMPLETE.json` | `search_<q>` |
+| `best_fit_alt_<q>`, each q with `alt_best_fit` true (block 18) | `<runs_root>/<q>/<tag>_best_alt/BEST_FIT_COMPLETE.json` | `search_<q>` |
 
 A bank is one `jobs/run_argv.pbs` job per shard of
 `hpc/joint/stage1/build_latent_bank.py` (the resources of
@@ -362,7 +363,13 @@ overwritten. A search and a best fit are S7 and S8 on the search's view of
 the configuration: its own folders under `tune_root` and `runs_root`, its
 campaign, the simulated bank and its real bank (for S-A1 too: its trials are
 scored on R0, D-122). Their log lines start with the stage's name
-(`search_S-A2-R0: round 1 complete ...`). The stages share
+(`search_S-A2-R0: round 1 complete ...`). [block 18, D-126] A search of
+S-A2 or S-A5 with `alt_best_fit` true also fits the best trial (on the same
+report-split NLL) of the arm its finalist is not -- A1, or the term's arm --
+as `best_fit_alt_<q>`: S8 again with the same `best_fit` values, its members
+named `ba_<tag>_s<k>`, its finalist chosen by the tuner's `finalists --arm`
+for each of the two arms (the files `finalists_<arm>.json` in its folder), so
+that every such search has an ensemble per arm for the evaluation. The stages share
 `resources.max_cores`, and each tick fills the free cores in the graph's
 order: the first search and its best fit first. The tools that read a
 recorded data set's single search (`search_report.py`, `search_reset.py`,
@@ -773,6 +780,42 @@ cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --retry search_S-A
 # peak 59.xx GB <= 96gb", then each search's round 0 (at most 14 trials at once under the 120-core cap)
 ```
 
+### synth: the other arm's best fits (2026-11-11, block 18, D-126)
+
+The run of v2 ended `PIPELINE DONE` on 2026-11-07. For the evaluation (the roadmap's step S6)
+every search with a term needs an ensemble of five members for each of its two arms; the run fitted
+one, its finalist's (A1 in S-A2-R0 and S-A5-R3, A5 in S-A5-R0, A2 in S-A2-R3). v3 of `synth.json`
+sets `alt_best_fit` true on those four searches: four new stages `best_fit_alt_<q>`, 20 member jobs
+of 8 cores, 96gb and 120 h each (the `best_fit` values), at most 14 at once under the 120-core cap.
+The banks, the searches and the five best fits are done and are not run again; nothing of theirs is
+rewritten (rehearsed on the stand-in: the old artefacts byte-identical, only the new members'
+jobs submitted). The configuration changed, so every line below carries `--accept-config-change`.
+
+```
+# X1. the code: step 1 above; pass line PIPELINE CODE OK, git log at the block-18 commit or later
+
+# X2. the checks that need no training, in sbi_env (about 30 s); pass lines "6 of 6 checks pass" and "J37   PASS"
+#     (the two dry-run checks skip where the project's work root exists, so they are not named here: X3 is the dry run)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && python3 hpc/pipeline/tests/test_smoke_synthetic.py test_t15_config test_t15_graph test_t16_record test_t16_banks test_t18_config test_t18_graph 2>&1 | tail -1 && (cd hpc/joint/stage4 && python3 smoke_test_joint_tune.py -k J37 2>&1 | grep J37)
+
+# X3. the dry run; pass: exit 0, no REFUSE or STOP line, the five searches and five best fits "done", four
+#     "best_fit_alt_<q>: would run",
+#     each with "run <q>: the best fit of the other arm (D-126) in .../runs/synth/<q>/synth_best_alt" and a
+#     "qsub -N ba_synth_s<k>" line, "at most 5 member(s) at once" per stage and "cores: at most 120 at once"
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --dry-run --accept-config-change 2>&1 | tee ~/pipeline_synth_dry3.log | grep -E "REFUSE|STOP|FAILED|would|\| (search|best_fit)|other arm|qsub -N ba|member\(s\) at once|cores: at most" ; echo "exit ${PIPESTATUS[0]}"
+
+# X4. the run; pass line: SUBMITTED the sequencer: job <id> (pl_synth)
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --accept-config-change
+
+# X5. any time: the status and the log. Expected, in order: four "best_fit_alt_<q>: submitted member seed <k> -> <id>"
+#     groups (14 members at first, the other 6 as cores free up), then per stage five "member seed <k> done: L ...",
+#     "best_fit_alt_<q>: BEST FIT COMPLETE: M=5 members, ensemble L_bar ...", at the end "PIPELINE DONE: every stage
+#     done or skipped". Each folder <runs_root>/<q>/synth_best_alt holds finalists_A1.json and finalists_<A2|A5>.json
+#     (the tuner's best trial of each arm) and finalist_config.json (the other arm's, with "arm" and "search_finalist").
+#     A STOP names the stage and its cause; after the fix: X3 and X4 with --retry best_fit_alt_<q>
+bash ~/SBI/hpc/pipeline/run_pipeline.sh --project synth --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/synth/pipeline.log
+```
+
 ## Tests
 
 ```
@@ -790,7 +833,7 @@ python3 hpc/pipeline/tests/test_smoke_purge.py         # block 10, tools/purge_o
 python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, a few seconds, numpy (with torch, sbi and zuko also the real-flow oracle)
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # block 9, tools/inputs_check.py, about 1 s, numpy and the Sbi-extractor checkout (SBIX_CLONE)
-python3 hpc/pipeline/tests/test_smoke_synthetic.py     # blocks 15-17, the synthetic kind: about 40 s with numpy and scipy, 1.5 min more with torch, sbi, zuko, skopt (T17 end to end)
+python3 hpc/pipeline/tests/test_smoke_synthetic.py     # blocks 15-18, the synthetic kind: about 30 s with numpy and scipy, 2 min more with torch, sbi, zuko, skopt (T17 and T18 end to end)
 ```
 
 Block 1's smoke test under the fake PBS; blocks 4-6 (the runner) are tested by
@@ -823,4 +866,5 @@ guard, and the grep that keeps project values out of the code. About 25 s.
 | 11-14 | the synthetic experiment's banks and arms in `hpc/joint/` (the box prior, the cohort and bank-wide ids, the shifted duty clipped at 1, A2 and A5 on a cohort) | built 2026-11-03, smoke-tested (`hpc/joint/stage3/smoke_test_blocks_11_14.py`) |
 | 15 | the synthetic kind: its schema and cross-checks, `load_config(..., synthetic_ok)`, the graph, the run views, S7 and S8 per search | built 2026-11-03, smoke-tested (`test_smoke_synthetic.py` T15) |
 | 16 | the synthetic banks: a job per shard, the record job (`tools/synth_bank_record.py`), the refusal of a folder of another build | built 2026-11-03, smoke-tested (T16) |
-| 17 | the project `synth` (D-118..D-123) and its run sheet; end to end on a reduced copy under the fake PBS | built 2026-11-03, smoke-tested (T17); not run on davinci |
+| 17 | the project `synth` (D-118..D-123) and its run sheet; end to end on a reduced copy under the fake PBS | built 2026-11-03, smoke-tested (T17); ran on davinci 2026-11-04..07 (`PIPELINE DONE`) |
+| 18 | the other arm's best fit `best_fit_alt_<q>` (D-126): the tuner's `finalists --arm/--out`, the key `alt_best_fit`, synth.json v3 and its run sheet X1-X5 | built 2026-11-11, smoke-tested (T18; the tuner's J37) |

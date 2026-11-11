@@ -33,6 +33,10 @@ torch; the training it drives is covered by the Stage 3 suite.
   J36  The PBS element and the launcher, run for real in DRYRUN mode:
        distinct elements, stale index tolerated, missing variable fatal,
        launcher dry by default, --max honoured, unknown campaign named.
+  J37  [block 18] finalists --arm ranks one arm's trials (a configuration
+       with both terms on belongs to none), --out writes where it says, no
+       trial of the arm exits non-zero; without the flags the file is the
+       old one plus "arm": null.
 
 ASCII-only by policy (HPC transfer safety).
 """
@@ -400,6 +404,69 @@ def j32_finalists() -> str:
     return "K=3 ranked ascending; both splits named"
 
 
+def j37_finalists_by_arm() -> str:
+    """[block 18, D-126] finalists --arm ranks one arm's trials; --out writes
+    where it says; without the flags the file is the old one plus arm: null."""
+    spec = _spec()
+    rng = np.random.default_rng(11)
+    root = tempfile.mkdtemp()
+    try:
+        rows = [("a1_0", 0, 3.0), ("a1_1", 0, 1.5), ("a1_2", 0, 2.5),
+                ("a1_3", 0, 4.0), ("a2_0", 1, 2.0), ("a2_1", 1, 0.7),
+                ("a2_2", 1, 5.0)]
+        want = {"A1": [], "A2": []}
+        for tid, dsn, y in rows:
+            cfg = _random_config("S-A2", spec, rng, dsn_on=dsn)
+            arm = TJ.arm_for_config(cfg)
+            check(arm == ("A2" if dsn else "A1"), "fixture: %s maps to %s" % (tid, arm))
+            want[arm].append(y)
+            TJ.write_record(root, "S-A2", {"trial_id": tid, "config": cfg, "nll": y,
+                                           "status": "ok", "tag": ""})
+        both = _random_config("S-A2", spec, rng, dsn_on=1)
+        both["rep_on"] = 1          # no Stage 3 arm; the lowest nll of all
+        TJ.write_record(root, "S-A2", {"trial_id": "both", "config": both, "nll": 0.1,
+                                       "status": "ok", "tag": ""})
+        base = ["finalists", "--campaign", "S-A2", "--results-dir", root,
+                "--split-hash", "h", "--contract-digest", "c"]
+        default_file = os.path.join(root, "S-A2", "finalists.json")
+        got = {}
+        for arm in ("A1", "A2"):
+            out = os.path.join(root, "elsewhere", "fin_%s.json" % arm)
+            rc = TJ.main(base + ["--top-k", "3", "--arm", arm, "--out", out])
+            check(rc == 0, "finalists --arm %s must succeed" % arm)
+            with open(out, encoding="ascii") as fh:
+                fin = json.load(fh)
+            ys = [f["nll_rank_split"] for f in fin["finalists"]]
+            check(fin["arm"] == arm, "the file records the arm: %r" % fin["arm"])
+            check(ys == sorted(want[arm])[:3], "arm %s: %s, want %s"
+                  % (arm, ys, sorted(want[arm])[:3]))
+            for f in fin["finalists"]:
+                check(TJ.arm_for_config(f["config"]) == arm, "a finalist of another arm")
+            got[arm] = ys[0]
+        check(not os.path.exists(default_file),
+              "--out must leave <campaign>/finalists.json unwritten")
+        try:
+            TJ.main(base + ["--arm", "A5", "--out", os.path.join(root, "a5.json")])
+            raise AssertionError("--arm A5 with no A5 trial must exit")
+        except SystemExit as exc:
+            check("no completed trials of arm A5 to rank" in str(exc), str(exc))
+        check(not os.path.exists(os.path.join(root, "a5.json")), "nothing written for A5")
+        rc = TJ.main(base + ["--top-k", "2"])
+        check(rc == 0, "finalists without the flags")
+        with open(default_file, encoding="ascii") as fh:
+            fin = json.load(fh)
+        check(sorted(fin) == ["K", "arm", "campaign", "finalists", "gate_split",
+                              "rank_split"], "keys %s" % sorted(fin))
+        check(fin["arm"] is None, "arm must be null without --arm")
+        check([f["nll_rank_split"] for f in fin["finalists"]] == [0.1, 0.7],
+              "without --arm every trial ranks, the both-on one first: %s"
+              % [f["nll_rank_split"] for f in fin["finalists"]])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return ("A1 best %.1f, A2 best %.1f; A5 refused; --out honoured; both-on "
+            "excluded by --arm, ranked without it" % (got["A1"], got["A2"]))
+
+
 def j33_controls_and_report() -> str:
     spec = _spec()
     rng = np.random.default_rng(4)
@@ -612,6 +679,7 @@ TESTS: Dict[str, Tuple[str, Callable[[], str]]] = {
     "J33": ("controls plan/score; report refuses ungated", j33_controls_and_report),
     "J34": ("arm mapping", j34_arm_mapping),
     "J36": ("PBS element and launcher, dry-run end to end", j36_job_scripts),
+    "J37": ("[block 18] finalists --arm / --out", j37_finalists_by_arm),
 }
 
 

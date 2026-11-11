@@ -60,6 +60,12 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   `hpc/pipeline/tests/test_smoke_synthetic.py`, and the changes they make to
   `config.py`, `stages/__init__.py`, `stages/common.py`, `stages/search.py`,
   `stages/best_fit.py` and `pipeline.py`
+- the synthetic experiment's evaluation (blocks 18-22, the roadmap's step
+  S6; added 2026-11-11): block 18's other-arm best fits -- the tuner's
+  `finalists --arm/--out` in `hpc/joint/stage4/npe_tune_joint.py` with its
+  check J37 in `hpc/joint/stage4/smoke_test_joint_tune.py`, and the changes
+  to `hpc/pipeline/` listed in its entry; blocks 19-22's
+  `hpc/pipeline/evaluation/` once built (drafted, sec. 8 Q-E1..Q-E6)
 
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
@@ -155,8 +161,11 @@ Q the entries of `synthetic.searches`, its stages are, in this order:
 | B_r, each r in R | `real_bank_<r.name>` | -- | `<banks_root>/<dataset>_real_<r.name>/BANK_RECORD.json`, the same rule |
 | S_q, each q in Q | `search_<q.name>` | B_S, B_{q.real} | `<tune_root>/<q.name>/<q.campaign>/SEARCH_COMPLETE.json` |
 | F_q, each q in Q | `best_fit_<q.name>` | S_q | `<runs_root>/<q.name>/<dataset>_best/BEST_FIT_COMPLETE.json` |
+| G_q, each q in Q with `alt_best_fit` true (block 18, D-126; added 2026-11-11) | `best_fit_alt_<q.name>` | S_q | `<runs_root>/<q.name>/<dataset>_best_alt/BEST_FIT_COMPLETE.json` |
 
-S_q and F_q of one q are adjacent, in the order of `synthetic.searches`.
+S_q and F_q of one q are adjacent, in the order of `synthetic.searches`
+[2026-11-11: and G_q, when q has one, follows F_q; G_q is S8 for the best
+trial of the arm S_q's finalist is not (sec. 2.5, block 18)].
 They are stages S7 and S8 run on q's view of the configuration:
 `paths.tune_root` and `paths.runs_root` joined with q.name, `search.campaign`
 = q.campaign, the simulated bank B_S and the real bank B_{q.real} -- passed
@@ -391,7 +400,121 @@ is unknown (D-121); L_pseudo_real ranks nothing and is read by the
 evaluation, which compares, within each search, the best trial with the
 extra term on (dsn_on = 1 in S-A2, rep_on = 1 in S-A5) and the best A1
 trial, each picked on L, on L_pseudo_real paired by donor (the roadmap's
-step S6 specifies it).
+step S6 specifies it). [2026-11-11: sec. 2.5.]
+
+### 2.5 The evaluation (step S6; D-126; added 2026-11-11)
+
+**What is compared (D-121, D-122, D-126).** For a search q of campaign S-A2
+or S-A5 (sec. 2.4) let A(q) be its term arm (A2 for S-A2, A5 for S-A5); a
+completed trial t of q has the arm a(t) in {A1, A(q)} given by its
+configuration's switches (the tuner's `arm_for_config`: dsn_on = 1 gives
+A2, rep_on = 1 gives A5, both 0 give A1). For each arm a in {A1, A(q)}, the
+arm's finalist is
+
+    t*_{q,a} = argmin { L(t) : t a completed, untagged trial of q with a(t) = a },
+
+L(t) the trial's simulated report-split NLL (the ledger's `nll`): as the
+search's own finalist t*_q = argmin_t L(t), it is ranked on L and never on
+L_pseudo_real (D-121). t*_q = t*_{q,a(t*_q)}, and the search's best fit
+(block 7, step S5) is t*_q's ensemble. Block 18 fits the other arm's
+finalist t*_{q,abar}, abar the arm of {A1, A(q)} that is not a(t*_q), with
+the same members' settings, so that every such q has one ensemble per arm,
+E_{q,A1} and E_{q,A(q)}. S-A1 has one arm and one ensemble, E_{S-A1,A1};
+its members train on arm S only, and it is scored on R0 and on R3 (D-122).
+
+**The ensembles.** E_{q,a} has M = 5 members m = 1, ..., M. Member m is
+trained with train seed m on the donor split of split seed 1 (sec. 2.3: the
+same split for every member, every arm and every search), 40 passes in 40
+epochs, patience 10 (block 17's values). Member m's posterior density is
+q_{q,a,m}(theta | x) = q_{omega_m}(theta | h_{psi_m}(x)), a density on
+(0, 1)^10 that is 0 outside the open box (the flow acts on the logit of the
+box: `hpc/joint/stage2/joint_model.py`,
+`z_score_theta="transform_to_unconstrained"`). The ensemble's density is
+the equal-weight mixture: for each fixed window x,
+
+    q_{q,a}(theta | x) = (1/M) sum_{m=1}^{M} q_{q,a,m}(theta | x),     (E1)
+
+whose mean NLL over the report split is block 7's L_bar.
+
+**The data sets (D-126).** Four, each a list of rows i = 1, ..., n, row i a
+window x_i with a reference parameter theta^ref_i:
+
+- D_sim: the report split of arm S under split seed 1, the rows every
+  member scores in its `_perrow.npz`; theta^ref_i = theta_i, the row's own
+  parameter, drawn from the box prior p_S(theta) (sec. 2.4);
+- D_R0 and D_R3: the cohort's n_R = 324 windows; theta^ref_i =
+  theta*_{d(i)}, the withheld parameter of the window's donor d(i), whose
+  condition is c_{d(i)};
+- D_R3+: D_R3's windows with the pseudo-true parameter of the range shift,
+  theta^ref_i = theta^dag_{d(i)}, where for each donor d of R3
+
+      theta^dag_{d,k} = theta*_{d,k}                  for k in K_L,
+      theta^dag_{d,7} = min(theta*_{d,7} + delta, 1),
+      theta^dag_{d,k} = theta*_{d,k} + delta          for k in {8, 9},
+
+  with delta = 0.35 pi = 0.105: the unshifted affine map at theta^dag_d
+  gives the physical values the shifted map gives at theta*_d (sec. 2.4
+  (a), the clip of `fragment_duty` included; the identity checked to float64
+  roundoff on random ranges `[SANDBOX 2026-11-11]`). The drift (c) and the
+  contamination (d) have no coordinate in the box, so theta^dag_d is
+  pseudo-true for mode (a) alone. For a donor with theta*_{d,k} >= 1 -
+  delta for some k in K_F, theta^dag_d lies outside the open box or on its
+  boundary, where every member's density is 0 (sec. 8, Q-E3).
+
+**Quantities.** For an ensemble E (or a single member, read with M = 1) and
+a data set D, with n_post draws theta^(s)_i ~ q_E(theta | x_i), s = 1, ...,
+n_post, per row i:
+
+- the NLL l_i(E) = -log q_E(theta^ref_i | x_i), its mean over the rows,
+  and on a cohort the donor mean lbar_d(E) = (1/n_d) sum_{i : d(i) = d}
+  l_i(E) over the donor's n_d = 12 windows (2 wells x 6);
+- the HPD rank gamma_i(E) = (1/n_post) sum_s 1{ q_E(theta^(s)_i | x_i) >
+  q_E(theta^ref_i | x_i) }, the q_E-mass, estimated by the draws, of the
+  region where q_E( . | x_i) exceeds its value at theta^ref_i; theta^ref_i
+  lies in the HPD region of credibility beta iff gamma_i(E) <= beta (up to
+  the draws' Monte Carlo error), and the expected coverage is, for each
+  fixed beta in (0, 1),
+
+      C_E(beta) = (1/n) sum_{i=1}^{n} 1{ gamma_i(E) <= beta };      (E2)
+
+  on D_sim, whose (theta^ref_i, x_i) are draws of the joint p_S(theta) p(x
+  | theta), C_E(beta) -> beta for every beta when q_E(theta | x) = p(theta
+  | x) for p-almost every x (Hermans et al., TMLR 11/2022, Definition 2.1
+  and eq. 5, `[KB, full text]`); a C_E(beta) below beta is overconfidence,
+  above it underconfidence; on a cohort the same curve reads the
+  calibration on that cohort's law, not on p_S;
+- the marginal ranks r_{i,k}(E) = sum_s 1{ theta^(s)_{i,k} < theta^ref_{i,k}
+  }, k = 0, ..., 9, each uniform on {0, ..., n_post} on D_sim under the
+  same condition (simulation-based calibration; the practical guide in the
+  project's knowledge base, "Simulation Based Inference A Practical Guide",
+  p. 38, `[KB, full text]`, which also lists the local tests, L-C2ST among
+  them; its case study, Fig. 10, checks a five-member ensemble with expected
+  coverage, SBC, L-C2ST and posterior-predictive statistics);
+- TARP's expected coverage (Lemos et al., ICML 2023, Algorithm 2, `[KB,
+  full text]`) with the reference points drawn uniformly from the box;
+- for each axis k: the posterior mean mhat_{i,k}(E) = (1/n_post) sum_s
+  theta^(s)_{i,k}, the marginal SD sigma_{i,k}(E), the central 90 %
+  interval; the z-score zeta_{i,k}(E) = (mhat_{i,k}(E) - theta^ref_{i,k}) /
+  sigma_{i,k}(E) and the contraction 1 - sigma_{i,k}(E)^2 / sigma_0^2,
+  sigma_0^2 = 1/12 the box prior's marginal variance;
+- on a cohort, the donor-paired difference of two ensembles E and E',
+
+      Delta_d(E, E') = lbar_d(E) - lbar_d(E'),   d = 1, ..., N_R,   (E3)
+
+  its mean Dbar(E, E') over the N_R = 27 donors and a donor-cluster
+  bootstrap interval (`hpc/bootstrap_paired.py`), read by the deck pack's
+  two-clause rule (claude/deck_pack/08_SEC_G, G.0 and G.2, project
+  knowledge): |Dbar| beyond 2 sigma_seed, sigma_seed the larger of the two
+  arms' across-seed SDs of their members' L_pseudo_real, and the interval
+  excluding 0; one copy of each donor enters the bootstrap (the ensembles'
+  donor means, so G.2's pooling of five seeds' copies, finding F-bn, does
+  not arise); within a search q, E = E_{q,A(q)} and E' = E_{q,A1};
+- each member's embeddings z = h_{psi_m}(x) on D_sim and on a cohort, and
+  their squared MMD with a Gaussian kernel at the median bandwidth
+  (`hpc/npe_diagnostics.py`, `mmd2_biased`).
+
+The quantities' estimators, n_post, the posterior-predictive check and the
+L-C2ST settings are blocks 19 and 20's, open in sec. 8 (Q-E1..Q-E6).
 
 ### Notation
 
@@ -413,6 +536,18 @@ step S6 specifies it).
 | pi, delta, f | gap severity; range shift; contaminated fraction | float | --; fraction of an axis's width; fraction of windows |
 | A_theta, A_win, A_don | theta ceiling; one-window and one-donor accuracy of the condition | float in [0, 1] | -- |
 | L_pseudo_real, n_R | mean NLL of arm R's withheld theta over its windows; arm R's windows | float; int | nats per row; windows |
+| A(q), a(t), abar | sec. 2.5: search q's term arm; trial t's arm; the arm a search's finalist is not | arm names A1, A2, A5 | -- |
+| t*_q, t*_{q,a} | search q's finalist; the best trial of arm a in q, both on L | trial | -- |
+| E_{q,a}, q_{q,a,m}, q_{q,a} | arm a's ensemble in q; its member m's density; the mixture (E1) | densities on (0, 1)^10 | -- |
+| D_sim, D_R0, D_R3, D_R3+ | the evaluation's data sets | rows (x_i, theta^ref_i) | -- |
+| theta*_d, theta^dag_d | donor d's withheld parameter; its pseudo-true parameter under the range shift | (10,) float64 | -- (unit box) |
+| n_post, theta^(s)_i | posterior draws per row; draw s for row i | int; (10,) | draws; -- |
+| l_i(E), lbar_d(E) | ensemble E's NLL at row i; its donor mean | float64 | nats per row |
+| gamma_i(E), C_E(beta) | the HPD rank of theta^ref_i; the expected coverage at credibility beta (E2) | float in [0, 1] | -- |
+| r_{i,k}(E), zeta_{i,k}(E) | the marginal rank on axis k; the z-score | int in {0..n_post}; float | --; marginal SDs |
+| mhat_{i,k}, sigma_{i,k}, sigma_0^2 | posterior mean and SD on axis k; the box prior's variance 1/12 | float | -- (unit box) |
+| Delta_d(E, E'), Dbar(E, E') | donor d's paired difference of the two ensembles' donor NLLs (E3); its mean over the donors | float64 | nats per window |
+| sigma_seed | the larger of two arms' across-seed SDs of their members' L_pseudo_real (G.2) | float64 | nats per window |
 
 ## 3. Data contracts
 
@@ -3265,7 +3400,11 @@ Claude; Confirmed: no]
   eight of before; the views' folders, campaign, real glob (S-A1's
   included) and idempotence; the log prefix; T15 dry run -- the committed
   file's dry run lists the 13 stages, a qsub line per kind of job and no
-  REFUSE line.
+  REFUSE line. [amended 2026-11-11, block 18: the committed v3 has 17
+  stages; the graph check accepts each artefact absent or present (on
+  davinci the run of 2026-11-07 made them), and the dry run is skipped
+  where the project's work root exists, the run sheet's dry run being the
+  check there.]
 - Data flow: the configuration -> the graph -> the sequencer (block 1).
 - Confirmed: yes 2026-11-03 (D-122: five searches; D-123: one project,
   one command, one core cap).
@@ -3430,6 +3569,186 @@ Claude; Confirmed: no]
   files reused, no probe job submitted twice, `PIPELINE DONE` in 76 s
   `[SANDBOX]`.]
 
+### Block 18: the other arm's best fit (added 2026-11-11; roadmap synth, step S6)
+
+- Modules: `hpc/joint/stage4/npe_tune_joint.py` (`finalists --arm`,
+  `--out`), `hpc/pipeline/config.py` (`ALT_ARMS`, the key
+  `synthetic.searches[i].alt_best_fit`), `hpc/pipeline/stages/__init__.py`
+  (`artefact_of("best_fit_alt", cfg)`), `hpc/pipeline/stages/best_fit.py`
+  (the class attributes `root_suffix`, `job_prefix`), `hpc/pipeline/stages/
+  synthetic.py` (`RunAltBestFitStage`, `synthetic_set_graph`),
+  `hpc/pipeline/projects/synth/synth.json` (v3),
+  `hpc/pipeline/tests/test_smoke_synthetic.py` (T18),
+  `hpc/joint/stage4/smoke_test_joint_tune.py` (J37), `hpc/pipeline/README.md`
+  (the run sheet "synth: the other arm's best fits").
+- Public API: `npe_tune_joint.py finalists ... [--arm A1|A2|A5|shuffled]
+  [--out <path>]`; `config.ALT_ARMS` = {"S-A2": ("A1", "A2"), "S-A5":
+  ("A1", "A5")}; `synthetic.RunAltBestFitStage(run)`, the stage
+  `best_fit_alt_<q.name>`.
+- Rule (sec. 2.5, D-126):
+  - the tuner's `finalists --arm a` ranks only the completed, untagged
+    trials whose configuration `arm_for_config` maps to a (a configuration
+    with both terms on maps to no arm and is left out), on the same `nll`
+    as without the flag; with no such trial it exits non-zero, printing
+    `no completed trials of arm <a> to rank`; `--out p` writes the file at
+    p (default, as before, `<results_dir>/<campaign>/finalists.json`); the
+    file records `"arm"` (null without `--arm`); without the two flags the
+    ranking and the file are those of before plus `"arm": null`;
+  - `synthetic.searches[i].alt_best_fit` is required, true or false; true
+    is refused for a campaign not in `ALT_ARMS` (S-A1 has one arm; S-A25's
+    other arm is not defined);
+  - the graph: for each q with `alt_best_fit` true, the stage
+    `best_fit_alt_<q>` follows `best_fit_<q>` in the list and depends on
+    `search_<q>` alone;
+  - `best_fit_alt_<q>` is S8 on q's view (block 15) with the root
+    `<runs_root>/<q>/<dataset>_best_alt`, the artefact of record
+    `<root>/BEST_FIT_COMPLETE.json`, the members' job names
+    `ba_<dataset[:6]>_s<k>` (S8's are `bf_...`) and the log lines of S8
+    under its own name; its finalist: for each arm a of
+    `ALT_ARMS[campaign]`, the tuner's `finalists --top-k 1 --rank-split
+    report --gate-split report --arm a --out <root>/finalists_<a>.json`
+    with the search's identity (SEARCH_COMPLETE.json's); the trial of
+    exactly one of the two files must be the search's finalist
+    (SEARCH_COMPLETE.json's `finalist.trial_id`), else the stage refuses;
+    the other file's trial is t*_{q,abar}, written to
+    `<root>/finalist_config.json` in the tuner's `--config-json` shape with
+    the keys `arm`, `search_finalist` ({`trial_id`, `arm`}) and
+    `finalists_files`; everything after (the members, their resubmissions
+    and faults, the ensemble, the artefact) is S8's, with the same
+    `best_fit.*` values as `best_fit_<q>`, so E_{q,A1} and E_{q,A(q)} share
+    the split seed, the member seeds and the training budget;
+  - turning `alt_best_fit` on in a run is a configuration change
+    (`--accept-config-change`, block 1): the stages done keep their
+    artefacts and are not run again, and `best_fit_alt_<q>` enters the
+    state as pending.
+- Test oracles: J37 (`smoke_test_joint_tune.py`) -- on a ledger of eight
+  S-A2 trials (four A1, three A2, one with both terms on), `--arm A1` and
+  `--arm A2` return their arm's lowest `nll` (found in the test from the
+  records), `--arm A5` exits non-zero with the message, the both-on trial is
+  never returned with `--arm` and is returned without it when it is the
+  lowest, `--out` writes where it says and no `finalists.json`, no flag
+  gives the old file plus `"arm": null`. T18 (`test_smoke_synthetic.py`) --
+  config: the committed v3 loads; `alt_best_fit` true on S-A1, true on an
+  S-A25 search, a string, a missing key: each refused. Graph: the committed
+  file's 17 stages in order, each `best_fit_alt_<q>` after `best_fit_<q>`
+  with its dependency and artefact path, its log lines renamed. Dry run: the
+  four alternative best fits' `ba_synth_s<k>` lines, no REFUSE. End to end
+  (the training environment): a reduced project with the search S-A2-R0
+  runs to `PIPELINE DONE` with `alt_best_fit` false; set true, the run
+  REFUSES without `--accept-config-change` and with it runs
+  `best_fit_alt_S-A2-R0` alone to `PIPELINE DONE`: no job of the search or
+  of `best_fit_S-A2-R0` submitted again, their artefacts unchanged
+  (sha256), the alternative finalist the lowest-`nll` trial of the arm the
+  search's finalist is not (found in the test from the ledger), its members'
+  records of that arm, an ensemble of 2 members, the member jobs `ba_*`.
+  The committed file's graph checks (T15, T18) accept each artefact absent
+  or present, and its dry-run checks skip where the project's work root
+  exists, so that the run sheet's X2 runs on davinci after the run.
+- Data flow: SEARCH_COMPLETE.json and the ledger -> the tuner's
+  `finalists --arm` -> `finalist_config.json` -> the members ->
+  `BEST_FIT_COMPLETE.json`, read with `best_fit_<q>`'s by block 19.
+- Confirmed: yes 2026-11-11 (D-126: an ensemble of five members for each
+  arm of every search with a term; the other arm's finalist picked on L as
+  the search's own, D-121).
+- Status: smoke-tested 2026-11-11 (`test_smoke_synthetic.py` 10 pass and 1
+  skip, the convergence check, in 129 s; T18 end to end in 43 s; the
+  tuner's J37 passes, its J36 needing conda's `sbi_env` fails in the
+  sandbox as before `[SANDBOX]`). Seven mutations, each caught: in the
+  tuner, the both-on trial counted as A2 and the arm filter dropped (J37);
+  in the pipeline, the stage left out of the graph (T18 graph, dry run),
+  `alt_best_fit` accepted on S-A1 and a non-bool accepted (T18 config), the
+  main best fit's folder reused (T18 graph), the search finalist's own arm
+  fitted (T18 end to end). The committed file's checks run on a stand-in
+  `/davinci-1` tree holding the five searches' and best fits' artefacts:
+  the graph checks pass, the two dry runs skip. Regression `[SANDBOX
+  2026-11-11]`, the recorded kind unchanged: `test_smoke_pipeline` 6 pass 1
+  skip, `block7` 7 of 8, `purge` 6 pass 1 skip, `block7b` 6 of 7,
+  `block7c` 6 of 7 (every skip a convergence check). Rehearsed on a copy of
+  T17's tree in the davinci situation (the run without the key done, then
+  the key on S-A2-R0): the dry run without `--accept-config-change`
+  refused, with it exit 0 and only `best_fit_alt_S-A2-R0` to run; the run
+  to `PIPELINE DONE` in 23 s with two jobs, `ba_synth_s1` and
+  `ba_synth_s2`; the search's and the best fit's artefacts byte-identical;
+  the alternative finalist the ledger's lowest-`nll` A1 trial (the search's
+  finalist A2), its members' records arm A1 at split seed 1. Not run on
+  davinci (README X1-X5).
+
+### Block 19: the evaluation's sampler (added 2026-11-11; drafted; roadmap synth, step S6)
+
+- Modules (proposed): `hpc/pipeline/evaluation/` (new; runs in
+  `envs.train`, never in the sequencer): `models.py` (the ensembles of a
+  synthetic project from its configuration and run folders, E_{q,a} for
+  every search and arm; a member rebuilt from its record's `config` and
+  loaded with `JointDSNNPE.load_checkpoint`), `data.py` (sec. 2.5's four
+  data sets from the banks: D_sim by the members' split, R0's and R3's
+  windows with theta*, donor and condition, theta^dag), `sample.py` (the
+  job's entry point), `jobs/eval_sample.pbs` (one job per ensemble, with
+  the roadmap's marker lines).
+- Public API (proposed): `sample.py --config <synth.json> --ensemble
+  <q>:<arm> --out <dir>` writes, for each data set D the ensemble is scored
+  on, `<dir>/<q>_<arm>_<D>.npz`: `theta_ref` (n, 10) float64, `donor` (n,)
+  int64, `cls` (n,) int64, `logq_ref_members` (n, M) float64 (log
+  q_{q,a,m}(theta^ref_i | x_i)), `logq_ref` (n,) float64 (the mixture
+  (E1)), `draws` (n, n_post, 10) float32 (n_post / M from each member, in
+  member order), `logq_draws` (n, n_post) float64 (the mixture's log
+  density at each draw), `z` (M, n, e) float32 (each member's embedding),
+  and for D_R3+ `in_box` (n,) bool.
+- Rule (proposed): each member's NLL at theta^ref_i equals its own
+  `_perrow.npz` value on the rows both score (D_sim's report rows, the
+  cohort's windows) to float32 roundoff -- the rebuild's oracle.
+- Open: Q-E1, Q-E2, Q-E3 (sec. 8).
+- Confirmed: no (the layout and the file contract are Claude's proposal of
+  2026-11-11).
+- Status: drafted 2026-11-11.
+
+### Block 20: the evaluation's quantities (added 2026-11-11; drafted; roadmap synth, step S6)
+
+- Modules (proposed): `hpc/pipeline/evaluation/metrics.py` (sec. 2.5's
+  quantities from the .npz: the NLL and the donor means, gamma and (E2),
+  the marginal ranks, TARP, the recovery, the z-scores and contraction, (E3)
+  with its bootstrap, the embeddings' MMD^2; reusing
+  `hpc/npe_diagnostics.py` (`expected_coverage`,
+  `simulation_based_calibration`, `tarp`, `posterior_contraction`,
+  `mmd2_biased`), `hpc/bootstrap_paired.py`, and sbi 0.27's `check_sbc`,
+  `check_tarp`, `LC2ST` (present in the installed 0.27.0 `[SANDBOX
+  2026-11-11]`)), `hpc/pipeline/evaluation/ppc.py` (the bench generator at
+  posterior draws); writes `metrics_<q>_<arm>_<D>.json` and
+  `paired_<q>_<D>.json`.
+- Open: Q-E4, Q-E5 (sec. 8).
+- Confirmed: no. Status: drafted 2026-11-11.
+
+### Block 21: the evaluation's figures (added 2026-11-11; drafted; roadmap synth, step S6)
+
+- Modules (proposed): `hpc/pipeline/evaluation/figures.py` (matplotlib;
+  reads the .npz and the metrics and computes nothing scientific), reusing
+  `hpc/npe_plots.py` and sbi's `sbc_rank_plot`, `plot_tarp`, `pairplot`,
+  `pp_plot_lc2st` where they fit.
+- The figures (D-126: the four families), per ensemble (one arm of one
+  search) and per comparison (the two arms of a search; R0 against R3):
+  calibration -- the expected-coverage curve (E2) with each member's and
+  the ensemble's, the marginal rank ECDFs and histograms, TARP; accuracy
+  and sharpness -- recovery (mhat and the 90 % interval against theta^ref,
+  per axis), zeta against contraction, sigma against sigma_0, l_i per
+  window and lbar_d per donor, the donor-paired forest plot of (E3);
+  posterior views and checks -- corner plots of example donors with
+  theta^ref, the posterior-predictive check, L-C2ST's local statistic;
+  embeddings and the search -- each member's embeddings of D_sim and of the
+  cohort on their first two principal components by condition with MMD^2,
+  the GP traces (L in proposal order and its running minimum, per arm), L
+  against L_pseudo_real over all trials, the members' learning curves (the
+  records' `history`).
+- Open: Q-E6 (sec. 8).
+- Confirmed: no. Status: drafted 2026-11-11.
+
+### Block 22: the evaluation's jobs and run sheet (added 2026-11-11; drafted; roadmap synth, step S6)
+
+- Modules (proposed): `hpc/pipeline/evaluation/jobs/eval_sample.pbs` and
+  `eval_report.pbs` (the quantities and the figures in one CPU job), each
+  with the roadmap's marker lines; `hpc/pipeline/README.md` (the run sheet);
+  `hpc/pipeline/tests/test_smoke_evaluation.py` (blocks 19-21 end to end
+  on T18's reduced project).
+- Confirmed: no. Status: drafted 2026-11-11.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
@@ -3445,8 +3764,9 @@ Claude; Confirmed: no]
 | `python3 hpc/pipeline/tests/test_smoke_inputs_check.py` | block 9: the inputs check (D-112's and D-113's rows included) | the Sbi-extractor checkout at or after D-113, numpy | about 1 s |
 | `python3 hpc/pipeline/tools/purge_outputs.py --config <file> --what search,best_fit,sim_bank [--confirm <CODE>]` | block 10: the list-then-delete of a project's search, best fit and simulated bank | davinci (the tests: a synthetic project) | seconds to list; minutes to delete hundreds of GB |
 | `python3 hpc/pipeline/tests/test_smoke_purge.py` | block 10's smoke test under the fake PBS | none (stdlib) | about 15 s |
-| `bash hpc/pipeline/run_pipeline.sh --project synth --dry-run` | blocks 15-17: the synthetic experiment's 13 stages and every kind of qsub line; submits nothing | the committed `synth.json`; davinci paths need not exist | seconds |
-| `python3 hpc/pipeline/tests/test_smoke_synthetic.py` | blocks 15-17's smoke test: T15 and T16 under the fake PBS, T17 end to end | numpy and scipy (the bench generator); T17 the training environment (torch, sbi, zuko, scikit-optimize) | about 40 s; 1.5 min more for T17 |
+| `bash hpc/pipeline/run_pipeline.sh --project synth --dry-run` | blocks 15-17: the synthetic experiment's 13 stages and every kind of qsub line; submits nothing [2026-11-11, block 18: 17 stages with v3; on the running state with `--accept-config-change`] | the committed `synth.json`; davinci paths need not exist | seconds |
+| `python3 hpc/pipeline/tests/test_smoke_synthetic.py` | blocks 15-18's smoke test: T15, T16 and T18's config, graph and dry run under the fake PBS, T17 and T18 end to end | numpy and scipy (the bench generator); T17 and T18's end to end the training environment (torch, sbi, zuko, scikit-optimize) | about 30 s; about 2 min more for T17 and T18 |
+| `python3 hpc/joint/stage4/smoke_test_joint_tune.py -k J37` | block 18's tuner check: `finalists --arm/--out` | numpy, scikit-optimize | seconds |
 
 ## 7. Not executable in the sandbox
 
@@ -3469,6 +3789,47 @@ so its checks from B4 on were not run here; blocks 11-14 do not touch the
 generator it tests (`bench_burst_generator.py`).
 
 ## 8. Open questions
+
+- The evaluation's open choices (sec. 2.5, blocks 19-22; raised
+  2026-11-11; Claude's proposals in brackets, none decided):
+  - Q-E1 n_post, the posterior draws per row [1,000 on every data set, 200
+    from each member; the HPD rank's Monte Carlo SD is then at most 0.016
+    per row];
+  - Q-E2 the rows [D_sim: the whole report split of split seed 1 -- about
+    1,000 donors of arm S (5 % of 20,000), two windows each, the rows the
+    members' own L_bar is computed on --, the NLL over both windows and the
+    calibration tests (HPD coverage, SBC, TARP) over one window per donor,
+    since rows that share theta make the uniformity tests anti-conservative
+    (the deck pack's G.6 (i): an exact posterior fails G2 in 0.975 of
+    replicates with 16 rows per theta, in 0.055 with one); the cohorts:
+    every window, the calibration curves' bands from a donor-cluster
+    bootstrap (12 windows share each theta*)];
+  - Q-E3 theta^dag outside the open box or on its boundary (D_R3+; in
+    expectation 1 - 0.895^3 = 0.28 of R3's donors, the free axes being
+    uniform under p_R; the bank's theta* gives the count) [the NLL and the
+    HPD coverage over the donors whose theta^dag is inside, with their
+    count; the marginal ranks, the recovery and the z-scores over every
+    donor, where an axis outside the box gives the extreme rank by
+    construction];
+  - Q-E4 the posterior-predictive check [for each cohort window, 20 draws of
+    the ensemble, each simulated by the bench generator with a fresh
+    nuisance and no gap (the model's own world), compared with the window
+    on the eight fixed window statistics of arm A_ref's summary; the same
+    on 324 rows of D_sim as the reference];
+  - Q-E5 L-C2ST [sbi 0.27's `LC2ST`, calibrated on 10,000 fresh windows of
+    arm S, one per theta, simulated in the evaluation job by the bench
+    generator at a seed of its own (the practical guide's case study, Fig.
+    10, trained it on 20k additional simulations `[KB, full text]`; D_sim's
+    1,000 donors would be few), one ensemble draw per window;
+    features theta and the eight fixed window statistics (not an embedding,
+    so one classifier design serves both arms); sbi's default MLP; the null
+    by 100 permutations; the local statistic at every cohort window and its
+    donor mean];
+  - Q-E6 where the figures are drawn and kept [one CPU job on davinci after
+    the sampling jobs; PNG at 200 dpi and PDF under
+    `<runs_root>/evaluation/`; the corner plots' example donors one per
+    condition, the donor of median lbar_d under the A1 ensemble, so the
+    choice is not tuned to an arm].
 
 - [closed 2026-11-03 by D-121: the searches rank on L, the evaluation reads
   L_pseudo_real] The synthetic experiment's search objective (sec. 2.4;
