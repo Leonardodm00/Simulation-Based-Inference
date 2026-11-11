@@ -58,6 +58,16 @@ theory:
     status: open
     closed_on:
     decision:
+  - id: T6.2
+    title: "Comparing two tuned arms: each arm's best trial refitted under one protocol"
+    summary: "How the two ensembles of a search with a term are chosen and trained so that their donor-paired comparison is fair (block 18): each arm represented by its own best trial on L, the same rule for both (D-121), and both refitted as M = 5 seed ensembles under one member protocol on a fresh donor split (split seed 1, train seeds 1-5, the same budget). What the comparison then measures -- each arm at its own best tuning -- and what it does not: the term switched on and off at fixed hyperparameters (an ablation); why seed m of one arm has no counterpart in the other, so the pairing is by donor, not by seed; the bias of a minimum read on the rows that chose it (selection bias) and why the fresh split and the cohort endpoint avoid it; the trials each arm received as search effort. The mixture, the pseudo-real NLL and the two-clause rule are T6.1's."
+    refs: ["SPEC 2.3 (the split; the best fit), 2.5 (E1, E3), block 18", "D-089", "D-121", "D-126", "deck pack 08_SEC_G G.1-G.3", "Varma & Simon 2006, doi:10.1186/1471-2105-7-91 (selection bias)", "Saravanan et al. 2020, PMC7906290 (hierarchical bootstrap)", "hpc/pipeline/stages/best_fit.py", "hpc/joint/stage4/joint_space.py"]
+    affects: [I18]
+    parent: TS6
+    depends_on: []
+    status: open
+    closed_on:
+    decision:
 
 implementation:
   # ---- steps of the plan (groups; blocks are added under them as they are written)
