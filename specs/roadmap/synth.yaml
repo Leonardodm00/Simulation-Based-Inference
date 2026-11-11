@@ -168,7 +168,7 @@ implementation:
     depends_on: [I18]
     needs_theory: []
     needs_hpc: true
-    jobs: ["hpc/pipeline/evaluation/jobs/eval_sample.pbs"]
+    jobs: ["hpc/pipeline/evaluation/jobs/eval_run.pbs"]
   - id: I20
     title: "the evaluation's quantities"
     summary: "From the .npz: NLL per window and donor, HPD expected coverage, SBC ranks, TARP, recovery, z-scores and contraction, the donor-paired differences with their bootstrap, the embeddings' MMD, the posterior-predictive check, L-C2ST (drafted)."
@@ -195,4 +195,4 @@ implementation:
     depends_on: [I19, I20, I21]
     needs_theory: []
     needs_hpc: true
-    jobs: ["hpc/pipeline/evaluation/jobs/eval_report.pbs"]
+    jobs: ["hpc/pipeline/evaluation/jobs/eval_run.pbs"]
