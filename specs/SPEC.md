@@ -429,7 +429,10 @@ epochs, patience 10 (block 17's values). Member m's posterior density is
 q_{q,a,m}(theta | x) = q_{omega_m}(theta | h_{psi_m}(x)), a density on
 (0, 1)^10 that is 0 outside the open box (the flow acts on the logit of the
 box: `hpc/joint/stage2/joint_model.py`,
-`z_score_theta="transform_to_unconstrained"`). The ensemble's density is
+`z_score_theta="transform_to_unconstrained"`). [amended 2026-11-11: 0 as
+mathematics; the code returns finite values outside the box (-114.8 nats
+with theta_8 = 1.05, -116.8 with theta_7 = 1, `[SANDBOX]`), its transform
+clamping, so the evaluation never reads the flow there (block 19).] The ensemble's density is
 the equal-weight mixture: for each fixed window x,
 
     q_{q,a}(theta | x) = (1/M) sum_{m=1}^{M} q_{q,a,m}(theta | x),     (E1)
@@ -491,7 +494,11 @@ n_post, per row i:
   them; its case study, Fig. 10, checks a five-member ensemble with expected
   coverage, SBC, L-C2ST and posterior-predictive statistics);
 - TARP's expected coverage (Lemos et al., ICML 2023, Algorithm 2, `[KB,
-  full text]`) with the reference points drawn uniformly from the box;
+  full text]`) with the reference points drawn uniformly from the box
+  [amended 2026-11-11, block 20: and, as the primary form, with reference
+  points read out linearly from the windows' statistics
+  (`npe_diagnostics.tarp`, `reference_mode="x"`), since uniform points cannot
+  see a posterior that ignores the data];
 - for each axis k: the posterior mean mhat_{i,k}(E) = (1/n_post) sum_s
   theta^(s)_{i,k}, the marginal SD sigma_{i,k}(E), the central 90 %
   interval; the z-score zeta_{i,k}(E) = (mhat_{i,k}(E) - theta^ref_{i,k}) /
@@ -3673,81 +3680,239 @@ Claude; Confirmed: no]
   finalist A2), its members' records arm A1 at split seed 1. Not run on
   davinci (README X1-X5).
 
-### Block 19: the evaluation's sampler (added 2026-11-11; drafted; roadmap synth, step S6)
+### Block 19: the evaluation's sampler (added 2026-11-11; confirmed 2026-11-11, D-127; roadmap synth, step S6)
 
-- Modules (proposed): `hpc/pipeline/evaluation/` (new; runs in
-  `envs.train`, never in the sequencer): `models.py` (the ensembles of a
-  synthetic project from its configuration and run folders, E_{q,a} for
-  every search and arm; a member rebuilt from its record's `config` and
-  loaded with `JointDSNNPE.load_checkpoint`), `data.py` (sec. 2.5's four
-  data sets from the banks: D_sim by the members' split, R0's and R3's
-  windows with theta*, donor and condition, theta^dag), `sample.py` (the
-  job's entry point), `jobs/eval_sample.pbs` (one job per ensemble, with
-  the roadmap's marker lines).
-- Public API (proposed): `sample.py --config <synth.json> --ensemble
-  <q>:<arm> --out <dir>` writes, for each data set D the ensemble is scored
-  on, `<dir>/<q>_<arm>_<D>.npz`: `theta_ref` (n, 10) float64, `donor` (n,)
-  int64, `cls` (n,) int64, `logq_ref_members` (n, M) float64 (log
-  q_{q,a,m}(theta^ref_i | x_i)), `logq_ref` (n,) float64 (the mixture
-  (E1)), `draws` (n, n_post, 10) float32 (n_post / M from each member, in
-  member order), `logq_draws` (n, n_post) float64 (the mixture's log
-  density at each draw), `z` (M, n, e) float32 (each member's embedding),
-  and for D_R3+ `in_box` (n,) bool.
-- Rule (proposed): each member's NLL at theta^ref_i equals its own
-  `_perrow.npz` value on the rows both score (D_sim's report rows, the
-  cohort's windows) to float32 roundoff -- the rebuild's oracle.
-- Open: Q-E1, Q-E2, Q-E3 (sec. 8).
-- Confirmed: no (the layout and the file contract are Claude's proposal of
-  2026-11-11).
-- Status: drafted 2026-11-11.
+- Modules: `hpc/pipeline/evaluation/__init__.py`, `ev_config.py`,
+  `ev_plan.py`, `ev_models.py`, `ev_data.py`, `ev_simulate.py`,
+  `ev_sample.py`, `_evalpath.py` (new; the `ev_` prefix because the DSN
+  tree, which puts itself on `sys.path` at run time, has its own
+  `metrics.py` and `evaluate.py`; they run in `envs.train` and never in the
+  sequencer, which imports none of them; `ev_config` and `ev_plan` import
+  the standard library and the pipeline's own modules only, so that block
+  22's launcher runs on the login node's python),
+  `hpc/pipeline/projects/synth/synth_eval.json` (new: the evaluation's
+  values; a file of its own, so that the running chain's `synth.json` is
+  never touched), `hpc/pipeline/tests/test_smoke_evaluation.py` (new;
+  checks E19*).
+- Public API: `ev_config.load(path) -> EvalConfig`; `ev_plan.ensembles(cfg)
+  -> [Ensemble]` (name `<q>:<arm>`, stem `<q>_<arm>`, search q, arm, folder,
+  member records, cohorts), `ev_plan.find(cfg, name)`,
+  `ev_plan.calbank_build(cfg, ecfg)` (the calibration bank's builder
+  arguments per shard), `ev_plan.sim_bank_glob(cfg)`;
+  `ev_models.rebuild(record_path, index) -> (JointDSNNPE in eval mode,
+  info)`; `ev_data.sim_index(cfg)`,
+  `ev_data.report_rows(index, fracs, seed, split_hash)`,
+  `ev_data.calibration_rows(donor)`, `ev_data.cohort(cfg, name)`,
+  `ev_data.pseudo_true(theta, gap_spec) -> (theta_dag, in_box, delta)`;
+  `ev_simulate.fixed_stats(x) -> (n, 8)`, `ev_simulate.windows_at(theta,
+  latent_spec, seed, ncpus) -> (n, W)`;
+  `python3 hpc/pipeline/evaluation/ev_sample.py --config <tag>.json
+  --eval-config <tag>_eval.json --ensemble <q>:<arm>` (exit 0 with the pass
+  line `EVAL SAMPLE OK: <stem>`, 2 on its arguments, 3 on a refusal).
+- Rule (sec. 2.5; D-126, D-127):
+  - the ensembles: for each search q, `<runs_root>/<q>/<tag>_best` and,
+    once it has its `BEST_FIT_COMPLETE.json`, `<tag>_best_alt` (block 18);
+    an ensemble's arm is its members' records' `arm`, which must agree; its
+    cohorts are every entry of `synthetic.real` for campaign S-A1 (D-122)
+    and q.real otherwise;
+  - a member is rebuilt from its record's `config` and `<stem>_ckpt.pt`:
+    the backbone by the runner's `make_backbone` (A_ref's
+    `FixedStatsSummary`), the flow by `build_joint_model` with the prior
+    BoxUniform on (0, 1)^d and, for sbi's shapes, the first 64 training rows
+    of the record's split (its seed and fractions; the split's hash must
+    equal the record's), then `load_checkpoint` with its digest check;
+  - the oracle: each member's -log q at theta^ref on D_sim equals its
+    `_perrow.npz` `nll`, and on the search's own cohort its
+    `nll_pseudo_real`, within 1e-4 nats row for row, or the job refuses
+    naming the member (the rebuild reproduced a member exactly, 0.0,
+    `[SANDBOX 2026-11-11]`);
+  - the data sets: D_sim the report rows of the members' split, in global
+    row order; its calibration rows the first row of each donor (Q-E2); its
+    PPC rows the first `ppc_rows` calibration rows (Q-E4); D_<r> every window
+    of cohort r in bank order, theta^ref the bank's theta; D_<r>+ (files
+    `<stem>_<r>dag.npz`) for a cohort
+    whose sidecar `gap_spec` has the range shift at pi > 0: theta^dag with
+    delta = `latent_gap.free_axis_range_shift(GapSpec(**gap_spec))`, theta*_k
+    + delta on `BENCH_FREE_IDX`, axis 7 capped at (1 - L_7) / (U_7 - L_7)
+    (= 1) as `phi_to_bench_params` clips the duty, `in_box` = all(0 <
+    theta^dag < 1), the draws and the windows D_<r>'s;
+  - for each data set and member m: log q_m(theta^ref | x) where theta^ref is
+    in the open box and -inf elsewhere -- the flow is never read there, as
+    it returns finite values outside the box (-114.8 nats with theta_8 =
+    1.05, `[SANDBOX 2026-11-11]`: its logit transform clamps); n_post / M
+    draws from each member, in member order (`torch.manual_seed` per data
+    set and member); the mixture's log density (E1) at every draw, every
+    member evaluated at every draw, and the log density of each draw under
+    its own member; each member's embedding; the eight fixed statistics of
+    every window (`FixedStatsSummary`); [2026-11-11, at the build] the
+    densities at the draws embed each window once and evaluate the flow's
+    distribution, conditioned on the embeddings, at the draws by
+    broadcasting (sbi 0.27's `ZukoFlow.log_prob` expands the condition
+    before its embedding net and would embed each window n_post times;
+    the numbers are the same, E19c);
+  - the seeds are common to the ensembles (common random numbers, so that
+    two arms' paired differences carry no independent Monte Carlo noise of
+    the draws): member k's draws on data set D from `seed_of(seed, D) + k`,
+    D's posterior-predictive windows from `seed_of(seed, D, "ppc")`, the
+    calibration draws from `seed_of(seed, "cal")` [2026-11-11, at the
+    build];
+  - the posterior-predictive check (Q-E4): for each PPC row (the cohort's
+    windows; D_sim's PPC rows), the draws s = j n_post / ppc_draws, j = 0,
+    ..., ppc_draws - 1 (spread over the members), each simulated as one
+    window by the bench provider with the bank's latent spec (T_win, fs,
+    n_neurons), the default `NuisanceSpec` at ids of its own, no gap; the
+    eight statistics of each;
+  - L-C2ST's calibration (Q-E5): the calibration bank, `cal_n` windows of
+    arm S on the box prior, one well per donor, at its own seed (block
+    22's job, the arguments of `ev_plan.calbank_build`), one mixture draw
+    per window (a member uniformly at random, then its draw), and the
+    windows' statistics; the bank is checked before any sampling (the box
+    prior, a builder seed no bank of the project has, `cal_n` windows of as
+    many donors), so a refusal writes nothing;
+  - outputs, under `<out_root>/samples/`: `<stem>_<D>.npz` per data set,
+    `<stem>_cal.npz`, `<stem>_sample.json` (the records, the checkpoints'
+    sha256, the seeds, the oracle's largest difference, the timings).
+- The `.npz` of a data set: `theta_ref` (n, 10) f64, `in_box` (n,) bool,
+  `rows` (n,) int64 (bank rows), `donor`, `well`, `cls` (n,) int64,
+  `logq_ref_members` (n, M) f64, `logq_ref` (n,) f64, `draws` (n, n_post,
+  10) f32, `draw_member` (n_post,) int64, `logq_draws` (n, n_post) f32,
+  `logq_draws_own` (n, n_post) f32, `z` (M, n, E) f32, `stats` (n, 8) f32,
+  `calib` (n,) bool, `ppc_rows` (k,) int64 (indices into the n rows),
+  `ppc_draw_idx` (ppc_draws,) int64, `ppc_stats` (k, ppc_draws, 8) f32; the
+  calibration file: `theta` (cal_n, 10), `stats` (cal_n, 8), `draws`
+  (cal_n, 10), `member` (cal_n,).
+- EvalConfig (`synth_eval.json`): `out_root`, `seed`, `n_post` 1000 (Q-E1),
+  `batch_rows`, `ppc_rows` 324 and `ppc_draws` 20 (Q-E4), `cal_glob`,
+  `cal_n` 10000, `cal_shards`, `cal_seed`, `lc2st_null` 100 and
+  `lc2st_eval_draws` (Q-E5), `bootstrap_n`, `level` 0.95, `dpi` 200,
+  `formats` png and pdf (Q-E6), `ncpus`.
+- Test oracles (`test_smoke_evaluation.py`, on the reduced project of T18,
+  W 128): E19a the rebuild reproduces every member's `_perrow.npz` on D_sim
+  and on its cohort; E19b theta^dag maps through the unshifted affine map
+  onto the shifted map's values at theta* (`phi_to_bench_params`, float64
+  roundoff), axis 7 capped, `in_box` exact; E19c the mixture log density
+  equals log mean_m exp(log q_m) computed directly in float64; E19d the
+  npz contract (keys, shapes, dtypes), the draws n_post / M per member,
+  the same seed giving identical files; E19e the PPC windows' statistics
+  finite, one window per draw; a calibration bank of one window per theta.
+  [2026-11-11, at the build] E19a also refuses a record of another split
+  and a folder of two arms and lists an incomplete one; E19c also compares
+  the embed-once densities with sbi's `log_prob` (equal in one batch, 0.0
+  in the sandbox; float32 roundoff in batches of another shape, 1.1e-5
+  nats, under the oracle's 1e-4); E19d also the seeds common to the
+  ensembles and five refusals that write nothing; E19e recomputes the PPC
+  statistics from the stored draws in one process (the sampler's two give
+  the same bytes) and checks the calibration bank's arguments against
+  `calbank_build`. Six mutations of the code (the mixture's -log M, the
+  duty's cap, the members' order of draws, the PPC draws' spread, the flow
+  read outside the box, windows misaligned with their draws) each fail a
+  check.
+- Confirmed: yes 2026-11-11 (D-127: Q-E1..Q-E6 as proposed).
+- Status: smoke-tested 2026-11-11 (`test_smoke_evaluation.py` E19a-e: 5
+  pass and 1 skip (convergence, not a discretisation) in 100 s
+  `[SANDBOX]`, the reduced project built from scratch in 66 s; the six
+  mutations above each caught). Not run on davinci: the sampling of the
+  real ensembles is block 22's job (W 18,000, n_post 1,000, M 5; a bench
+  window of that size simulates in 0.05 s `[SANDBOX]`).
 
-### Block 20: the evaluation's quantities (added 2026-11-11; drafted; roadmap synth, step S6)
+### Block 20: the evaluation's quantities (added 2026-11-11; confirmed 2026-11-11, D-127; roadmap synth, step S6)
 
-- Modules (proposed): `hpc/pipeline/evaluation/metrics.py` (sec. 2.5's
-  quantities from the .npz: the NLL and the donor means, gamma and (E2),
-  the marginal ranks, TARP, the recovery, the z-scores and contraction, (E3)
-  with its bootstrap, the embeddings' MMD^2; reusing
-  `hpc/npe_diagnostics.py` (`expected_coverage`,
-  `simulation_based_calibration`, `tarp`, `posterior_contraction`,
-  `mmd2_biased`), `hpc/bootstrap_paired.py`, and sbi 0.27's `check_sbc`,
-  `check_tarp`, `LC2ST` (present in the installed 0.27.0 `[SANDBOX
-  2026-11-11]`)), `hpc/pipeline/evaluation/ppc.py` (the bench generator at
-  posterior draws); writes `metrics_<q>_<arm>_<D>.json` and
-  `paired_<q>_<D>.json`.
-- Open: Q-E4, Q-E5 (sec. 8).
-- Confirmed: no. Status: drafted 2026-11-11.
+- Modules: `hpc/pipeline/evaluation/ev_metrics.py` (new), checks E20* of
+  `test_smoke_evaluation.py`.
+- Public API: `python3 hpc/pipeline/evaluation/ev_metrics.py --config
+  <tag>.json --eval-config <tag>_eval.json [--ensemble <q>:<arm> ...]`
+  writes, under `<out_root>/metrics/`, `<stem>_<D>.json` per ensemble and
+  data set, `paired_<q>_<D>.json` per search with a term and data set, and
+  `search_<q>.json` per search (pass line `EVAL METRICS OK`).
+- Rule (sec. 2.5's quantities; estimators):
+  - NLL: l_i(E) = -logq_ref; the mean over the in-box rows; the donor
+    means lbar_d(E); each member's mean;
+  - HPD: gamma_i(E) = (1/n_post) #{s : logq_draws[i,s] > logq_ref[i]}; C_E(beta)
+    on beta = 0, 0.01, ..., 1 (E2); D_sim over its calibration rows (Q-E2),
+    with a binomial 95 % band; a cohort over every window, with a 95 %
+    band from `bootstrap_n` resamples of the donors; the same per member
+    from `logq_draws_own` and `logq_ref_members` on its own draws;
+  - SBC: `npe_diagnostics.simulation_based_calibration` (ranks, KS p-values)
+    on the same rows, the ten axes' family by `holm_bonferroni`;
+  - TARP: `npe_diagnostics.tarp` twice, with reference points read out
+    linearly from the windows' eight statistics (`reference_mode="x"`,
+    primary) and drawn uniformly (`"random"`, Lemos et al.'s experiments);
+    the x-dependent form because x-independent points cannot see a
+    posterior that ignores the data (the function's docstring: 1 of 12
+    detections against 12 of 12, on a posterior equal to the prior) -- an
+    amendment to sec. 2.5, which named the uniform points only;
+  - recovery: mhat, sigma, the 5 % and 95 % quantiles per row and axis, the
+    90 % interval's coverage per axis, zeta, the contraction 1 -
+    mean_i sigma_{i,k}^2 / (1/12);
+  - paired (E3): for each search q with a term and each data set D it
+    shares, d_i = l_i(E_{q,A(q)}) - l_i(E_{q,A1}) on the in-box rows,
+    `bootstrap_paired.paired_bootstrap(d, groups=donor, within="all")` (the
+    primary scheme; one copy of each donor), sigma_seed the larger over the
+    two arms of the SD over members of the members' mean NLL on D, and the
+    verdict of G.2: |Dbar| > 2 sigma_seed and the interval excluding 0;
+  - embeddings: for each member, `npe_diagnostics.embedding_overlap(z on
+    D_sim, z on the cohort)` (MMD^2 at the median bandwidth, geodesic, with
+    its permutation null), and the first two principal components of the
+    pooled embeddings (`sklearn.decomposition.PCA`);
+  - PPC: for each PPC row and statistic, the rank of the observed value
+    among the `ppc_draws` simulated ones and whether it lies outside their
+    5-95 % range; per data set the fraction outside, per statistic;
+  - L-C2ST (Q-E5): sbi's `LC2ST` on the calibration file (thetas, the
+    statistics as xs, the draws), `lc2st_null` permutation trials, the
+    statistic and p-value at each cohort window with `lc2st_eval_draws` of
+    its draws, and at D_sim's PPC rows as the reference; per donor the mean;
+  - the search: trials in proposal order (`pipeline_rounds.json`), each
+    with its arm, `nll` and `L_pseudo_real`; every member's `history`.
+- Confirmed: yes 2026-11-11 (D-127). Status: drafted 2026-11-11.
 
-### Block 21: the evaluation's figures (added 2026-11-11; drafted; roadmap synth, step S6)
+### Block 21: the evaluation's figures (added 2026-11-11; confirmed 2026-11-11, D-127; roadmap synth, step S6)
 
-- Modules (proposed): `hpc/pipeline/evaluation/figures.py` (matplotlib;
-  reads the .npz and the metrics and computes nothing scientific), reusing
-  `hpc/npe_plots.py` and sbi's `sbc_rank_plot`, `plot_tarp`, `pairplot`,
-  `pp_plot_lc2st` where they fit.
-- The figures (D-126: the four families), per ensemble (one arm of one
-  search) and per comparison (the two arms of a search; R0 against R3):
-  calibration -- the expected-coverage curve (E2) with each member's and
-  the ensemble's, the marginal rank ECDFs and histograms, TARP; accuracy
-  and sharpness -- recovery (mhat and the 90 % interval against theta^ref,
-  per axis), zeta against contraction, sigma against sigma_0, l_i per
-  window and lbar_d per donor, the donor-paired forest plot of (E3);
-  posterior views and checks -- corner plots of example donors with
-  theta^ref, the posterior-predictive check, L-C2ST's local statistic;
-  embeddings and the search -- each member's embeddings of D_sim and of the
-  cohort on their first two principal components by condition with MMD^2,
-  the GP traces (L in proposal order and its running minimum, per arm), L
-  against L_pseudo_real over all trials, the members' learning curves (the
-  records' `history`).
-- Open: Q-E6 (sec. 8).
-- Confirmed: no. Status: drafted 2026-11-11.
+- Modules: `hpc/pipeline/evaluation/ev_figures.py` (new; matplotlib; reads the
+  samples and the metrics and computes nothing scientific), checks E21*.
+- Public API: `python3 hpc/pipeline/evaluation/ev_figures.py --config ...
+  --eval-config ...` writes `<out_root>/figures/<family>/<name>.<fmt>`, a
+  `FIGURES.md` index with one line per figure, pass line `EVAL FIGURES OK:
+  <n> figure(s)`.
+- The figures (D-126, D-127; one sentence of caption each in the index):
+  per ensemble -- calibration: coverage curves (members thin, ensemble
+  thick, the band) on D_sim and each cohort, SBC ECDF differences with the
+  KS band and rank histograms, TARP (both reference modes); accuracy and
+  sharpness: recovery per axis, zeta against contraction, sigma against
+  sigma_0, l_i per window and lbar_d per donor; posterior views and checks:
+  corner plots of the example donors (one per condition, median lbar_d
+  under the search's A1 ensemble, Q-E6), the PPC per statistic and its
+  ranks, L-C2ST per window and per donor; embeddings: the first two
+  principal components of D_sim and the cohort by condition, with MMD^2;
+  per search -- the two arms' coverage, NLL, PPC and L-C2ST overlaid, the
+  donor-paired forest plot (E3) with 2 sigma_seed; across searches -- Dbar
+  with its interval and 2 sigma_seed for every search and data set, the
+  ensembles' L_pseudo_real on R0 and R3; the search -- L in proposal order
+  with its running minimum per arm, L against L_pseudo_real over all
+  trials, the members' learning curves.
+- Confirmed: yes 2026-11-11 (D-127). Status: drafted 2026-11-11.
 
-### Block 22: the evaluation's jobs and run sheet (added 2026-11-11; drafted; roadmap synth, step S6)
+### Block 22: the evaluation's jobs and run sheet (added 2026-11-11; confirmed 2026-11-11, D-127; roadmap synth, step S6)
 
-- Modules (proposed): `hpc/pipeline/evaluation/jobs/eval_sample.pbs` and
-  `eval_report.pbs` (the quantities and the figures in one CPU job), each
-  with the roadmap's marker lines; `hpc/pipeline/README.md` (the run sheet);
-  `hpc/pipeline/tests/test_smoke_evaluation.py` (blocks 19-21 end to end
-  on T18's reduced project).
-- Confirmed: no. Status: drafted 2026-11-11.
+- Modules: `hpc/pipeline/evaluation/jobs/eval_calbank.pbs` (the calibration
+  bank: `build_latent_bank.py --arm S --prior box --wells-per-donor 1
+  --n-per-theta 1 --n-windows 1` at `cal_seed`, `cal_shards` shards, the
+  simulated bank's other options: `ev_plan.calbank_build`; [2026-11-11:
+  `--n-per-theta 1` added, the builder refusing its default 2 with one well
+  per donor]), `eval_sample.pbs`
+  (one ensemble; marker stage I19), `eval_report.pbs` (metrics then
+  figures; marker stage I22), `hpc/pipeline/evaluation/submit_eval.sh`
+  (the launcher: the calibration bank if absent, one sampling job per
+  ensemble after it, the report job after them; `--dry-run` prints every
+  `qsub` line), `ev_report.py` (the report job's entry), the README's run sheet
+  "synth: the evaluation", checks E22* (the launcher's dry run, the job
+  scripts' environment block, the evaluation end to end on the reduced
+  project).
+- Rule: every job script activates `envs.train` with `set +u` before the
+  conda hook (hpc-git-delivery), carries the roadmap's marker lines, and
+  runs its Python with the repository's paths; a sampling job of an
+  ensemble whose best fit is not complete is not submitted (the launcher
+  names it); nothing of the pipeline's state is read or written.
+- Confirmed: yes 2026-11-11 (D-127). Status: drafted 2026-11-11.
 
 ## 6. Pipeline entry points
 
@@ -3790,7 +3955,8 @@ generator it tests (`bench_burst_generator.py`).
 
 ## 8. Open questions
 
-- The evaluation's open choices (sec. 2.5, blocks 19-22; raised
+- [closed 2026-11-11 by D-127: the six proposals below confirmed as they
+  stand] The evaluation's open choices (sec. 2.5, blocks 19-22; raised
   2026-11-11; Claude's proposals in brackets, none decided):
   - Q-E1 n_post, the posterior draws per row [1,000 on every data set, 200
     from each member; the HPD rank's Monte Carlo SD is then at most 0.016

@@ -1,0 +1,54 @@
+{
+  "_comment": "The evaluation of the synthetic experiment's ensembles (specs/SPEC.md sec. 2.5 and blocks 19-22; D-126, D-127 of claude/SBI_decisions_and_ideas_log.md, project knowledge; the roadmap specs/roadmap/synth.yaml, step S6). A file of its own: the pipeline's synth.json is never touched, so the running chain is not asked to accept a change. Read by hpc/pipeline/evaluation/ev_config.py: every key is required, there are no defaults in the code, and a key starting with '_' documents the key after it and is ignored. Values marked [Claude's] are logistics, not the user's decisions.",
+
+  "_out_root": "Absolute. samples/ (block 19), metrics/ (block 20), figures/ (block 21), calbank/ and logs/ (block 22) under it; beside the best fits (Q-E6).",
+  "out_root": "/davinci-1/home/ldellamea/runs/synth/evaluation",
+
+  "_seed": "The base of every seed of the evaluation (the draws, the posterior-predictive windows, the calibration draws, the bootstraps, L-C2ST); common to the ensembles (common random numbers). [Claude's]",
+  "seed": 4242,
+
+  "_n_post": "Posterior draws per row, n_post / M from each member (Q-E1: 1,000, 200 from each of the five members).",
+  "n_post": 1000,
+
+  "_batch_rows": "Windows per batch through a member (memory, not results). [Claude's]",
+  "batch_rows": 64,
+
+  "_ppc_rows": "D_sim's posterior-predictive rows: the first ppc_rows of its calibration rows (Q-E4: 324, a cohort's size).",
+  "ppc_rows": 324,
+
+  "_ppc_draws": "Draws simulated per posterior-predictive row, spread over the members (Q-E4: 20).",
+  "ppc_draws": 20,
+
+  "_cal_glob": "The calibration bank's shards (Q-E5; built by block 22's eval_calbank job under out_root/calbank).",
+  "cal_glob": "/davinci-1/home/ldellamea/runs/synth/evaluation/calbank/shard_*.npz",
+
+  "_cal_n": "The calibration bank's windows, one per theta (Q-E5: 10,000).",
+  "cal_n": 10000,
+
+  "_cal_shards": "The calibration bank's shards (cal_n divisible by them); one job each. [Claude's]",
+  "cal_shards": 5,
+
+  "_cal_seed": "The calibration bank's builder seed: distinct from the banks' seeds (sim 1000, R0 2000, R3 3000), so no nuisance draw repeats (F-aw). [Claude's]",
+  "cal_seed": 5000,
+
+  "_lc2st_null": "L-C2ST's permutation trials for the null (Q-E5: 100).",
+  "lc2st_null": 100,
+
+  "_lc2st_eval_draws": "Posterior draws per window at which L-C2ST's statistic is evaluated (at most n_post). [Claude's]",
+  "lc2st_eval_draws": 200,
+
+  "_bootstrap_n": "Resamples of every bootstrap (the donor-cluster bands, the paired intervals). [Claude's]",
+  "bootstrap_n": 10000,
+
+  "_level": "The level of the bands and intervals.",
+  "level": 0.95,
+
+  "_dpi": "The figures' resolution (Q-E6: 200).",
+  "dpi": 200,
+
+  "_formats": "The figures' file formats (Q-E6: PNG and PDF).",
+  "formats": ["png", "pdf"],
+
+  "_ncpus": "Worker processes of the simulations and of the report's per-ensemble work; the jobs' cores. [Claude's]",
+  "ncpus": 8
+}
