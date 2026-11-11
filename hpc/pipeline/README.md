@@ -816,6 +816,47 @@ cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --accept-config-ch
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project synth --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/synth/pipeline.log
 ```
 
+### synth: the evaluation (2026-11-11, blocks 19-22, D-126, D-127)
+
+The evaluation is a tool beside the pipeline, not a stage of it (`hpc/pipeline/evaluation/`): it reads
+the best fits' members and the banks and writes under `/davinci-1/home/ldellamea/runs/synth/evaluation`
+(the `out_root` of `projects/synth/synth_eval.json`). The running chain's `synth.json` and its code are
+not touched, so the pull below does not make the chain refuse. One command, `submit_eval.sh`, submits
+what is missing: the calibration bank of L-C2ST (5 jobs of 1 core, 2,000 windows each, a few minutes),
+one sampling job per complete ensemble (8 cores, 64gb, at most 24 h; block 19) after the bank, and the
+report (blocks 20-21) after the samplings. It can be run again at any time: what is done or queued is
+not submitted twice, and an ensemble whose best fit is not complete yet is named and left for a later
+run. The evaluation's jobs are outside the pipeline's 120-core cap (`resources.max_cores` counts the
+pipeline's jobs only).
+
+```
+# E1. the code; pass: the last line names the block-22 commit or a later one
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin sci/pipeline && git log --oneline -1
+
+# E2. the job script's check (needs no training; a few seconds); pass line "1 of 1 checks pass"
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && python3 hpc/pipeline/tests/test_smoke_evaluation.py test_e22b_job_script 2>&1 | tail -1
+
+# E3. the dry run of the calibration bank and the samplings; pass: exit 0, no REFUSE or ABORT line, five
+#     "calbank:<k> would be submitted", five "sample:<q>:<arm> would be submitted" (S-A1:A1, S-A2-R0:A1,
+#     S-A5-R0:A5, S-A2-R3:A2, S-A5-R3:A1), four "not complete:" lines naming the synth_best_alt folders still
+#     training, and "EVAL DRY RUN: 10 job(s) would be submitted, 0 done, 0 live; nothing written"
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what calbank,sample --dry-run 2>&1 | grep -E "REFUSE|ABORT|would be submitted|not complete|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+
+# E4. the submission; pass line: EVAL SUBMIT OK: 10 job(s) submitted, 0 done, 0 live
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what calbank,sample
+
+# E5. any time: the jobs, then their pass lines. Each log ends with "EVAL JOB EXIT: 0"; a sampling job's
+#     also has "EVAL SAMPLE OK: <stem> (<n> file(s), M=5, n_post=1000, oracle max ... nats, ... s)", 5 files
+#     for S-A1 (sim, R0, R3, R3dag, cal) and 3 or 4 for the others. A REFUSE line names its cause (a member
+#     that does not reproduce its own per-row NLL, a calibration bank of another build)
+qstat -u ldellamea | grep ev_ ; grep -h "EVAL SAMPLE OK\|REFUSE\|EVAL JOB EXIT" /davinci-1/home/ldellamea/runs/synth/evaluation/jobs/logs/*.log
+
+# E6. once the four best fits of the other arm are complete (the pipeline's log has four "best_fit_alt_<q>:
+#     BEST FIT COMPLETE"), E3 and E4 again: the dry run shows ten "done" and four "sample:<q>:<arm> would be
+#     submitted"; the submission "EVAL SUBMIT OK: 4 job(s) submitted, 10 done, 0 live"
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what calbank,sample --dry-run 2>&1 | grep -E "REFUSE|ABORT| done |would be submitted|not complete|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+```
+
 ## Tests
 
 ```
@@ -834,6 +875,7 @@ python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, 
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # block 9, tools/inputs_check.py, about 1 s, numpy and the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_synthetic.py     # blocks 15-18, the synthetic kind: about 30 s with numpy and scipy, 2 min more with torch, sbi, zuko, skopt (T17 and T18 end to end)
+python3 hpc/pipeline/tests/test_smoke_evaluation.py    # blocks 19-22, the evaluation: builds a reduced project once (about 1 min, torch, sbi, zuko, skopt), then about 1 min; EVAL_FIXTURE=<dir> reuses one, EVAL_KEEP=1 keeps it
 ```
 
 Block 1's smoke test under the fake PBS; blocks 4-6 (the runner) are tested by

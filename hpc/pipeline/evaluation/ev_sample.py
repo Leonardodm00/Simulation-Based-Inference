@@ -14,7 +14,10 @@ Writes under <out_root>/samples/ (or --out):
     <stem>_cal.npz     L-C2ST's calibration: the calibration bank's theta and
                        statistics, one mixture draw per window
     <stem>_sample.json the provenance: members, checkpoints' sha256, seeds,
-                       the rebuild oracle, the timings
+                       the rebuild oracle, the timings; the sampling's values
+                       (ev_config.SAMPLE_PARAMS) and the best fit's
+                       BEST_FIT_COMPLETE.json digest, by which block 22's
+                       launcher tells a current sample from a stale one
 Pass line: EVAL SAMPLE OK: <stem> ...; exit 2 on the arguments, 3 on a
 refusal (a member that does not reproduce its own per-row NLL, a bank of
 another split, a calibration bank that is not independent).
@@ -348,6 +351,9 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
 
     prov = {"schema": "eval_sample/1", "ensemble": e.name, "stem": e.stem, "kind": e.kind,
             "folder": e.folder, "members": infos, "cohorts": list(e.cohorts),
+            "sample_params": ecfg.sample_params(),
+            "best_fit_complete_sha256": ev_plan.sha256_file(
+                os.path.join(e.folder, "BEST_FIT_COMPLETE.json")),
             "n_post": ecfg.n_post, "ppc_draws": ecfg.ppc_draws, "ppc_rows": ecfg.ppc_rows,
             "seeds": seeds, "oracle_max_abs_nats": oracle, "oracle_tol": ORACLE_TOL,
             "sim_bank": sim_paths, "cal_bank": ecfg.cal_glob, "files": written,

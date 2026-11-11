@@ -8,7 +8,8 @@ environment, PBS_ARRAY_INDEX per element of a -J array (elements run in
 parallel), stdout+stderr to the -o path (^array_index^ substituted) or to
 <spool>/<id>.o. `-W depend=afterok:<id>` waits for that job and refuses to
 run when it failed (the job then finishes with Exit_status -1 and a comment),
-which is what the sequencer must see as a failure -- for a PLAIN job. For
+which is what the sequencer must see as a failure -- for a PLAIN job;
+`afterok:<id>:<id>...` waits for each (2026-11-11, the evaluation's launcher). For
 an ARRAY (`<n>[]`) the dependency is ordering only, as measured on
 davinci's PBS Pro (D-006, 2026-09-21): the dependent job runs whatever the
 elements' exit codes, and the gate tools are what refuse a partial result.
@@ -284,7 +285,11 @@ def _wait_dependency(dep, kind="afterok", self_num=None):
     """Block until the dependency finished; afterany: True once it finished;
     afterok: True iff it exited 0 -- or, for
     an array dependency, True once it finished (ordering only, D-006), unless
-    one of the two switches of the module docstring says otherwise."""
+    one of the two switches of the module docstring says otherwise. Several
+    ids joined by ':' (PBS's `afterok:<id>:<id>`, the evaluation's launcher,
+    2026-11-11): True iff each of them is."""
+    if ":" in dep:
+        return all(_wait_dependency(d, kind, self_num) for d in dep.split(":") if d)
     num = int(dep.split("[")[0].split(".")[0])
     is_array = "[" in dep
     while True:

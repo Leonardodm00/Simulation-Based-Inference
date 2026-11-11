@@ -49,6 +49,14 @@
   "_formats": "The figures' file formats (Q-E6: PNG and PDF).",
   "formats": ["png", "pdf"],
 
-  "_ncpus": "Worker processes of the simulations and of the report's per-ensemble work; the jobs' cores. [Claude's]",
-  "ncpus": 8
+  "_ncpus": "Worker processes of the simulations and of the report's per-ensemble work when a command is run by hand; a job passes its own cores (jobs below). [Claude's]",
+  "ncpus": 8,
+
+  "_jobs": "Block 22: the PBS queue and each kind of job's resources -- calbank (one job per shard of the calibration bank), sample (one per ensemble: block 19's ev_sample.py), report (one: metrics, then figures). Sized for W 18,000 windows: a bench window simulates in 0.05 s, the members' densities at 1,000 draws dominate the sampling. [Claude's]",
+  "jobs": {
+    "queue": "cpu",
+    "calbank": {"ncpus": 1, "mem": "16gb", "walltime": "04:00:00"},
+    "sample": {"ncpus": 8, "mem": "64gb", "walltime": "24:00:00"},
+    "report": {"ncpus": 8, "mem": "64gb", "walltime": "24:00:00"}
+  }
 }

@@ -147,3 +147,21 @@ def calbank_build(cfg, ecfg):
 def sim_bank_glob(cfg):
     """The simulated bank's shards (every search's)."""
     return os.path.join(bank_dir(cfg, "sim"), "shard_*.npz")
+
+
+def sample_json(ecfg, stem):
+    """`<out_root>/samples/<stem>_sample.json`, block 19's provenance."""
+    return os.path.join(ecfg.sub("samples"), "%s_sample.json" % stem)
+
+
+def report_inputs(cfg, ecfg):
+    """What a report is made of (block 22): the sha256 of every complete
+    ensemble's sample provenance that exists, by stem, and the report's
+    values (ev_config.REPORT_PARAMS). A report whose recorded inputs differ
+    is stale."""
+    samples = {}
+    for e in ensembles(cfg):
+        pj = sample_json(ecfg, e.stem)
+        if os.path.isfile(pj):
+            samples[e.stem] = sha256_file(pj)
+    return {"samples": samples, "params": ecfg.report_params()}

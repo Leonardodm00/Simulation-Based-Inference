@@ -1,0 +1,91 @@
+#!/bin/bash
+# hpc/pipeline/evaluation/jobs/eval_run.pbs -- one job of the evaluation = one
+# command line (specs/SPEC.md block 22). Submitted by the evaluation's
+# launcher (hpc/pipeline/evaluation/submit_eval.sh, ev_submit.py), never by
+# the pipeline's sequencer:
+#
+#   qsub -N <name> -q <queue> -l select=1:ncpus=<n>:mem=<mem> -l walltime=<w> \
+#        -j oe -o <log> [-W depend=afterok:<id>[:<id>...]] \
+#        -v ARGV_FILE=<file>,ENV_NAME=<env>,WORKDIR=<checkout>,SKIP_CONDA=0,JOBS_DIR=<checkout>/hpc/pipeline/jobs,WORK_ROOT=<work root>,ROADMAP_STAGE=<I19|I22> \
+#        hpc/pipeline/evaluation/jobs/eval_run.pbs
+#
+# Variables (qsub -v):
+#   ARGV_FILE      the command, one argument per line (no quoting, no shell)
+#   ENV_NAME       the conda environment (the configuration's envs.train)
+#   WORKDIR        the directory to run in: the SBI checkout (paths.sbi_dir)
+#   SKIP_CONDA     1 = run under the shell's own python (the tests)
+#   JOBS_DIR       the pipeline's hpc/pipeline/jobs: activate_env.sh, the
+#                  activation with its fallback (D-111): conda with `set -u`
+#                  off across the hook and the activate, then the
+#                  environment's own folder
+#   WORK_ROOT      the pipeline's work root (the environments' recorded
+#                  prefixes)
+#   ROADMAP_STAGE  the roadmap stage the job marks on the hpc-status branch
+#                  (specs/roadmap/hpc_status.sh): I19 for the calibration
+#                  bank and the sampling, I22 for the report; empty = no
+#                  marker. ROADMAP_DISABLE=1 turns the markers off.
+#
+# Exit 90 = WORKDIR unreachable, 91 = no ARGV_FILE, 95 = no activate_env.sh
+# in JOBS_DIR, 96 = the environment cannot start on this node; the
+# command's own status otherwise. The last line is `EVAL JOB EXIT: <n>`;
+# the pass line of a job is its command's (EVAL SAMPLE OK, EVAL REPORT OK,
+# the builder's shard line).
+#
+# Pure ASCII, LF only.
+
+set -u
+
+: "${ARGV_FILE:?ARGV_FILE is unset (qsub -v ARGV_FILE=...)}"
+: "${WORKDIR:=${PBS_O_WORKDIR:-$PWD}}"
+: "${ENV_NAME:=}"
+: "${SKIP_CONDA:=0}"
+: "${JOBS_DIR:=}"
+: "${WORK_ROOT:=}"
+: "${ROADMAP_STAGE:=}"
+export WORK_ROOT
+
+_end() {                  # <exit code>: the job's last line, and its end
+    echo "EVAL JOB EXIT: $1"
+    exit "$1"
+}
+
+if ! cd "$WORKDIR"; then
+    echo "EVAL JOB: cannot enter WORKDIR $WORKDIR"
+    _end 90
+fi
+if [ ! -f "$ARGV_FILE" ]; then
+    echo "EVAL JOB: no argv file at $ARGV_FILE"
+    _end 91
+fi
+
+if [ "$SKIP_CONDA" != "1" ]; then
+    if [ -z "$JOBS_DIR" ] || [ ! -f "$JOBS_DIR/activate_env.sh" ]; then
+        echo "EVAL JOB: no activate_env.sh in JOBS_DIR '$JOBS_DIR'"
+        _end 95
+    fi
+    . "$JOBS_DIR/activate_env.sh"
+    if ! pipeline_activate "$ENV_NAME"; then
+        echo "EVAL JOB: the environment $ENV_NAME cannot start on $(hostname)"
+        _end 96
+    fi
+fi
+
+# the roadmap's markers (specs/roadmap/hpc_status.sh): after the environment,
+# before the command; they never fail the job
+if [ -n "$ROADMAP_STAGE" ] && [ -f "$WORKDIR/specs/roadmap/hpc_status.sh" ]; then
+    export ROADMAP_STAGE
+    export ROADMAP_N_TASKS=1
+    . "$WORKDIR/specs/roadmap/hpc_status.sh"
+    roadmap_job_start
+    trap 'roadmap_job_end $?' EXIT
+fi
+
+ARGV=()
+while IFS= read -r line || [ -n "$line" ]; do
+    ARGV+=("$line")
+done < "$ARGV_FILE"
+
+echo "EVAL JOB: host $(hostname), job ${PBS_JOBID:-<none>}, ncpus ${NCPUS:-<unset>}, env ${ENV_NAME:-<none>}, stage ${ROADMAP_STAGE:-<none>}"
+echo "EVAL JOB: ${ARGV[*]}"
+"${ARGV[@]}"
+_end "$?"

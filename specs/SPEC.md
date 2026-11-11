@@ -3893,26 +3893,84 @@ Claude; Confirmed: no]
 
 ### Block 22: the evaluation's jobs and run sheet (added 2026-11-11; confirmed 2026-11-11, D-127; roadmap synth, step S6)
 
-- Modules: `hpc/pipeline/evaluation/jobs/eval_calbank.pbs` (the calibration
-  bank: `build_latent_bank.py --arm S --prior box --wells-per-donor 1
-  --n-per-theta 1 --n-windows 1` at `cal_seed`, `cal_shards` shards, the
-  simulated bank's other options: `ev_plan.calbank_build`; [2026-11-11:
-  `--n-per-theta 1` added, the builder refusing its default 2 with one well
-  per donor]), `eval_sample.pbs`
-  (one ensemble; marker stage I19), `eval_report.pbs` (metrics then
-  figures; marker stage I22), `hpc/pipeline/evaluation/submit_eval.sh`
-  (the launcher: the calibration bank if absent, one sampling job per
-  ensemble after it, the report job after them; `--dry-run` prints every
-  `qsub` line), `ev_report.py` (the report job's entry), the README's run sheet
-  "synth: the evaluation", checks E22* (the launcher's dry run, the job
-  scripts' environment block, the evaluation end to end on the reduced
-  project).
-- Rule: every job script activates `envs.train` with `set +u` before the
-  conda hook (hpc-git-delivery), carries the roadmap's marker lines, and
-  runs its Python with the repository's paths; a sampling job of an
-  ensemble whose best fit is not complete is not submitted (the launcher
-  names it); nothing of the pipeline's state is read or written.
-- Confirmed: yes 2026-11-11 (D-127). Status: drafted 2026-11-11.
+- Modules: [amended 2026-11-11 at the build: one job script instead of
+  three, and the launcher in Python] `hpc/pipeline/evaluation/jobs/eval_run.pbs`
+  (one job = one command line, as the pipeline's `run_argv.pbs`: the
+  command one argument per line in `ARGV_FILE`, the activation by
+  `hpc/pipeline/jobs/activate_env.sh` (D-111: conda with `set -u` off across
+  the hook and the activate, then the environment's folder), then the
+  roadmap's markers with `ROADMAP_STAGE` from the launcher, I19 for the
+  calibration bank and the samplings, I22 for the report; exits 90, 91, 95,
+  96 or the command's; last line `EVAL JOB EXIT: <n>`),
+  `hpc/pipeline/evaluation/ev_submit.py` (the launcher, standard library
+  only) and `submit_eval.sh` (its wrapper on the login node: `--project
+  <tag>` reads `<tag>.json` and `<tag>_eval.json`, runs the launcher in
+  `envs.extract` as `run_pipeline.sh` does), `ev_report.py` (the report
+  job's entry: blocks 20 and 21, then `REPORT_COMPLETE.json`), the README's
+  run sheet "synth: the evaluation", `synth_eval.json`'s `jobs` (the queue
+  and each kind's ncpus, mem, walltime: calbank 1, 16gb, 4 h; sample 8,
+  64gb, 24 h; report 8, 64gb, 24 h, Claude's), checks E22* of
+  `test_smoke_evaluation.py`; `tests/fake_pbs/fake_pbs.py` learns
+  `afterok:<id>:<id>...` (several ids).
+- Public API: `bash hpc/pipeline/evaluation/submit_eval.sh --project <tag>
+  [--dry-run] [--what calbank,sample,report] [--resample <q>:<arm>,...|all]`
+  (= `ev_submit.py --config ... --eval-config ...`); exit 0 with `EVAL SUBMIT
+  OK: <n> job(s) submitted, <d> done, <l> live` (`EVAL DRY RUN: ... nothing
+  written`), 2 on the arguments or the configurations, 3 on a refusal
+  (nothing submitted), 4 when a qsub fails.
+- Rule: the units, each done, live (its job in `<out_root>/jobs/ledger.json`
+  queued, held or running, by `qstat -x -f`) or submitted:
+  - `calbank:<k>`, shard k of `ev_plan.calbank_build` (`build_latent_bank.py
+    --arm S --prior box --wells-per-donor 1 --n-per-theta 1 --n-windows 1`
+    at `cal_seed`, `cal_n / cal_shards` donors per shard, the simulated
+    bank's other options; [2026-11-11: `--n-per-theta 1` added, the builder
+    refusing its default 2 with one well per donor]): done when the shard
+    and its sidecar exist with the build's arguments; a sidecar of other
+    arguments, an unreadable one, or a shard index beyond the build is a
+    refusal, never overwritten;
+  - `sample:<q>:<arm>`, one per complete ensemble (`ev_plan.ensembles`):
+    done when its `<stem>_sample.json` lists files that all exist, with the
+    current `ev_config.SAMPLE_PARAMS` and its best fit's current
+    `BEST_FIT_COMPLETE.json` sha256; otherwise absent or stale (the reason
+    printed), or `--resample`; after every calibration job submitted now or
+    live (`-W depend=afterok:<id>:...`); an ensemble whose best fit is not
+    complete is named (`not complete: <q> (<folder>: ...)`), not sampled;
+  - `report`, one: submitted when a sampling job is submitted now or live,
+    or when `REPORT_COMPLETE.json` records other inputs than
+    `ev_plan.report_inputs` (the samples' provenance digests and
+    `ev_config.REPORT_PARAMS`); after the sampling jobs; a live report is
+    not submitted twice (the launcher says the sampling submitted now is not
+    in it);
+  - every job is `eval_run.pbs` in `envs.train` with its command in
+    `<out_root>/jobs/<unit>.argv` and its log in `<out_root>/jobs/logs/`,
+    job names of at most 15 characters (`ev_cal<k>`, `ev_s<i><b|a>` for
+    search i's best fit or the other arm's, `ev_report`); a program or the
+    job script missing from the checkout (`paths.sbi_dir`) is a refusal;
+    nothing of the pipeline's state is read or written.
+- Test oracles: E22a the launcher's dry run on the committed `synth.json`
+  (its `sbi_dir` at this checkout) and `synth_eval.json`: five calibration
+  qsub lines with the committed resources, `ROADMAP_STAGE=I19`,
+  `SKIP_CONDA=0` and the builder's arguments of `calbank_build`, nine
+  folders not complete, nothing written; the wrapper's plan equal to the
+  launcher's; `--project`, a bad `--what`, an absent project (skipped where
+  the runs root exists); E22b `eval_run.pbs`: bash -n, ASCII and LF,
+  executable, the activation before the markers, no bare `conda activate`;
+  exits 90, 91, 95, 96 and the command's own (7), an argument with a space
+  kept; the markers pushed to a stand-in origin, `done` for exit 0 and
+  `failed` for exit 7; E22c the reduced project under the fake PBS: five
+  jobs, each sampling after both calibration jobs, every exit 0, the job's
+  draws equal to the sampler's in the test process; run again: five done; a
+  queued job live and not submitted twice; `n_post` changed: three stale;
+  `--resample`; an unknown ensemble and a calibration bank of another seed
+  refused with nothing written; a changed `BEST_FIT_COMPLETE.json`: stale.
+  E22d (with the report): the evaluation end to end on the reduced project.
+- Confirmed: yes 2026-11-11 (D-127).
+- Status: [part 1, the calibration bank and the samplings] smoke-tested
+  2026-11-11 (E22a-c pass, E19 still passing: 8 pass and 1 skip in 56 s on
+  the kept fixture `[SANDBOX]`; four mutations -- the samplings not after
+  the bank, the sampling's values ignored, live jobs ignored, the markers
+  before the activation -- each caught; the launcher's modules need Python
+  3.3 or later, `vermin`). The report (`ev_report.py`, E22d): drafted.
 
 ## 6. Pipeline entry points
 

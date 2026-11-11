@@ -5,16 +5,49 @@
 
 A JSON object; a key starting with '_' documents the key after it and is
 ignored; every other key is required and checked, and there are no defaults
-in the code, so the value in force is always the file's.
+in the code, so the value in force is always the file's. Standard library
+only (block 22's launcher imports it on the login node).
 
 Pure ASCII, LF only.
 """
 
 import json
 import os
-from dataclasses import dataclass, fields
+import re
+from collections import namedtuple
 
 FORMATS = ("png", "pdf", "svg")
+JOB_KINDS = ("calbank", "sample", "report")
+# the values a sampling depends on: a sample of other values is stale (block 22)
+SAMPLE_PARAMS = ("seed", "n_post", "ppc_rows", "ppc_draws", "cal_glob", "cal_n", "cal_seed")
+# the values a report depends on beyond its samples (block 22)
+REPORT_PARAMS = ("seed", "lc2st_null", "lc2st_eval_draws", "bootstrap_n", "level", "dpi",
+                 "formats")
+_MEM = re.compile(r"^[1-9][0-9]*[kmgt]?b$")
+_WALL = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
+
+# the keys, in order (a namedtuple, not a dataclass: the launcher runs on the
+# login node's python, which may predate 3.7)
+KEYS = (
+    "out_root",          # absolute: samples/, metrics/, figures/, calbank/, jobs/ under it
+    "seed",              # the base of every seed of the evaluation
+    "n_post",            # posterior draws per row (Q-E1), a multiple of M
+    "batch_rows",        # windows per batch through a member
+    "ppc_rows",          # D_sim's PPC rows (Q-E4)
+    "ppc_draws",         # simulated windows per PPC row (Q-E4)
+    "cal_glob",          # the calibration bank's shards (Q-E5)
+    "cal_n",             # its windows, one per theta
+    "cal_shards",        # its shards (cal_n divisible by them)
+    "cal_seed",          # its builder seed: distinct from the banks' seeds
+    "lc2st_null",        # L-C2ST's permutation trials (Q-E5)
+    "lc2st_eval_draws",  # draws per window at which L-C2ST is evaluated
+    "bootstrap_n",       # resamples of every bootstrap
+    "level",             # the bands' and intervals' level
+    "dpi",               # the figures' (Q-E6)
+    "formats",           # the figures' file formats (Q-E6), a tuple
+    "ncpus",             # worker processes when a command is run by hand
+    "jobs",              # block 22: queue, and ncpus/mem/walltime per job kind
+)
 
 
 class EvalConfigError(ValueError):
@@ -22,30 +55,24 @@ class EvalConfigError(ValueError):
     problem found."""
 
 
-@dataclass(frozen=True)
-class EvalConfig:
-    out_root: str            # absolute: samples/, metrics/, figures/, calbank/ under it
-    seed: int                # the base of every seed of the evaluation
-    n_post: int              # posterior draws per row (Q-E1), a multiple of M
-    batch_rows: int          # windows per batch through a member
-    ppc_rows: int            # D_sim's PPC rows (Q-E4)
-    ppc_draws: int           # simulated windows per PPC row (Q-E4)
-    cal_glob: str            # the calibration bank's shards (Q-E5)
-    cal_n: int               # its windows, one per theta
-    cal_shards: int          # its shards (cal_n divisible by them)
-    cal_seed: int            # its builder seed: distinct from the banks' seeds
-    lc2st_null: int          # L-C2ST's permutation trials (Q-E5)
-    lc2st_eval_draws: int    # draws per window at which L-C2ST is evaluated
-    bootstrap_n: int         # resamples of every bootstrap
-    level: float             # the bands' and intervals' level
-    dpi: int                 # the figures' (Q-E6)
-    formats: tuple           # the figures' file formats (Q-E6)
-    ncpus: int               # worker processes for the simulations
-    path: str = ""           # the file it was read from
+class EvalConfig(namedtuple("EvalConfig", KEYS + ("path",))):
+    """The evaluation's values (KEYS) and the file they were read from."""
+
+    __slots__ = ()
 
     def sub(self, name):
         """A folder under out_root."""
         return os.path.join(self.out_root, name)
+
+    def sample_params(self):
+        """The values a sampling depends on (SAMPLE_PARAMS), as a dict."""
+        return dict((k, getattr(self, k)) for k in SAMPLE_PARAMS)
+
+    def report_params(self):
+        """The values a report depends on beyond its samples (REPORT_PARAMS),
+        as a dict of JSON types."""
+        return dict((k, list(v) if isinstance(v, tuple) else v)
+                    for k, v in ((k, getattr(self, k)) for k in REPORT_PARAMS))
 
 
 _INTS = ("seed", "n_post", "batch_rows", "ppc_rows", "ppc_draws", "cal_n", "cal_shards",
@@ -60,7 +87,7 @@ def _strip_docs(obj):
 
 def validate(data):
     """The problems of a configuration dict, every one (empty when usable)."""
-    names = [f.name for f in fields(EvalConfig) if f.name != "path"]
+    names = list(KEYS)
     probs = []
     missing = [k for k in names if k not in data]
     unknown = sorted(k for k in data if k not in names)
@@ -89,6 +116,27 @@ def validate(data):
                                   and len(set(fm)) == len(fm)):
         probs.append("formats must be a non-empty list of distinct %s, got %r"
                      % ("/".join(FORMATS), fm))
+    jb = data.get("jobs")
+    if "jobs" in data:
+        if not (isinstance(jb, dict) and sorted(jb) == sorted(("queue",) + JOB_KINDS)):
+            probs.append("jobs must have exactly the keys queue, %s" % ", ".join(JOB_KINDS))
+        else:
+            if not (isinstance(jb["queue"], str) and jb["queue"]):
+                probs.append("jobs.queue must be a queue name, got %r" % (jb["queue"],))
+            for kind in JOB_KINDS:
+                j = jb[kind]
+                if not (isinstance(j, dict) and sorted(j) == ["mem", "ncpus", "walltime"]):
+                    probs.append("jobs.%s must have exactly the keys ncpus, mem, walltime" % kind)
+                    continue
+                if not (isinstance(j["ncpus"], int) and not isinstance(j["ncpus"], bool)
+                        and j["ncpus"] >= 1):
+                    probs.append("jobs.%s.ncpus must be an integer >= 1, got %r"
+                                 % (kind, j["ncpus"]))
+                if not (isinstance(j["mem"], str) and _MEM.match(j["mem"])):
+                    probs.append("jobs.%s.mem must be like 32gb, got %r" % (kind, j["mem"]))
+                if not (isinstance(j["walltime"], str) and _WALL.match(j["walltime"])):
+                    probs.append("jobs.%s.walltime must be hh:mm:ss, got %r"
+                                 % (kind, j["walltime"]))
     if not probs:
         if data["ppc_draws"] > data["n_post"]:
             probs.append("ppc_draws %d exceeds n_post %d" % (data["ppc_draws"], data["n_post"]))

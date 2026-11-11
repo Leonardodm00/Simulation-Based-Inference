@@ -31,6 +31,27 @@ Checks (specs/SPEC.md blocks 19-22, "Test oracles")
                          theta-dagger; the calibration file's theta and
                          statistics are the bank's, one window per theta,
                          built with ev_plan.calbank_build's arguments
+    test_e22a_dry_run    the launcher on the committed synth.json and
+                         synth_eval.json (no davinci here): five calibration
+                         shards with the committed resources, the builder's
+                         arguments of ev_plan.calbank_build and stage I19,
+                         every ensemble named not complete, nothing written;
+                         the wrapper's --project; a bad --what (skipped where
+                         the project's runs root exists: davinci)
+    test_e22b_job_script eval_run.pbs: bash -n, ASCII and LF, the activation
+                         of activate_env.sh before the markers, no bare conda
+                         activate; exits 90, 91, 95, 96 and the command's own;
+                         the roadmap's markers pushed to a stand-in origin,
+                         done for exit 0 and failed for exit 7
+    test_e22c_launcher   the fixture under the fake PBS: the calibration bank
+                         and the three samplings submitted, each sampling
+                         after both shards, every job exit 0, the job's draws
+                         equal to the sampler's in this process; run again:
+                         everything done; a job queued is live, not submitted
+                         twice; n_post changed: stale; --resample; an unknown
+                         ensemble and a calibration bank of another seed
+                         refused with nothing written; a changed best fit:
+                         stale
     test_convergence     not a discretisation: skipped
 
 Run
@@ -73,6 +94,9 @@ import test_smoke_synthetic as TS      # noqa: E402  (the reduced project; puts 
 PYTHON = sys.executable
 SAMPLER = os.path.join(_EVAL, "ev_sample.py")
 BUILDER = os.path.join(_REPO, "hpc", "joint", "stage1", "build_latent_bank.py")
+SUBMIT = os.path.join(_EVAL, "submit_eval.sh")
+JOB = os.path.join(_EVAL, "jobs", "eval_run.pbs")
+SYNTH_EVAL = os.path.join(_PIPE, "projects", "synth", "synth_eval.json")
 
 _FIX = {}
 
@@ -118,7 +142,10 @@ def _eval_config(root, name="synth_eval.json", out=None, **over):
     d = {"out_root": out, "seed": 4242, "n_post": 40, "batch_rows": 16, "ppc_rows": 3,
          "ppc_draws": 4, "cal_glob": os.path.join(out, "calbank", "shard_*.npz"), "cal_n": 20,
          "cal_shards": 2, "cal_seed": 55, "lc2st_null": 5, "lc2st_eval_draws": 10,
-         "bootstrap_n": 200, "level": 0.95, "dpi": 60, "formats": ["png"], "ncpus": 2}
+         "bootstrap_n": 200, "level": 0.95, "dpi": 60, "formats": ["png"], "ncpus": 2,
+         "jobs": {"queue": "test", "calbank": {"ncpus": 1, "mem": "1gb", "walltime": "00:10:00"},
+                  "sample": {"ncpus": 2, "mem": "2gb", "walltime": "00:20:00"},
+                  "report": {"ncpus": 2, "mem": "2gb", "walltime": "00:30:00"}}}
     d.update(over)
     path = os.path.join(root, name)
     with open(path, "w") as fh:
@@ -535,6 +562,257 @@ def test_e19e_ppc():
           "bank's %d windows, one per theta" % idx.n_rows)
 
 
+def _submit(*argv, env=None, timeout=600):
+    """The wrapper with SKIP_CONDA=1; (exit code, output)."""
+    e = dict(env or os.environ)
+    e["SKIP_CONDA"] = "1"
+    e.setdefault("ROADMAP_DISABLE", "1")
+    r = subprocess.run(["bash", SUBMIT] + list(argv), stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, universal_newlines=True, timeout=timeout, env=e)
+    return r.returncode, r.stdout
+
+
+def test_e22a_dry_run():
+    import ev_config
+    import ev_plan
+    cfg = ev_plan.load_project(TS.SYNTH)
+    ecfg = ev_config.load(SYNTH_EVAL)
+    if os.path.isdir(cfg.data["paths"]["runs_root"]):
+        raise unittest.SkipTest("the project's runs root %s exists (davinci): its dry run is the run "
+                                "sheet's" % cfg.data["paths"]["runs_root"])
+    # the committed configuration with paths.sbi_dir at this checkout (davinci's
+    # SBI is not here); every other value the committed one
+    tmp = tempfile.mkdtemp(prefix="e22a_")
+    d = json.load(open(TS.SYNTH))
+    d["paths"]["sbi_dir"] = _REPO
+    here_cfg = os.path.join(tmp, "synth.json")
+    with open(here_cfg, "w") as fh:
+        json.dump(d, fh, indent=1)
+
+    def direct(skip):
+        e = dict(os.environ)
+        e["PIPELINE_SKIP_CONDA"] = skip
+        e.pop("ROADMAP_DISABLE", None)
+        r = subprocess.run([PYTHON, os.path.join(_EVAL, "ev_submit.py"), "--config", here_cfg,
+                            "--eval-config", SYNTH_EVAL, "--what", "calbank,sample", "--dry-run"],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True, env=e, timeout=120)
+        return r.returncode, r.stdout
+
+    rc, out = direct("0")                          # the lines davinci's launcher submits
+    assert rc == 0 and "REFUSE" not in out and "ABORT" not in out, out[-3000:]
+    assert out.count("SKIP_CONDA=0,") == 5 and "ROADMAP_DISABLE" not in out, out[-2000:]
+    assert "EVAL DRY RUN: 5 job(s) would be submitted, 0 done, 0 live; nothing written" in out, out[-800:]
+    names = [q["name"] for q in cfg.data["synthetic"]["searches"]]
+    n_alt = sum(1 for q in cfg.data["synthetic"]["searches"] if q["alt_best_fit"])
+    assert out.count("EVAL SUBMIT: not complete: ") == len(names) + n_alt == 9, out[-3000:]
+    build = ev_plan.calbank_build(cfg, ecfg)
+    sbi = _REPO
+    j = ecfg.jobs["calbank"]
+    for k, argv in enumerate(build["argv"]):
+        assert ("calbank:%d would be submitted:" % k) in out, k
+        qline = ("qsub -N ev_cal%d -q %s -l select=1:ncpus=%d:mem=%s -l walltime=%s -j oe -o %s"
+                 % (k, ecfg.jobs["queue"], j["ncpus"], j["mem"], j["walltime"],
+                    os.path.join(ecfg.out_root, "jobs", "logs", "calbank_%d.log" % k)))
+        assert qline in out, (qline, out[-2000:])
+        cmd = "command: python %s --out-dir %s %s" % (
+            os.path.join(sbi, "hpc", "joint", "stage1", "build_latent_bank.py"), build["out_dir"],
+            " ".join(argv))
+        assert cmd in out, (cmd, out[-2000:])
+    assert out.count("ROADMAP_STAGE=I19") == 5 and out.count(
+        os.path.join(sbi, "hpc", "pipeline", "evaluation", "jobs", "eval_run.pbs")) == 5
+    assert "--n-per-theta 1 --seed %d" % ecfg.cal_seed in out and "--wells-per-donor 1 " in out
+    assert not os.path.exists(ecfg.out_root), "the dry run wrote %s" % ecfg.out_root
+    e = dict(os.environ)
+    e["ROADMAP_DISABLE"] = "0"
+    rc2, out2 = _submit("--config", here_cfg, "--eval-config", SYNTH_EVAL, "--what",
+                        "calbank,sample", "--dry-run", env=e)
+    rc1, out1 = direct("1")
+    shutil.rmtree(tmp, ignore_errors=True)
+    strip = lambda t: [l for l in t.splitlines() if not l.startswith("[evaluation]")]   # noqa: E731
+    assert rc2 == 0 and rc1 == 0 and strip(out2) == strip(out1), "the wrapper gave another plan"
+    # --project names the committed files: their sbi_dir is davinci's, absent here
+    rc5, out5 = _submit("--project", "synth", "--what", "calbank,sample", "--dry-run")
+    assert rc5 == 3 and ("REFUSE: calbank:0's program /davinci-1/home/ldellamea/SBI/hpc/joint/"
+                         "stage1/build_latent_bank.py is not in this checkout (git pull)") in out5, out5
+    rc3, out3 = _submit("--project", "synth", "--what", "calbank,bogus", "--dry-run")
+    assert rc3 == 2 and "ABORT: --what takes a subset of calbank,sample,report" in out3, out3
+    rc4, out4 = _submit("--project", "nosuch")
+    assert rc4 == 2 and "ABORT: no configuration at" in out4, out4
+    print("[e22a] the committed plan: 5 calibration shards, 9 folders not complete, nothing written")
+
+
+def test_e22b_job_script():
+    import stat
+    raw = open(JOB, "rb").read()
+    for f in (JOB, SUBMIT):
+        b = open(f, "rb").read()
+        assert b.count(b"\r") == 0 and all(c < 128 for c in b), f
+        assert os.stat(f).st_mode & stat.S_IXUSR, "%s is not executable" % f
+        r = subprocess.run(["bash", "-n", f], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True)
+        assert r.returncode == 0, (f, r.stdout)
+    text = raw.decode("ascii")
+    body = [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith("#")]
+    assert not any("conda activate" in l for l in body), "a bare conda activate in eval_run.pbs"
+    i_act = body.index('. "$JOBS_DIR/activate_env.sh"')
+    i_pa = [k for k, l in enumerate(body) if l.startswith("if ! pipeline_activate")][0]
+    i_mark = body.index("roadmap_job_start")
+    assert i_act < i_pa < i_mark < body.index("\"${ARGV[@]}\"")
+    assert "export ROADMAP_N_TASKS=1" in body and "trap 'roadmap_job_end $?' EXIT" in body
+    tmp = tempfile.mkdtemp(prefix="e22b_")
+    try:
+        def job(cmd_lines, **v):
+            argv_file = os.path.join(tmp, "cmd.argv")
+            with open(argv_file, "w") as fh:
+                fh.write("\n".join(cmd_lines) + "\n")
+            env = dict(os.environ)
+            env.update({"ARGV_FILE": argv_file, "WORKDIR": _REPO, "SKIP_CONDA": "1",
+                        "JOBS_DIR": os.path.join(_PIPE, "jobs"), "WORK_ROOT": tmp,
+                        "ROADMAP_STAGE": "", "ROADMAP_DISABLE": "1", "PBS_JOBID": "77.fake"})
+            env.update(v)
+            r = subprocess.run(["bash", JOB], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               universal_newlines=True, env=env, timeout=120)
+            return r.returncode, r.stdout
+        py = [PYTHON, "-c", "import sys; print('ARGS', sys.argv[1:]); sys.exit(int(sys.argv[2]))",
+              "a b", "7"]
+        rc, out = job(py)
+        assert rc == 7 and "ARGS ['a b', '7']" in out and out.rstrip().endswith("EVAL JOB EXIT: 7"), out
+        rc, out = job(py, WORKDIR=os.path.join(tmp, "nowhere"))
+        assert rc == 90 and "EVAL JOB EXIT: 90" in out, out
+        rc, out = job(py, ARGV_FILE=os.path.join(tmp, "none.argv"))
+        assert rc == 91 and "EVAL JOB EXIT: 91" in out, out
+        rc, out = job(py, SKIP_CONDA="0", JOBS_DIR=tmp)
+        assert rc == 95 and "no activate_env.sh" in out, out
+        e = dict(os.environ)
+        if not any(os.path.isfile(os.path.join(d, "conda")) for d in e.get("PATH", "").split(":")):
+            rc, out = job(py, SKIP_CONDA="0", ENV_NAME="no_such_env_e22b",
+                          HOME=os.path.join(tmp, "home"), CONDA_ENVS_PATH="")
+            assert rc == 96 and "the environment no_such_env_e22b cannot start" in out, out
+        # the markers, pushed to a stand-in origin
+        origin = os.path.join(tmp, "origin.git")
+        clone = os.path.join(tmp, "clone")
+        git = lambda *a: subprocess.run(["git"] + list(a), stdout=subprocess.PIPE,  # noqa: E731
+                                        stderr=subprocess.STDOUT, universal_newlines=True)
+        assert git("init", "-q", "--bare", origin).returncode == 0
+        assert git("clone", "-q", origin, clone).returncode == 0
+        assert git("-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                   "--allow-empty", "-m", "init").returncode == 0
+        assert git("-C", clone, "push", "-q", "origin", "HEAD").returncode == 0
+        for jid, code, state in (("81.fake", "0", "done"), ("82.fake", "7", "failed")):
+            rc, out = job([PYTHON, "-c", "import sys; sys.exit(%s)" % code], ROADMAP_DISABLE="0",
+                          ROADMAP_STAGE="I19", ROADMAP_REPO=clone, PBS_JOBID=jid)
+            assert rc == int(code), out
+            r = git("-C", origin, "show", "hpc-status:runs/I19/%s.json" % jid)
+            assert r.returncode == 0, (jid, r.stdout, out)
+            m = json.loads(r.stdout)
+            assert m["state"] == state and m["n_tasks"] == 1 and m["last_exit"] == int(code), m
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("[e22b] eval_run.pbs: exits 90, 91, 95, 96 and 7; markers done and failed pushed")
+
+
+def _fake_pbs_env(spool, delay="0.2"):
+    env = dict(os.environ)
+    env.update({"PATH": TS._FAKE + os.pathsep + env.get("PATH", ""), "FAKE_PBS_SPOOL": spool,
+                "FAKE_PBS_DELAY": delay, "FAKE_PBS_ENFORCE_WALLTIME": "0", "OMP_NUM_THREADS": "1",
+                "PIPELINE_QSTAT_RETRY_WAIT_S": "0.2", "ROADMAP_DISABLE": "1"})
+    os.makedirs(spool, exist_ok=True)
+    return env
+
+
+def test_e22c_launcher():
+    import numpy as np
+    F = _fixture()
+    root = F["root"]
+    out_root = os.path.join(root, "ev_e22c")
+    shutil.rmtree(out_root, ignore_errors=True)
+    ec = _eval_config(root, "eval_e22c.json", out=out_root)
+    spool = os.path.join(root, "spool_e22c")
+    shutil.rmtree(spool, ignore_errors=True)
+    env = _fake_pbs_env(spool)
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--what", "calbank,sample", env=env)
+    assert rc == 0 and "EVAL SUBMIT OK: 5 job(s) submitted, 0 done, 0 live" in out, out[-3000:]
+    t0 = time.time()
+    want = ["S-A1_A1", "S-A2-R0_A1", "S-A2-R0_A2"]
+    while time.time() - t0 < 900:
+        recs = TS._records(spool)
+        if len(recs) == 5 and all(r["finished"] for r in recs):
+            break
+        time.sleep(2)
+    recs = dict((r["name"], r) for r in TS._records(spool))
+    assert sorted(recs) == ["ev_cal0", "ev_cal1", "ev_s0b", "ev_s1a", "ev_s1b"], sorted(recs)
+    cal_ids = "%s:%s" % (recs["ev_cal0"]["id"], recs["ev_cal1"]["id"])
+    for n, r in recs.items():
+        assert r["exit_status"] == 0, (n, r.get("comment"), open(r["out"]).read()[-2000:])
+        tail = open(r["out"]).read()
+        assert tail.rstrip().endswith("EVAL JOB EXIT: 0"), (n, tail[-500:])
+        if n.startswith("ev_s"):
+            assert r["depend"] == cal_ids, (n, r["depend"])
+            assert "EVAL SAMPLE OK: " in tail and r["vars"]["ROADMAP_STAGE"] == "I19", n
+        else:
+            assert r["depend"] is None, (n, r["depend"])
+    ledger = json.load(open(os.path.join(out_root, "jobs", "ledger.json")))
+    assert sorted(ledger) == ["calbank:0", "calbank:1", "sample:S-A1:A1", "sample:S-A2-R0:A1",
+                              "sample:S-A2-R0:A2"], sorted(ledger)
+    # the job's sampling is the sampler's: same draws as in this process
+    here, _p = _sampled("S-A1:A1")
+    a = np.load(os.path.join(out_root, "samples", "S-A1_A1_sim.npz"))
+    b = np.load(os.path.join(here, "S-A1_A1_sim.npz"))
+    for k in ("draws", "logq_draws", "logq_ref", "ppc_stats"):
+        assert np.array_equal(a[k], b[k]), k
+    # run again: done
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--what", "calbank,sample", env=env)
+    assert rc == 0 and "EVAL SUBMIT OK: 0 job(s) submitted, 5 done, 0 live" in out, out[-2000:]
+    # a queued job is live: not submitted twice
+    slow = _fake_pbs_env(spool, delay="60")
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--what", "sample",
+                      "--resample", "S-A1:A1", env=slow)
+    assert rc == 0 and "EVAL SUBMIT OK: 1 job(s) submitted, 2 done, 0 live" in out, out[-2000:]
+    assert "sample:S-A1:A1 submitted" in out and "(stale: --resample)" in out, out[-2000:]
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--what", "sample",
+                      "--resample", "S-A1:A1", env=slow)
+    assert rc == 0 and "EVAL SUBMIT OK: 0 job(s) submitted, 2 done, 1 live" in out, out[-2000:]
+    led = json.load(open(os.path.join(out_root, "jobs", "ledger.json")))
+    subprocess.run(["qdel", led["sample:S-A1:A1"]["job_id"]], env=slow, stdout=subprocess.PIPE,
+                   stderr=subprocess.STDOUT)
+    # n_post changed: the three samplings are stale
+    ec2 = _eval_config(root, "eval_e22c_n20.json", out=out_root, n_post=20)
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec2, "--what", "calbank,sample",
+                      "--dry-run", env=env)
+    assert rc == 0 and out.count("(stale: n_post was 40, now 20)") == 3, out[-3000:]
+    assert "EVAL DRY RUN: 3 job(s) would be submitted, 2 done, 0 live" in out, out[-1000:]
+    # refusals, nothing written
+    before = _files_under(out_root)
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--resample", "S-A9:A1",
+                      "--what", "sample", env=env)
+    assert rc == 3 and "REFUSE: --resample names no complete ensemble: S-A9:A1" in out, out
+    ec3 = _eval_config(root, "eval_e22c_seed.json", out=out_root, cal_seed=56)
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec3, "--what", "calbank,sample",
+                      env=env)
+    assert rc == 3 and "holds a calibration bank of another build" in out and "--seed 56" in out, out
+    assert _files_under(out_root) == before
+    # a changed best fit: stale
+    import ev_plan
+    cfg = ev_plan.load_project(F["cfg"])
+    e = ev_plan.find(cfg, "S-A2-R0:A1")
+    bfc = os.path.join(e.folder, "BEST_FIT_COMPLETE.json")
+    keep = open(bfc, "rb").read()
+    try:
+        with open(bfc, "wb") as fh:
+            fh.write(keep + b"\n")
+        rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--what", "sample",
+                          "--dry-run", env=env)
+        assert rc == 0 and ("sample:S-A2-R0:A1 would be submitted (stale: its best fit's "
+                            "BEST_FIT_COMPLETE.json changed") in out, out[-2000:]
+        assert "EVAL DRY RUN: 1 job(s) would be submitted, 2 done" in out, out[-600:]
+    finally:
+        with open(bfc, "wb") as fh:
+            fh.write(keep)
+    print("[e22c] 5 jobs through the fake PBS in %.0f s; the samplings after both shards; "
+          "done, live, stale and refused as specified" % (time.time() - t0))
+
+
 def test_convergence():
     raise unittest.SkipTest("not a discretisation: no convergence order")
 
@@ -543,7 +821,9 @@ def test_convergence():
 
 CHECKS = [("test_e19a_rebuild", test_e19a_rebuild), ("test_e19b_dagger", test_e19b_dagger),
           ("test_e19c_mixture", test_e19c_mixture), ("test_e19d_contract", test_e19d_contract),
-          ("test_e19e_ppc", test_e19e_ppc), ("test_convergence", test_convergence)]
+          ("test_e19e_ppc", test_e19e_ppc), ("test_e22a_dry_run", test_e22a_dry_run),
+          ("test_e22b_job_script", test_e22b_job_script), ("test_e22c_launcher", test_e22c_launcher),
+          ("test_convergence", test_convergence)]
 
 
 def main():
