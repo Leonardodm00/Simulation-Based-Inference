@@ -31,6 +31,29 @@ Checks (specs/SPEC.md blocks 19-22, "Test oracles")
                          theta-dagger; the calibration file's theta and
                          statistics are the bank's, one window per theta,
                          built with ev_plan.calbank_build's arguments
+    test_e20a_quantities the quantities on cases with a known answer: the
+                         HPD rank and coverage by hand; a conjugate Gaussian
+                         model (10 axes) whose exact posterior gives the
+                         diagonal within the KS bound, a too narrow one a
+                         negative area, a too wide one a positive area; the
+                         binomial band; the donor bootstrap unchanged by
+                         copies of a donor's rows; SBC rejecting only the
+                         shifted axis; TARP's x-dependent references seeing
+                         a posterior equal to the prior; the recovery of a
+                         known posterior; the NLL, the PPC, E3's verdicts,
+                         the running minimum, the embeddings' MMD by hand
+                         or by construction
+    test_e20b_lc2st      sbi's LC2ST through lc2st_fit and lc2st_eval: draws
+                         of the prior in place of the posterior give a larger
+                         statistic and smaller p-values than the exact
+                         posterior's (the Gaussian model, 2 axes)
+    test_e20c_metrics    ev_metrics on the fixture's three ensembles: every
+                         file of the index; the NLL, the coverage curve and
+                         E3 recomputed from the samples; theta-dagger's rows
+                         out of the NLL and in SBC; the search's trials in the
+                         rounds' order; the same files from one worker and
+                         from three; a sample of other values left out, an
+                         unknown ensemble refused
     test_e22a_dry_run    the launcher on the committed synth.json and
                          synth_eval.json (no davinci here): five calibration
                          shards with the committed resources, the builder's
@@ -562,6 +585,238 @@ def test_e19e_ppc():
           "bank's %d windows, one per theta" % idx.n_rows)
 
 
+def _gauss(n, d, rng, s=0.5, n_post=200, scale=1.0, shift=None):
+    """The conjugate Gaussian model theta ~ N(0, I_d), x = theta + N(0, s^2 I_d),
+    whose exact posterior is N(x / (1 + s^2), s^2 / (1 + s^2) I_d); draws and
+    log densities from N(mean + shift, scale^2 times that variance) -- the
+    exact posterior at scale 1 and no shift. Returns (theta, x, draws,
+    logq_draws, logq_ref)."""
+    import numpy as np
+    th = rng.normal(size=(n, d))
+    x = th + s * rng.normal(size=(n, d))
+    sd = scale * math.sqrt(s ** 2 / (1.0 + s ** 2))
+    mu = x / (1.0 + s ** 2) + (0.0 if shift is None else np.asarray(shift))
+    draws = mu[:, None, :] + sd * rng.normal(size=(n, n_post, d))
+
+    def logq(t, m):
+        return (-0.5 * np.sum(((t - m) / sd) ** 2, axis=-1) - d * math.log(sd)
+                - 0.5 * d * math.log(2.0 * math.pi))
+    return th, x, draws, logq(draws, mu[:, None, :]), logq(th, mu)
+
+
+def test_e20a_quantities():
+    import numpy as np
+    from scipy.stats import kstwo
+    import ev_metrics as EM
+    # the HPD rank and the coverage curve by hand
+    g = EM.hpd_ranks(np.array([[1.0, 2.0, 3.0, 4.0]] * 3), np.array([2.5, -np.inf, 10.0]))
+    assert np.array_equal(g, [0.5, 1.0, 0.0]), g
+    c = EM.coverage_curve(np.array([0.1, 0.5, 0.9]))
+    assert abs(c[50] - 2.0 / 3.0) < 1e-15 and c[0] == 0.0 and c[100] == 1.0 and c[9] == 0.0
+    # the Gaussian model: the exact posterior's curve is the diagonal within
+    # the KS bound at 0.999; too narrow and too wide on either side
+    rng = np.random.default_rng(1)
+    n = 2000
+    th, x, dr, lqd, lqr = _gauss(n, 10, rng)
+    curve = EM.coverage_curve(EM.hpd_ranks(lqd, lqr))
+    dev = float(np.max(np.abs(curve - EM.BETAS)))
+    # the empirical CDF of n uniform ranks (200 draws: a grid of 1/200)
+    assert dev <= kstwo.ppf(0.999, n) + 1.0 / 200, dev
+    area0 = EM.coverage_summary(curve)["signed_area"]
+    narrow = EM.coverage_summary(EM.coverage_curve(EM.hpd_ranks(*_gauss(n, 10, rng, scale=0.5)[3:])))
+    wide = EM.coverage_summary(EM.coverage_curve(EM.hpd_ranks(*_gauss(n, 10, rng, scale=2.0)[3:])))
+    assert abs(area0) < 0.02 and narrow["signed_area"] < -0.1 and wide["signed_area"] > 0.1, (
+        area0, narrow["signed_area"], wide["signed_area"])
+    # the binomial band; the donor bootstrap: 12 copies of each donor's row
+    # change nothing (the same donors, the same resamples)
+    lo, hi = EM.binomial_band(n, EM.BETAS, 0.95)
+    assert lo[0] == hi[0] == 0.0 and lo[100] == hi[100] == 1.0
+    assert abs((hi[50] - lo[50]) / 2 - 1.96 * math.sqrt(0.25 / n)) < 0.002, (lo[50], hi[50])
+    gam = EM.hpd_ranks(lqd, lqr)
+    donor = np.arange(n)
+    b1 = EM.donor_bootstrap_band(gam, donor, EM.BETAS, 0.95, 2000, seed=5)
+    b12 = EM.donor_bootstrap_band(np.repeat(gam, 12), np.repeat(donor, 12), EM.BETAS, 0.95, 2000,
+                                  seed=5)
+    assert np.allclose(b1[0], b12[0], atol=1e-12) and np.allclose(b1[1], b12[1], atol=1e-12)
+    half = (b1[1][50] - b1[0][50]) / 2
+    assert abs(half - 1.96 * math.sqrt(curve[50] * (1 - curve[50]) / n)) < 0.003, half
+    # SBC: only the shifted axis rejected
+    shift = np.zeros(10)
+    shift[0] = 0.5
+    th, x, dr, _a, _b = _gauss(1000, 10, np.random.default_rng(2), shift=shift)
+    sb, sa = EM.sbc_block(th, dr, 0.95, seed=3)
+    assert sb["holm_rejected"][0] and sb["n_rejected"] == 1, (sb["n_rejected"], sb["ks_p"])
+    assert np.all(sa["sbc_hist_counts"].sum(axis=1) == 1000)
+    assert abs(sa["sbc_hist_expected"].sum() - 1000) < 1e-9
+    assert np.all(sa["sbc_hist_lo"] <= sa["sbc_hist_expected"]) and np.all(
+        sa["sbc_hist_expected"] <= sa["sbc_hist_hi"])
+    md = np.max(np.abs(sa["sbc_ecdf_diff"]), axis=1)
+    assert md[0] > sb["ks_band_halfwidth"] and md[0] == md.max(), md
+    # TARP: a posterior equal to the prior, seen by the x-dependent references only
+    th, x, _d, _a, _b = _gauss(1000, 10, np.random.default_rng(4))
+    prior = np.random.default_rng(5).normal(size=(1000, 200, 10))
+    tb, ta = EM.tarp_block(th, prior, x, seed=6)
+    assert tb["x"]["reference_mode"] == "x-dependent" and tb["x"]["ks_p"] < 1e-3, tb
+    assert tb["random"]["ks_p"] > 1e-3, tb
+    assert ta["tarp_x_f"].shape == (1000,)
+    # the recovery of a known posterior N(mu_i, 0.1^2) per axis
+    rng = np.random.default_rng(7)
+    mu = rng.uniform(0.2, 0.8, size=(500, 10))
+    drw = mu[:, None, :] + 0.1 * rng.normal(size=(500, 400, 10))
+    rec = EM.recovery_arrays(mu, drw)
+    rs = EM.recovery_summary(mu, rec, np.ones(500, dtype=bool))
+    # 4 standard errors of a mean of 400 draws; of an SD, 0.1 / sqrt(2 * 400) each
+    assert np.max(np.abs(rec["mhat"] - mu)) < 4 * 0.1 / 20 * 1.5
+    assert np.max(np.abs(np.array(rs["contraction"]) - (1 - 0.01 * 12))) < 0.01, rs["contraction"]
+    assert min(rs["interval90_coverage"]) == 1.0 and max(np.abs(rs["zeta_mean"])) < 0.05
+    rec2 = EM.recovery_arrays(mu + 0.2, drw)
+    rs2 = EM.recovery_summary(mu + 0.2, rec2, np.ones(500, dtype=bool))
+    assert max(rs2["interval90_coverage"]) < 0.05 and max(np.abs(np.array(rs2["zeta_mean"]) + 2.0)) < 0.1
+    # the NLL by hand
+    s_, a_ = EM.nll_block(np.array([-1.0, -2.0, -np.inf, -4.0]),
+                          np.array([[-1, -1], [-2, -2], [-9, -9], [-3, -5]], dtype=float),
+                          np.array([True, True, False, True]), np.array([0, 0, 1, 1]))
+    assert abs(s_["mean"] - 7.0 / 3.0) < 1e-12 and s_["n_out_of_box"] == 1
+    assert np.allclose(a_["donor_nll"], [1.5, 4.0]) and np.allclose(s_["members"], [2.0, 8.0 / 3.0])
+    # the PPC by hand
+    sim = np.tile(np.arange(20, dtype=float)[None, :, None], (3, 1, 8))
+    obs = np.stack([np.full(8, 9.5), np.full(8, 25.0), np.full(8, np.nan)])
+    ps, pa = EM.ppc_block(obs, sim)
+    assert pa["ppc_rank"][0, 0] == 10 and pa["ppc_rank"][1, 0] == 20 and not pa["ppc_outside"][0, 0]
+    assert pa["ppc_outside"][1].all() and ps["n_nonfinite"] == 1 and ps["frac_outside_90"][0] == 0.5
+    # E3's verdicts
+    rng = np.random.default_rng(8)
+    donor = np.repeat(np.arange(27), 12)
+    # (Dbar, noise, sigma_seed) -> (beyond 2 sigma_seed, the interval excluding 0)
+    for dbar, noise, sd, beyond, excl in ((-0.5, 0.05, 0.1, True, True),
+                                          (-0.05, 0.05, 0.1, False, True),
+                                          (0.05, 2.0, 0.001, True, False)):
+        d = dbar + noise * rng.normal(size=donor.size)
+        d += dbar - d.mean()                       # the mean exactly dbar
+        ok = np.ones(donor.size, dtype=bool)
+        r, ra = EM.paired_block(d, np.zeros(donor.size), donor, ok, sd, sd / 2, 2000, 0.95, 9)
+        assert abs(r["Dbar"] - dbar) < 1e-12 and r["sigma_seed"] == sd, r
+        assert (r["beyond_2_sigma_seed"], r["ci_excludes_0"]) == (beyond, excl), (dbar, noise, r)
+        assert r["resolved"] == (beyond and excl) and ra["delta_d"].shape == (27,)
+        assert (r["lower_nll"] == "term arm") == (beyond and excl)
+    assert EM.running_min([3, None, 2, 5, float("nan"), 1]) == [3, 3, 2, 2, 2, 1]
+    # the embeddings: one law, two laws
+    rng = np.random.default_rng(10)
+    zs = rng.normal(size=(2, 600, 4))
+    same, _sa = EM.embedding_block(zs, rng.normal(size=(2, 100, 4)), np.zeros(600), np.zeros(100), 11)
+    moved, ma = EM.embedding_block(zs, 1.0 + rng.normal(size=(2, 100, 4)), np.zeros(600),
+                                   np.zeros(100), 12)
+    assert min(m["p"] for m in same["members"]) > 0.01, same
+    assert max(m["p"] for m in moved["members"]) <= 0.01, moved
+    assert ma["pca_coords"].shape == (2, 700, 2) and int(ma["pca_source"].sum()) == 100
+    print("[e20a] Gaussian model: diagonal within the KS bound (max dev %.3f), areas %.3f / %.3f / "
+          "%.3f; SBC, TARP, recovery, NLL, PPC, E3, MMD as constructed"
+          % (dev, area0, narrow["signed_area"], wide["signed_area"]))
+
+
+def test_e20b_lc2st():
+    _need_training_env()
+    import numpy as np
+    import ev_metrics as EM
+    rng = np.random.default_rng(13)
+    th, x, dr, _a, _b = _gauss(2000, 2, rng, n_post=1)
+    prior = rng.normal(size=(2000, 2))
+    tt, tx, tdr, _c, _d = _gauss(20, 2, rng, n_post=100)
+    stats = {}
+    for name, draws in (("exact", dr[:, 0, :]), ("prior", prior)):
+        lc = EM.lc2st_fit({"theta": th, "stats": x, "draws": draws}, 10, seed=14)
+        test = tdr if name == "exact" else rng.normal(size=tdr.shape)
+        t, p = EM.lc2st_eval(lc, test, tx, np.arange(20), 50)
+        stats[name] = (float(t.mean()), float(np.mean(p < 0.05)))
+    assert stats["prior"][0] > stats["exact"][0], stats
+    assert stats["prior"][1] > stats["exact"][1], stats
+    print("[e20b] L-C2ST mean statistic / fraction p < 0.05: exact %.4f / %.2f, prior %.4f / %.2f"
+          % (stats["exact"] + stats["prior"]))
+
+
+def test_e20c_metrics():
+    import numpy as np
+    import ev_config
+    import ev_metrics as EM
+    import ev_plan
+    F = _fixture()
+    for name in ("S-A1:A1", "S-A2-R0:A1", "S-A2-R0:A2"):
+        _sampled(name)
+    ecfg = ev_config.load(F["ecfg"])
+    lines = []
+    idx = EM.compute(F["cfg"], F["ecfg"], ncpus=3, log=lines.append)
+    assert lines[-1].startswith("EVAL METRICS OK: 3 ensemble(s), 8 data-set file(s), 2 paired "
+                                "comparison(s), 2 search(es), 0 left out"), lines[-1]
+    md = ecfg.sub("metrics")
+    want = ["S-A1_A1_%s" % D for D in ("R0", "R3", "R3dag", "sim")] + [
+        "S-A2-R0_%s_%s" % (a, D) for a in ("A1", "A2") for D in ("R0", "sim")] + [
+        "paired_S-A2-R0_R0", "paired_S-A2-R0_sim"]
+    for w in want:
+        for ext in (".json", ".npz"):
+            assert os.path.join(md, w + ext) in idx["files"] and os.path.isfile(os.path.join(md, w + ext)), w
+    for q in ("S-A1", "S-A2-R0"):
+        assert os.path.isfile(os.path.join(md, "search_%s.json" % q))
+    sd = ecfg.sub("samples")
+    for stem, D in (("S-A1_A1", "sim"), ("S-A1_A1", "R3dag"), ("S-A2-R0_A2", "R0")):
+        z = np.load(os.path.join(sd, "%s_%s.npz" % (stem, D)))
+        js = json.load(open(os.path.join(md, "%s_%s.json" % (stem, D))))
+        ar = np.load(os.path.join(md, "%s_%s.npz" % (stem, D)))
+        ok = z["in_box"]
+        assert abs(js["nll"]["mean"] - float(np.mean(-z["logq_ref"][ok]))) < 1e-12, (stem, D)
+        assert js["nll"]["n_out_of_box"] == int((~ok).sum())
+        rows = z["calib"] & ok
+        curve = EM.coverage_curve(EM.hpd_ranks(z["logq_draws"][rows], z["logq_ref"][rows]))
+        assert np.array_equal(curve, ar["coverage"]), (stem, D)
+        # one row per donor on D_sim (the fixture's gammas are all 1, so the
+        # curve alone cannot tell the rows apart)
+        assert js["coverage"]["n_rows"] == int(rows.sum()), (stem, D, js["coverage"]["n_rows"])
+        assert js["sbc"]["n_rows"] == int(z["calib"].sum()) and ar["sbc_ranks"].shape[0] == int(
+            z["calib"].sum())
+        if D == "R3dag":
+            assert (~ok).any() and np.all(np.isnan(ar["gamma"][~ok]))
+    zt = np.load(os.path.join(sd, "S-A2-R0_A2_R0.npz"))
+    za = np.load(os.path.join(sd, "S-A2-R0_A1_R0.npz"))
+    pj = json.load(open(os.path.join(md, "paired_S-A2-R0_R0.json")))
+    d = -zt["logq_ref"] + za["logq_ref"]
+    assert abs(pj["Dbar"] - float(d.mean())) < 1e-12 and pj["term_arm"] == "A2", pj
+    sds = [float(np.std(-np.mean(z["logq_ref_members"], axis=0), ddof=1)) for z in (zt, za)]
+    assert abs(pj["sigma_seed"] - max(sds)) < 1e-12, (pj["sigma_seed"], sds)
+    srch = json.load(open(os.path.join(md, "search_S-A2-R0.json")))
+    cfg = ev_plan.load_project(F["cfg"])
+    rd = os.path.join(F["root"], "tune_root", "S-A2-R0", "S-A2")
+    order = [t for r in json.load(open(os.path.join(rd, "pipeline_rounds.json")))["rounds"]
+             for t in r["trial_ids"]]
+    assert [t["trial_id"] for t in srch["trials"]] == order
+    for t in srch["trials"]:
+        assert t["arm"] == json.load(open(os.path.join(rd, "trials", t["trial_id"] + ".json")))["arm"]
+    assert srch["finalist"] == json.load(open(os.path.join(rd, "SEARCH_COMPLETE.json")))["finalist"][
+        "trial_id"]
+    assert sorted(srch["ensembles"]) == ["S-A2-R0:A1", "S-A2-R0:A2"]
+    # one worker gives the same files as three
+    keep = dict((f, open(f, "rb").read()) for f in idx["files"] if f.endswith(".npz"))
+    jkeep = dict((f, json.load(open(f))) for f in idx["files"] if f.endswith(".json"))
+    EM.compute(F["cfg"], F["ecfg"], ncpus=1, log=lambda t: None)
+    for f, b in keep.items():
+        a1, a2 = np.load(f), np.load(__import__("io").BytesIO(b))
+        for k in a1.files:
+            assert np.array_equal(a1[k], a2[k], equal_nan=a1[k].dtype.kind == "f"), (f, k)
+    for f, j in jkeep.items():
+        assert json.load(open(f)) == j, f
+    # a sample of other values is left out; nothing current: refused; an unknown ensemble
+    ec2 = _eval_config(F["root"], "eval_e20c.json", out=ecfg.out_root, n_post=20)
+    try:
+        EM.compute(F["cfg"], ec2, log=lambda t: None)
+        raise AssertionError("samples of other values were reported")
+    except ev_plan.RefuseError as exc:
+        assert "no ensemble has a current sample" in str(exc), exc
+    r = subprocess.run([PYTHON, os.path.join(_EVAL, "ev_metrics.py"), "--config", F["cfg"],
+                        "--eval-config", F["ecfg"], "--ensemble", "S-A9:A1"], stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
+    assert r.returncode == 3 and "REFUSE: no complete ensemble S-A9:A1" in r.stdout, r.stdout[-800:]
+    print("[e20c] 8 data-set files, 2 paired, 2 searches; recomputed from the samples; the same "
+          "files from one worker and from three")
+
+
 def _submit(*argv, env=None, timeout=600):
     """The wrapper with SKIP_CONDA=1; (exit code, output)."""
     e = dict(env or os.environ)
@@ -821,7 +1076,9 @@ def test_convergence():
 
 CHECKS = [("test_e19a_rebuild", test_e19a_rebuild), ("test_e19b_dagger", test_e19b_dagger),
           ("test_e19c_mixture", test_e19c_mixture), ("test_e19d_contract", test_e19d_contract),
-          ("test_e19e_ppc", test_e19e_ppc), ("test_e22a_dry_run", test_e22a_dry_run),
+          ("test_e19e_ppc", test_e19e_ppc), ("test_e20a_quantities", test_e20a_quantities),
+          ("test_e20b_lc2st", test_e20b_lc2st), ("test_e20c_metrics", test_e20c_metrics),
+          ("test_e22a_dry_run", test_e22a_dry_run),
           ("test_e22b_job_script", test_e22b_job_script), ("test_e22c_launcher", test_e22c_launcher),
           ("test_convergence", test_convergence)]
 

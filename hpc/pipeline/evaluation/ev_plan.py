@@ -118,6 +118,13 @@ def find(cfg, name):
                       % (name, ", ".join(e.name for e in found) or "none"))
 
 
+def seed_of(base, *parts):
+    """A seed for (base, parts...), stable across machines and runs: the
+    first 32 bits of the sha256 of their text."""
+    h = hashlib.sha256(("%d|" % int(base) + "|".join(str(p) for p in parts)).encode("ascii"))
+    return int(h.hexdigest()[:8], 16)
+
+
 def sha256_file(path):
     h = hashlib.sha256()
     with open(path, "rb") as fh:

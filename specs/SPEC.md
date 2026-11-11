@@ -3820,10 +3820,20 @@ Claude; Confirmed: no]
 - Modules: `hpc/pipeline/evaluation/ev_metrics.py` (new), checks E20* of
   `test_smoke_evaluation.py`.
 - Public API: `python3 hpc/pipeline/evaluation/ev_metrics.py --config
-  <tag>.json --eval-config <tag>_eval.json [--ensemble <q>:<arm> ...]`
-  writes, under `<out_root>/metrics/`, `<stem>_<D>.json` per ensemble and
-  data set, `paired_<q>_<D>.json` per search with a term and data set, and
-  `search_<q>.json` per search (pass line `EVAL METRICS OK`).
+  <tag>.json --eval-config <tag>_eval.json [--ensemble <q>:<arm> ...]
+  [--ncpus N]` writes, under `<out_root>/metrics/`, `<stem>_<D>.json` per
+  ensemble and data set, `paired_<q>_<D>.json` per search with a term and
+  data set, and `search_<q>.json` per search (pass line `EVAL METRICS OK`);
+  [amended 2026-11-11 at the build] beside each `<stem>_<D>.json` and
+  `paired_<q>_<D>.json` an `.npz` of the per-row arrays and curves the
+  figures draw (block 21 computes nothing), and `METRICS.json`, the index
+  (the files, the ensembles reported, those left out and why, the report's
+  inputs); `ev_metrics.compute(cfg_path, ecfg_path, names, ncpus)` the
+  same in a process. Each ensemble's quantities in a worker of its own
+  (one thread), the paired comparisons and the searches after them; an
+  ensemble not sampled, or sampled with other values than
+  `ev_config.SAMPLE_PARAMS`, is left out and named; none current is a
+  refusal (exit 3).
 - Rule (sec. 2.5's quantities; estimators):
   - NLL: l_i(E) = -logq_ref; the mean over the in-box rows; the donor
     means lbar_d(E); each member's mean;
@@ -3861,9 +3871,52 @@ Claude; Confirmed: no]
     statistics as xs, the draws), `lc2st_null` permutation trials, the
     statistic and p-value at each cohort window with `lc2st_eval_draws` of
     its draws, and at D_sim's PPC rows as the reference; per donor the mean;
+    [2026-11-11 at the build] the features z-scored (`z_score=True`: the
+    eight statistics have different units), the seed given to
+    `train_on_observed_data(seed=...)` -- in sbi 0.27 the constructor's seed
+    reaches the folds alone and the classifiers were unseeded, so two runs
+    differed (`[SANDBOX]`); with it, the same statistics in one worker and
+    in three; theta-dagger's data set (the windows of its cohort) is not
+    tested again;
   - the search: trials in proposal order (`pipeline_rounds.json`), each
-    with its arm, `nll` and `L_pseudo_real`; every member's `history`.
-- Confirmed: yes 2026-11-11 (D-127). Status: drafted 2026-11-11.
+    with its arm, `nll` and `L_pseudo_real`; every member's `history`;
+    [2026-11-11 at the build] the running minimum of `nll` per arm over the
+    trials that ended ok, and the search's finalist;
+  - [2026-11-11 at the build] the summaries: C(beta)'s signed area against
+    the diagonal (negative: overconfident), its largest deviation, C at
+    0.50, 0.68, 0.90, 0.95, and the expected coverage's KS test
+    (`npe_diagnostics.expected_coverage`); SBC's ECDF differences of the
+    normalised ranks on the beta grid with the KS band
+    (`scipy.stats.kstwo.ppf(level, n)`) and a 20-bin rank histogram with its
+    per-bin binomial 99 % band; the MMD^2 and its square root; NaN and inf
+    written as null.
+- Test oracles (`test_smoke_evaluation.py`): E20a the quantities on cases
+  with a known answer -- the HPD rank and C(beta) by hand; the conjugate
+  Gaussian model on 10 axes (theta ~ N(0, I), x = theta + N(0, 0.25 I), the
+  exact posterior N(x / 1.25, 0.2 I)): its curve within the KS bound at
+  0.999 of the diagonal, a posterior half as wide gives a signed area below
+  -0.1 and one twice as wide above 0.1; the binomial band's half-width
+  1.96 sqrt(0.25 / n); the donor bootstrap's band unchanged by twelve
+  copies of each donor's row; SBC rejecting the one shifted axis alone;
+  TARP's x-dependent references seeing a posterior equal to the prior that
+  the random ones do not; the recovery of N(mu_i, 0.1^2) (contraction 0.88,
+  coverage 1, z-scores 0; shifted by 2 SDs: coverage 0, z-scores -2); the
+  NLL, the PPC, E3's two clauses, the running minimum by hand; the
+  embeddings' MMD p-value above 0.01 for one law and at most 0.01 for two;
+  E20b LC2ST through `lc2st_fit` and `lc2st_eval`: the prior's draws give a
+  larger statistic and more p-values below 0.05 than the exact
+  posterior's; E20c the reduced project's three ensembles: every file of
+  the index, the NLL, C(beta), its rows and E3 recomputed from the samples,
+  theta-dagger's out-of-box rows out of the NLL and in SBC, the search's
+  trials in the rounds' order with their arms and finalist, the same files
+  from one worker and from three, a sample of other values left out and
+  none current refused, an unknown ensemble refused.
+- Confirmed: yes 2026-11-11 (D-127).
+- Status: smoke-tested 2026-11-11 (E20a-c pass `[SANDBOX]`: 3.3 s, 14.5 s,
+  10 s on the kept fixture; five mutations -- C(beta) with <, a bootstrap
+  of rows, the prior's variance 1/6, sigma_seed the smaller, the D_sim
+  curve over both windows -- each caught, the last after E20c learned to
+  count the rows, the fixture's gammas being all 1). Not run on davinci.
 
 ### Block 21: the evaluation's figures (added 2026-11-11; confirmed 2026-11-11, D-127; roadmap synth, step S6)
 

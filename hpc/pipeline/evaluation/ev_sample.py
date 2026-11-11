@@ -38,7 +38,6 @@ Pure ASCII, LF only.
 
 import argparse
 import glob
-import hashlib
 import json
 import math
 import os
@@ -64,10 +63,7 @@ EXIT_ARGS, EXIT_REFUSE = 2, 3
 ORACLE_TOL = 1e-4          # nats: float32 batches of another size (the runner's are 256 rows)
 
 
-def seed_of(base, *parts):
-    """A seed for (base, parts...), stable across machines and runs."""
-    h = hashlib.sha256(("%d|" % int(base) + "|".join(str(p) for p in parts)).encode("ascii"))
-    return int(h.hexdigest()[:8], 16)
+seed_of = ev_plan.seed_of      # a seed for (base, parts...), stable across machines and runs
 
 
 def _batches(n, size):
