@@ -151,3 +151,48 @@ implementation:
     needs_theory: []
     needs_hpc: false
     jobs: []
+  - id: I18
+    title: "the other arm's best fit"
+    summary: "best_fit_alt_<q>: for each search with a term, the best trial on L of the arm its finalist is not, fitted as a second ensemble of 5 members with the best fit's settings (the tuner's finalists --arm; alt_best_fit, synth.json v3; D-126)."
+    block: 18
+    parent: S6
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I19
+    title: "the evaluation's sampler"
+    summary: "One davinci job per ensemble: the members rebuilt from their records and checkpoints; per data set (arm S's report split, R0, R3, R3 against theta-dagger) the NLL at the reference, posterior draws, the mixture's log density at the draws and the embeddings, saved as .npz (drafted)."
+    block: 19
+    parent: S6
+    depends_on: [I18]
+    needs_theory: []
+    needs_hpc: true
+    jobs: ["hpc/pipeline/evaluation/jobs/eval_sample.pbs"]
+  - id: I20
+    title: "the evaluation's quantities"
+    summary: "From the .npz: NLL per window and donor, HPD expected coverage, SBC ranks, TARP, recovery, z-scores and contraction, the donor-paired differences with their bootstrap, the embeddings' MMD, the posterior-predictive check, L-C2ST (drafted)."
+    block: 20
+    parent: S6
+    depends_on: [I19]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I21
+    title: "the evaluation's figures"
+    summary: "The literature's figures per arm and per comparison, four families: calibration, accuracy and sharpness, posterior views and checks, embeddings and the search (drafted)."
+    block: 21
+    parent: S6
+    depends_on: [I20]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I22
+    title: "the evaluation's jobs and run sheet"
+    summary: "The sampling and report job scripts with the roadmap's markers, the README's run sheet, and the evaluation end to end on the reduced project (drafted)."
+    block: 22
+    parent: S6
+    depends_on: [I19, I20, I21]
+    needs_theory: []
+    needs_hpc: true
+    jobs: ["hpc/pipeline/evaluation/jobs/eval_report.pbs"]
