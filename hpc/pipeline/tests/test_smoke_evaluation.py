@@ -53,7 +53,17 @@ Checks (specs/SPEC.md blocks 19-22, "Test oracles")
                          out of the NLL and in SBC; the search's trials in the
                          rounds' order; the same files from one worker and
                          from three; a sample of other values left out, an
-                         unknown ensemble refused
+                         unknown ensemble refused; the example donors the
+                         median of their condition under the A1 ensemble
+    test_e21a_figures    ev_figures on the fixture's metrics: the figures
+                         the rules give (per ensemble and data set, per
+                         search with both arms, across searches), each in
+                         FIGURES.md with a caption and none unlisted, every
+                         PNG readable; the corner plots at the example donors
+    test_e21b_static     ev_figures computes nothing: no statistics library
+                         imported, no mean, SD, quantile or median called;
+                         the arms' and conditions' colours the validated
+                         palette's; a figure to PDF; no metrics refused
     test_e22a_dry_run    the launcher on the committed synth.json and
                          synth_eval.json (no davinci here): five calibration
                          shards with the committed resources, the builder's
@@ -792,6 +802,19 @@ def test_e20c_metrics():
     assert srch["finalist"] == json.load(open(os.path.join(rd, "SEARCH_COMPLETE.json")))["finalist"][
         "trial_id"]
     assert sorted(srch["ensembles"]) == ["S-A2-R0:A1", "S-A2-R0:A2"]
+    # the example donors: per condition the median lbar_d under the search's A1 ensemble
+    ex = srch["example_donors"]["R0"]
+    assert ex["chosen_by"] == "S-A2-R0:A1", ex
+    ma = np.load(os.path.join(md, "S-A2-R0_A1_R0.npz"))
+    for x in ex["donors"]:
+        same = [d for d, i in zip(ma["donor_ids"], range(ma["donor_ids"].size))
+                if ma["cls"][list(ma["donor"]).index(d)] == x["cls"]]
+        vals = sorted(float(ma["donor_nll"][list(ma["donor_ids"]).index(d)]) for d in same)
+        assert x["lbar"] == vals[(len(vals) - 1) // 2], (x, vals)
+        assert ma["donor"][x["row"]] == x["donor"] and x["row"] == list(ma["donor"]).index(x["donor"])
+    assert sorted(x["cls"] for x in ex["donors"]) == sorted(set(ma["cls"].tolist()))
+    exs = json.load(open(os.path.join(md, "search_S-A1.json")))["example_donors"]
+    assert sorted(exs) == ["R0", "R3"] and exs["R3"]["chosen_by"] == "S-A1:A1", exs
     # one worker gives the same files as three
     keep = dict((f, open(f, "rb").read()) for f in idx["files"] if f.endswith(".npz"))
     jkeep = dict((f, json.load(open(f))) for f in idx["files"] if f.endswith(".json"))
@@ -815,6 +838,144 @@ def test_e20c_metrics():
     assert r.returncode == 3 and "REFUSE: no complete ensemble S-A9:A1" in r.stdout, r.stdout[-800:]
     print("[e20c] 8 data-set files, 2 paired, 2 searches; recomputed from the samples; the same "
           "files from one worker and from three")
+
+
+def _expected_figures(md):
+    """The figures block 21's rules give for the metrics in `md`, by
+    relative path (an independent statement of SPEC block 21's list)."""
+    idx = json.load(open(os.path.join(md, "METRICS.json")))
+    want = set()
+    for name, info in idx["ensembles"].items():
+        stem, dss = info["stem"], info["datasets"]
+        base = "ensembles/%s/" % stem
+        want |= set(base + n for n in ("cal_coverage", "cal_tarp", "acc_sigma", "acc_nll",
+                                       "post_lc2st"))
+        coh = [D for D in dss if D != "sim" and not D.endswith("dag")]
+        for D in dss:
+            want |= set(base + n % D for n in ("cal_sbc_ecdf_%s", "cal_sbc_hist_%s",
+                                                "acc_recovery_%s", "acc_zscore_%s"))
+        for D in ["sim"] + coh:
+            want.add(base + "post_ppc_%s" % D)
+        for D in coh:
+            want.add(base + "emb_pca_%s" % D)
+        ex = json.load(open(os.path.join(md, "search_%s.json" % info["search"])))["example_donors"]
+        for D in coh:
+            for x in ex.get(D, {}).get("donors", []):
+                want.add(base + "post_corner_%s_c%d" % (D, x["cls"]))
+    by = {}
+    for name, info in idx["ensembles"].items():
+        by.setdefault(info["search"], {})[info["arm"]] = info
+    for q, arms in by.items():
+        base = "searches/%s/" % q
+        want |= set(base + n for n in ("search_trials", "search_nll_vs_lpr", "search_learning"))
+        if len(arms) == 2 and "A1" in arms:
+            want.add(base + "arms_coverage")
+            term = [a for a in arms if a != "A1"][0]
+            shared = [D for D in arms["A1"]["datasets"] if D in arms[term]["datasets"]]
+            for D in shared:
+                if D != "sim":
+                    want.add(base + "arms_nll_%s" % D)
+                if D != "sim" and not D.endswith("dag"):
+                    want |= {base + "arms_ppc_%s" % D, base + "arms_lc2st_%s" % D}
+                want.add(base + "arms_forest_%s" % D)
+    if any(os.path.basename(f).startswith("paired_") for f in idx["files"]):
+        want.add("across/dbar")
+    want.add("across/lpr")
+    return want
+
+
+def test_e21a_figures():
+    import ev_config
+    import ev_figures as FG
+    import ev_metrics as EM
+    F = _fixture()
+    for name in ("S-A1:A1", "S-A2-R0:A1", "S-A2-R0:A2"):
+        _sampled(name)
+    ecfg = ev_config.load(F["ecfg"])
+    md = ecfg.sub("metrics")
+    if not os.path.isfile(os.path.join(md, "METRICS.json")):
+        EM.compute(F["cfg"], F["ecfg"], ncpus=3, log=lambda t: None)
+    lines = []
+    index = FG.make_all(F["cfg"], F["ecfg"], log=lines.append)
+    want = _expected_figures(md)
+    got = set(r for _f, r, _c in index)
+    assert got == want, ("missing %s; extra %s" % (sorted(want - got)[:6], sorted(got - want)[:6]))
+    assert lines[-1].startswith("EVAL FIGURES OK: %d figure(s)" % len(want)), lines[-1]
+    fdir = ecfg.sub("figures")
+    listed = []
+    for l in open(os.path.join(fdir, "FIGURES.md")).read().splitlines():
+        if l.startswith("- `"):
+            rel = l[3:l.index(".{")]
+            cap = l[l.index("`: ") + 3:]
+            assert cap.endswith(".") and len(cap) > 30, l
+            listed.append(rel)
+    assert sorted(listed) == sorted(want), "FIGURES.md does not list exactly the figures"
+    on_disk = set(os.path.relpath(os.path.join(a, f), fdir)[:-4] for a, _d, fs in os.walk(fdir)
+                  for f in fs if f.endswith(".png"))
+    assert on_disk == want, sorted(on_disk ^ want)[:6]
+    for rel in want:
+        with open(os.path.join(fdir, rel + ".png"), "rb") as fh:
+            head = fh.read(8)
+        assert head == b"\x89PNG\r\n\x1a\n", rel
+    # the corner plots: at the example donors of the search, in the caption
+    ex = json.load(open(os.path.join(md, "search_S-A1.json")))["example_donors"]["R3"]["donors"]
+    caps = dict((r, c) for _f, r, c in index)
+    for x in ex:
+        cap = caps["ensembles/S-A1_A1/post_corner_R3_c%d" % x["cls"]]
+        assert ("donor %d (condition %d" % (x["donor"], x["cls"])) in cap, cap
+    print("[e21a] %d figures, each listed with its caption; the corner plots at the example donors"
+          % len(want))
+
+
+def test_e21b_static():
+    import ast
+    src = open(os.path.join(_EVAL, "ev_figures.py")).read()
+    tree = ast.parse(src)
+    mods = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            mods |= set(a.name.split(".")[0] for a in n.names)
+        elif isinstance(n, ast.ImportFrom):
+            mods.add((n.module or "").split(".")[0])
+    banned = {"scipy", "sklearn", "torch", "sbi", "npe_diagnostics", "bootstrap_paired",
+              "ev_metrics", "ev_sample"}
+    assert not (mods & banned), mods & banned
+    calls = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            calls.add(n.func.attr)
+    assert not (calls & {"quantile", "percentile", "mean", "std", "var", "median", "nanmean",
+                         "nanstd", "average"}), calls & {"quantile", "percentile", "mean", "std"}
+    _need_training_env()
+    import ev_figures as FG
+    # the colours: the validated palette (dataviz validator, PASS all-pairs, light)
+    assert FG.ARM_COLOR == {"A1": "#2a78d6", "A2": "#eb6834", "A5": "#1baf7a"}, FG.ARM_COLOR
+    assert FG.COND_COLOR == ("#e87ba4", "#6250d6", "#008300") and len(set(FG.COND_MARKER)) == 3
+    F = _fixture()
+    import ev_config
+    ecfg = ev_config.load(F["ecfg"])
+    if not os.path.isfile(os.path.join(ecfg.sub("metrics"), "METRICS.json")):
+        import ev_metrics as EM
+        for name in ("S-A1:A1", "S-A2-R0:A1", "S-A2-R0:A2"):
+            _sampled(name)
+        EM.compute(F["cfg"], F["ecfg"], ncpus=3, log=lambda t: None)
+    st = FG.Store(ecfg)
+    FG.style()
+    info = st.index["ensembles"]["S-A1:A1"]
+    fig, cap = FG.fig_coverage(st, dict(info, name="S-A1:A1"), info["datasets"])
+    tmp = tempfile.mkdtemp(prefix="e21b_")
+    try:
+        p = os.path.join(tmp, "c.pdf")
+        fig.savefig(p)
+        assert open(p, "rb").read(5) == b"%PDF-", p
+        ec = _eval_config(tmp, "none.json", out=os.path.join(tmp, "nothing"))
+        r = subprocess.run([PYTHON, os.path.join(_EVAL, "ev_figures.py"), "--config", F["cfg"],
+                            "--eval-config", ec], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True, timeout=300)
+        assert r.returncode == 3 and "REFUSE: no metrics at" in r.stdout, r.stdout[-600:]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("[e21b] no statistics in the figures' code; the validated colours; PDF; refusal")
 
 
 def _submit(*argv, env=None, timeout=600):
@@ -1078,6 +1239,7 @@ CHECKS = [("test_e19a_rebuild", test_e19a_rebuild), ("test_e19b_dagger", test_e1
           ("test_e19c_mixture", test_e19c_mixture), ("test_e19d_contract", test_e19d_contract),
           ("test_e19e_ppc", test_e19e_ppc), ("test_e20a_quantities", test_e20a_quantities),
           ("test_e20b_lc2st", test_e20b_lc2st), ("test_e20c_metrics", test_e20c_metrics),
+          ("test_e21a_figures", test_e21a_figures), ("test_e21b_static", test_e21b_static),
           ("test_e22a_dry_run", test_e22a_dry_run),
           ("test_e22b_job_script", test_e22b_job_script), ("test_e22c_launcher", test_e22c_launcher),
           ("test_convergence", test_convergence)]

@@ -3889,7 +3889,13 @@ Claude; Confirmed: no]
     normalised ranks on the beta grid with the KS band
     (`scipy.stats.kstwo.ppf(level, n)`) and a 20-bin rank histogram with its
     per-bin binomial 99 % band; the MMD^2 and its square root; NaN and inf
-    written as null.
+    written as null; [2026-11-11, for block 21] the per-row contraction
+    1 - sigma^2 / sigma_0^2 (`contraction` in the `.npz`), L-C2ST's 95th
+    percentile of the statistic (`stat_q95`, D_sim's being the figures'
+    reference), and in `search_<q>.json` the corner plots' example donors
+    (`example_donors`: per cohort and condition the donor of median lbar_d
+    under the search's A1 ensemble, or S-A1's while that one is not
+    reported, with the donor's first row).
 - Test oracles (`test_smoke_evaluation.py`): E20a the quantities on cases
   with a known answer -- the HPD rank and C(beta) by hand; the conjugate
   Gaussian model on 10 axes (theta ~ N(0, I), x = theta + N(0, 0.25 I), the
@@ -3920,12 +3926,14 @@ Claude; Confirmed: no]
 
 ### Block 21: the evaluation's figures (added 2026-11-11; confirmed 2026-11-11, D-127; roadmap synth, step S6)
 
-- Modules: `hpc/pipeline/evaluation/ev_figures.py` (new; matplotlib; reads the
-  samples and the metrics and computes nothing scientific), checks E21*.
+- Modules: `hpc/pipeline/evaluation/ev_figures.py` (new; matplotlib, Agg;
+  reads the samples and the metrics and computes nothing scientific),
+  checks E21* of `test_smoke_evaluation.py`.
 - Public API: `python3 hpc/pipeline/evaluation/ev_figures.py --config ...
   --eval-config ...` writes `<out_root>/figures/<family>/<name>.<fmt>`, a
   `FIGURES.md` index with one line per figure, pass line `EVAL FIGURES OK:
-  <n> figure(s)`.
+  <n> figure(s)`; `ev_figures.make_all(cfg_path, ecfg_path)` the same in a
+  process; exit 3 when there are no metrics.
 - The figures (D-126, D-127; one sentence of caption each in the index):
   per ensemble -- calibration: coverage curves (members thin, ensemble
   thick, the band) on D_sim and each cohort, SBC ECDF differences with the
@@ -3942,7 +3950,47 @@ Claude; Confirmed: no]
   ensembles' L_pseudo_real on R0 and R3; the search -- L in proposal order
   with its running minimum per arm, L against L_pseudo_real over all
   trials, the members' learning curves.
-- Confirmed: yes 2026-11-11 (D-127). Status: drafted 2026-11-11.
+- [2026-11-11 at the build] The files: `ensembles/<stem>/` with the four
+  families as prefixes -- `cal_coverage`, `cal_tarp`, `cal_sbc_ecdf_<D>`,
+  `cal_sbc_hist_<D>` (every data set); `acc_recovery_<D>`, `acc_zscore_<D>`
+  (every data set), `acc_sigma`, `acc_nll`; `post_ppc_<D>` (D_sim and the
+  cohorts), `post_lc2st`, `post_corner_<cohort>_c<k>` (the example donor
+  of condition k, its first window, theta* marked, and theta-dagger where it
+  differs); `emb_pca_<cohort>` -- then `searches/<q>/` with `arms_coverage`,
+  `arms_nll_<D>` (every data set but D_sim), `arms_ppc_<D>` and
+  `arms_lc2st_<D>` (the cohorts), `arms_forest_<D>` (every paired data
+  set), `search_trials`, `search_nll_vs_lpr`, `search_learning`, and
+  `across/dbar`, `across/lpr`. The example donors are block 20's
+  (`search_<q>.json`'s `example_donors`: per condition the donor of median
+  lbar_d under the search's A1 ensemble, S-A1's while that one is not
+  reported); the per-row contraction and the D_sim reference of L-C2ST
+  (its 95th percentile) are block 20's too, so that nothing is computed
+  here. The colours follow the entity in every figure, after the dataviz
+  method: an arm its hue (A1 #2a78d6, A2 #eb6834, A5 #1baf7a), a condition
+  its hue and marker (#e87ba4 circle, #6250d6 square, #008300 triangle;
+  both triplets PASS the palette validator all-pairs in light mode, the
+  contrast WARN of aqua and magenta relieved by the legends and the
+  metrics' files as the table view, the tritan 7.6 of the conditions by
+  their markers), the text in the ink colours, gray for references and
+  D_sim as context, one y-axis per panel, the legend in a row below the
+  panels.
+- Test oracles: E21a on the reduced project's metrics: the set of figures
+  equals the one the rules above give (an independent statement in the
+  test), each listed in `FIGURES.md` with a caption and none unlisted,
+  every PNG's signature, the corner plots at the example donors; E21b the
+  module imports no statistics library (scipy, sklearn, torch, sbi,
+  npe_diagnostics, bootstrap_paired, ev_metrics) and calls no mean, SD,
+  quantile or median; the colours the validated ones; a figure to PDF; no
+  metrics refused.
+- Confirmed: yes 2026-11-11 (D-127).
+- Status: smoke-tested 2026-11-11 (E21a-b pass `[SANDBOX]`: 84 figures in
+  60 s at 60 dpi on the kept fixture; looked at by Claude at 120 dpi --
+  coverage, recovery, the corner plot, the forest plot, the NLL, the PCA,
+  the PPC comparison, L-C2ST, SBC -- and corrected: legends moved below
+  the panels, the corner's theta-dagger marked only where it differs, the
+  PPC comparison as dots, integer trial ticks; two mutations -- the
+  embedding figures dropped, a quantile computed in the figures -- each
+  caught). Not run on davinci.
 
 ### Block 22: the evaluation's jobs and run sheet (added 2026-11-11; confirmed 2026-11-11, D-127; roadmap synth, step S6)
 

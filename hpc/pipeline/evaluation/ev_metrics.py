@@ -18,7 +18,8 @@ Reads <out_root>/samples/ and writes under <out_root>/metrics/:
                             donor-cluster bootstrap and G.2's verdict
     search_<q>.json         the search: its trials in proposal order with their
                             arm, nll and L_pseudo_real and the running minimum
-                            of nll per arm; every member's learning curve
+                            of nll per arm; every member's learning curve; the
+                            corner plots' example donors per cohort (Q-E6)
     METRICS.json            the index: the files, the ensembles reported, the
                             ones left out and why
 Pass line: EVAL METRICS OK: ...; exit 2 on the arguments, 3 on a refusal.
@@ -165,15 +166,17 @@ def tarp_block(theta_ref, draws, stats, seed):
 
 
 def recovery_arrays(theta_ref, draws):
-    """Per row and axis: the posterior mean, SD, 5 % and 95 % quantiles and
-    the z-score (mhat - theta^ref) / sigma."""
+    """Per row and axis: the posterior mean, SD, 5 % and 95 % quantiles, the
+    z-score (mhat - theta^ref) / sigma and the contraction 1 - sigma^2 /
+    sigma_0^2."""
     d = np.asarray(draws, dtype=np.float64)
     mhat = d.mean(axis=1)
     sigma = d.std(axis=1, ddof=1)
     q05, q95 = np.quantile(d, [0.05, 0.95], axis=1)
     with np.errstate(divide="ignore", invalid="ignore"):
         zeta = (mhat - np.asarray(theta_ref, dtype=np.float64)) / sigma
-    return {"mhat": mhat, "sigma": sigma, "q05": q05, "q95": q95, "zeta": zeta}
+    return {"mhat": mhat, "sigma": sigma, "q05": q05, "q95": q95, "zeta": zeta,
+            "contraction": 1.0 - sigma ** 2 / SIGMA0_SQ}
 
 
 def recovery_summary(theta_ref, rec, rows):
@@ -278,6 +281,22 @@ def paired_block(l_term, l_a1, donor, ok, sd_term, sd_a1, n_boot, level, seed):
                "lower_nll": ("term arm" if res.estimate < 0 else "A1") if beyond and excludes
                else None}
     return summary, {"donor_ids": donors.astype(np.int64), "delta_d": dd, "se_d": se}
+
+
+def example_donors(donor_ids, donor_nll, donor_cls):
+    """Per condition, the donor of median lbar_d (Q-E6): the lower median of
+    an even count, ties broken by the donor id. [(cls, donor, lbar)]."""
+    donor_ids = np.asarray(donor_ids)
+    donor_nll = np.asarray(donor_nll, dtype=np.float64)
+    donor_cls = np.asarray(donor_cls)
+    ok = np.isfinite(donor_nll)
+    out = []
+    for c in sorted(set(donor_cls[ok].tolist())):
+        sel = np.flatnonzero(ok & (donor_cls == c))
+        order = sel[np.lexsort((donor_ids[sel], donor_nll[sel]))]
+        k = order[(order.size - 1) // 2]
+        out.append({"cls": int(c), "donor": int(donor_ids[k]), "lbar": float(donor_nll[k])})
+    return out
 
 
 def running_min(values):
@@ -466,7 +485,8 @@ def ensemble_metrics(task):
                            "stat_mean": float(np.mean(t)) if t.size else None,
                            "frac_p_below_alpha": (float(np.mean(p < round(1.0 - level, 10)))
                                                   if p.size else None),
-                           "alpha": round(1.0 - level, 10), "n_cal": int(cal["theta"].shape[0])}
+                           "alpha": round(1.0 - level, 10), "n_cal": int(cal["theta"].shape[0]),
+                           "stat_q95": float(np.quantile(t, 0.95)) if t.size else None}
             arr.update({"lc2st_rows": ev_rows.astype(np.int64), "lc2st_stat": t, "lc2st_p": p,
                         "lc2st_donor_ids": dids.astype(np.int64),
                         "lc2st_donor_stat": np.array([t[dn == d].mean() for d in dids])})
@@ -532,6 +552,32 @@ def paired_all(cfg, ecfg, reported, mdir, log):
                 % (q["name"], D, s["Dbar"], s["ci"][0], s["ci"][1], s["two_sigma_seed"],
                    "resolved" if s["resolved"] else "not resolved"))
     return files
+
+
+def examples_of_search(cfg, q, reported, mdir):
+    """The corner plots' example donors of search q on each cohort its
+    ensembles are scored on (Q-E6): per condition the donor of median lbar_d
+    under the search's A1 ensemble -- or, while that one is not reported,
+    under S-A1's -- so that the choice is not tuned to an arm; with each
+    donor's first row in the data set."""
+    mine = [e for e in reported if e.search["name"] == q["name"]]
+    ref = [e for e in mine if e.arm == "A1"]
+    ref = ref[0] if ref else next((e for e in reported if e.search["campaign"] == "S-A1"), None)
+    out = {}
+    if ref is None or not mine:
+        return out
+    for c in mine[0].cohorts:
+        p = os.path.join(mdir, "%s_%s.npz" % (ref.stem, c))
+        if not os.path.isfile(p):
+            continue
+        z = np.load(p)
+        first = dict((int(d), i) for i, d in reversed(list(enumerate(z["donor"]))))
+        cls_of = np.array([z["cls"][first[int(d)]] for d in z["donor_ids"]])
+        ex = example_donors(z["donor_ids"], z["donor_nll"], cls_of)
+        for x in ex:
+            x["row"] = int(first[x["donor"]])
+        out[c] = {"chosen_by": ref.name, "donors": ex}
+    return out
 
 
 def search_summary(cfg, q, reported):
@@ -632,7 +678,9 @@ def compute(cfg_path, ecfg_path, names=None, ncpus=None, log=print):
         if not any(e.search["name"] == q["name"] for e in todo):
             continue
         p = os.path.join(mdir, "search_%s.json" % q["name"])
-        write_json(p, search_summary(cfg, q, todo))
+        summ = search_summary(cfg, q, todo)
+        summ["example_donors"] = examples_of_search(cfg, q, todo, mdir)
+        write_json(p, summ)
         files.append(p)
         searches.append(q["name"])
     index = {"schema": SCHEMA, "config": cfg.path, "eval_config": ecfg.path,
