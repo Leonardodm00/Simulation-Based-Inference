@@ -851,11 +851,32 @@ cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what c
 #     that does not reproduce its own per-row NLL, a calibration bank of another build)
 qstat -u ldellamea | grep ev_ ; grep -h "EVAL SAMPLE OK\|REFUSE\|EVAL JOB EXIT" /davinci-1/home/ldellamea/runs/synth/evaluation/jobs/logs/*.log
 
-# E6. once the four best fits of the other arm are complete (the pipeline's log has four "best_fit_alt_<q>:
-#     BEST FIT COMPLETE"), E3 and E4 again: the dry run shows ten "done" and four "sample:<q>:<arm> would be
-#     submitted"; the submission "EVAL SUBMIT OK: 4 job(s) submitted, 10 done, 0 live"
-cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what calbank,sample --dry-run 2>&1 | grep -E "REFUSE|ABORT| done |would be submitted|not complete|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+# E6. the report (blocks 20-21: metrics, then figures), queued after every sampling job still queued or
+#     running; the default --what is calbank,sample,report. Dry run, pass: exit 0, no REFUSE or ABORT, "report
+#     would be submitted" with "-W depend=afterok:<the sampling jobs' ids>" while they run (none once they ended)
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --dry-run 2>&1 | grep -E "REFUSE|ABORT|report|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+
+# E7. its submission; pass line: EVAL SUBMIT OK: 1 job(s) submitted, ... (the samplings counted done or live)
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth
+
+# E8. the report's pass lines, in its log: EVAL METRICS OK: <n> ensemble(s), ..., EVAL FIGURES OK: <m> figure(s),
+#     EVAL REPORT OK; then the figures' index, one line of caption per figure (open the PNGs from there)
+grep -h "EVAL METRICS OK\|EVAL FIGURES OK\|EVAL REPORT OK\|REFUSE\|EVAL JOB EXIT" /davinci-1/home/ldellamea/runs/synth/evaluation/jobs/logs/report.log; head -n 20 /davinci-1/home/ldellamea/runs/synth/evaluation/figures/FIGURES.md
+
+# E9. once the four best fits of the other arm are complete (the pipeline's log has four "best_fit_alt_<q>:
+#     BEST FIT COMPLETE"): the dry run shows the five samplings and the report "done" and four "sample:<q>:<arm>
+#     would be submitted" with the report after them; the submission "EVAL SUBMIT OK: 5 job(s) submitted"
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --dry-run 2>&1 | grep -E "REFUSE|ABORT| done |would be submitted|not complete|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth
 ```
+
+What is drawn and where (`<out_root>/figures/`, FIGURES.md lists each with its caption): per ensemble
+`ensembles/<q>_<arm>/` -- `cal_*` the HPD expected coverage, SBC and TARP; `acc_*` the recovery, the z-scores
+against the contraction, the posterior SDs and the NLL; `post_*` the corner plots of one example donor per
+condition, the posterior-predictive ranks and L-C2ST; `emb_*` the members' embeddings -- per search
+`searches/<q>/` the two arms side by side (`arms_*`, the forest plot of E3 among them) and the search itself
+(`search_*`); `across/` every search's Dbar and every ensemble's NLL on R0 and R3. The numbers behind each
+figure are in `<out_root>/metrics/` (`METRICS.json` is their index).
 
 ## Tests
 
@@ -875,7 +896,7 @@ python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, 
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # block 9, tools/inputs_check.py, about 1 s, numpy and the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_synthetic.py     # blocks 15-18, the synthetic kind: about 30 s with numpy and scipy, 2 min more with torch, sbi, zuko, skopt (T17 and T18 end to end)
-python3 hpc/pipeline/tests/test_smoke_evaluation.py    # blocks 19-22, the evaluation: builds a reduced project once (about 1 min, torch, sbi, zuko, skopt), then about 1 min; EVAL_FIXTURE=<dir> reuses one, EVAL_KEEP=1 keeps it
+python3 hpc/pipeline/tests/test_smoke_evaluation.py    # blocks 19-22, the evaluation: builds a reduced project once (about 1 min, torch, sbi, zuko, skopt), then about 5 min; EVAL_FIXTURE=<dir> reuses one, EVAL_KEEP=1 keeps it
 ```
 
 Block 1's smoke test under the fake PBS; blocks 4-6 (the runner) are tested by

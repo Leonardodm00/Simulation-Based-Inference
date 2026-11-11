@@ -85,14 +85,21 @@ Checks (specs/SPEC.md blocks 19-22, "Test oracles")
                          ensemble and a calibration bank of another seed
                          refused with nothing written; a changed best fit:
                          stale
+    test_e22d_end_to_end the evaluation end to end under the fake PBS: the
+                         calibration bank, three samplings and the report
+                         after them (stage I22), every job exit 0, the
+                         report's three pass lines, REPORT_COMPLETE.json
+                         with the current inputs; run again: six done; a
+                         resampling puts the report after it; a report value
+                         changed: the report alone stale
     test_convergence     not a discretisation: skipped
 
 Run
     python3 hpc/pipeline/tests/test_smoke_evaluation.py [check ...]
         Builds once a reduced project -- T17's and T18's: S-A1 and S-A2-R0
-        with alt_best_fit, run to PIPELINE DONE under the fake PBS, about 4
-        minutes -- and its calibration bank, then checks the evaluation on
-        it. EVAL_FIXTURE=<dir> reuses a tree built before (its synth.json,
+        with alt_best_fit, run to PIPELINE DONE under the fake PBS, about 1
+        minute in the sandbox -- and its calibration bank, then checks the
+        evaluation on it (about 4 minutes more). EVAL_FIXTURE=<dir> reuses a tree built before (its synth.json,
         banks and runs; the evaluation's files are written under
         <dir>/evaluation_test), EVAL_KEEP=1 keeps the tree it builds and
         prints where. Needs the training environment (torch, sbi, zuko,
@@ -1010,7 +1017,7 @@ def test_e22a_dry_run():
         e["PIPELINE_SKIP_CONDA"] = skip
         e.pop("ROADMAP_DISABLE", None)
         r = subprocess.run([PYTHON, os.path.join(_EVAL, "ev_submit.py"), "--config", here_cfg,
-                            "--eval-config", SYNTH_EVAL, "--what", "calbank,sample", "--dry-run"],
+                            "--eval-config", SYNTH_EVAL, "--dry-run"],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            universal_newlines=True, env=e, timeout=120)
         return r.returncode, r.stdout
@@ -1019,6 +1026,7 @@ def test_e22a_dry_run():
     assert rc == 0 and "REFUSE" not in out and "ABORT" not in out, out[-3000:]
     assert out.count("SKIP_CONDA=0,") == 5 and "ROADMAP_DISABLE" not in out, out[-2000:]
     assert "EVAL DRY RUN: 5 job(s) would be submitted, 0 done, 0 live; nothing written" in out, out[-800:]
+    assert "EVAL SUBMIT: report: nothing to report yet (no ensemble sampled or being sampled)" in out
     names = [q["name"] for q in cfg.data["synthetic"]["searches"]]
     n_alt = sum(1 for q in cfg.data["synthetic"]["searches"] if q["alt_best_fit"])
     assert out.count("EVAL SUBMIT: not complete: ") == len(names) + n_alt == 9, out[-3000:]
@@ -1041,8 +1049,7 @@ def test_e22a_dry_run():
     assert not os.path.exists(ecfg.out_root), "the dry run wrote %s" % ecfg.out_root
     e = dict(os.environ)
     e["ROADMAP_DISABLE"] = "0"
-    rc2, out2 = _submit("--config", here_cfg, "--eval-config", SYNTH_EVAL, "--what",
-                        "calbank,sample", "--dry-run", env=e)
+    rc2, out2 = _submit("--config", here_cfg, "--eval-config", SYNTH_EVAL, "--dry-run", env=e)
     rc1, out1 = direct("1")
     shutil.rmtree(tmp, ignore_errors=True)
     strip = lambda t: [l for l in t.splitlines() if not l.startswith("[evaluation]")]   # noqa: E731
@@ -1229,6 +1236,57 @@ def test_e22c_launcher():
           "done, live, stale and refused as specified" % (time.time() - t0))
 
 
+def test_e22d_end_to_end():
+    import ev_config
+    import ev_plan
+    F = _fixture()
+    root = F["root"]
+    out_root = os.path.join(root, "ev_e22d")
+    shutil.rmtree(out_root, ignore_errors=True)
+    ec = _eval_config(root, "eval_e22d.json", out=out_root)
+    spool = os.path.join(root, "spool_e22d")
+    shutil.rmtree(spool, ignore_errors=True)
+    env = _fake_pbs_env(spool)
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, env=env)
+    assert rc == 0 and "EVAL SUBMIT OK: 6 job(s) submitted, 0 done, 0 live" in out, out[-3000:]
+    t0 = time.time()
+    while time.time() - t0 < 1500:
+        recs = TS._records(spool)
+        if len(recs) == 6 and all(r["finished"] for r in recs):
+            break
+        time.sleep(3)
+    recs = dict((r["name"], r) for r in TS._records(spool))
+    assert sorted(recs) == ["ev_cal0", "ev_cal1", "ev_report", "ev_s0b", "ev_s1a", "ev_s1b"], sorted(recs)
+    for n, r in recs.items():
+        assert r["exit_status"] == 0, (n, r.get("comment"), open(r["out"]).read()[-3000:])
+    rep = recs["ev_report"]
+    smp = sorted(recs[n]["id"] for n in ("ev_s0b", "ev_s1a", "ev_s1b"))
+    assert sorted(rep["depend"].split(":")) == smp and rep["vars"]["ROADMAP_STAGE"] == "I22", rep
+    log = open(rep["out"]).read()
+    for line in ("EVAL METRICS OK: 3 ensemble(s)", "EVAL FIGURES OK: ", "EVAL REPORT OK: 3 ensemble(s)"):
+        assert line in log, (line, log[-2000:])
+    cfg = ev_plan.load_project(F["cfg"])
+    ecfg = ev_config.load(ec)
+    rc_ = json.load(open(os.path.join(out_root, "REPORT_COMPLETE.json")))
+    assert rc_["inputs"] == ev_plan.report_inputs(cfg, ecfg) and len(rc_["ensembles"]) == 3, rc_
+    n_listed = sum(1 for l in open(rc_["figures_index"]) if l.startswith("- `"))
+    assert rc_["n_figures"] == n_listed > 0, (rc_["n_figures"], n_listed)
+    # run again: all done; a resampling puts the report after it; a report value changed
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, env=env)
+    assert rc == 0 and "EVAL SUBMIT OK: 0 job(s) submitted, 6 done, 0 live" in out, out[-2000:]
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--resample", "S-A1:A1",
+                      "--dry-run", env=env)
+    assert rc == 0 and "EVAL DRY RUN: 2 job(s) would be submitted, 4 done, 0 live" in out, out[-2000:]
+    assert "report would be submitted (stale: the sampling of this run comes first)" in out
+    assert "depend=afterok:<sample_S-A1_A1>" in out, out[-2000:]
+    ec2 = _eval_config(root, "eval_e22d_dpi.json", out=out_root, dpi=61)
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec2, "--dry-run", env=env)
+    assert rc == 0 and "EVAL DRY RUN: 1 job(s) would be submitted, 5 done, 0 live" in out, out[-2000:]
+    assert "report would be submitted (stale: its samples or its values changed" in out, out[-1500:]
+    print("[e22d] calibration bank, three samplings and the report through the fake PBS in %.0f s; "
+          "REPORT_COMPLETE.json current; done, resampled and stale as specified" % (time.time() - t0))
+
+
 def test_convergence():
     raise unittest.SkipTest("not a discretisation: no convergence order")
 
@@ -1242,6 +1300,7 @@ CHECKS = [("test_e19a_rebuild", test_e19a_rebuild), ("test_e19b_dagger", test_e1
           ("test_e21a_figures", test_e21a_figures), ("test_e21b_static", test_e21b_static),
           ("test_e22a_dry_run", test_e22a_dry_run),
           ("test_e22b_job_script", test_e22b_job_script), ("test_e22c_launcher", test_e22c_launcher),
+          ("test_e22d_end_to_end", test_e22d_end_to_end),
           ("test_convergence", test_convergence)]
 
 

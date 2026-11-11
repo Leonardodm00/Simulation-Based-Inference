@@ -24,7 +24,8 @@ unit is done, live (its recorded job queued, held or running), or submitted:
     report            ev_report.py over every sampled ensemble: submitted when a
                       sampling job is, or when REPORT_COMPLETE.json records
                       other inputs (ev_plan.report_inputs); after the sampling
-                      jobs (afterok)
+                      jobs (afterok); not while no ensemble is sampled or
+                      being sampled
 
 An ensemble whose best fit is not complete is named; run this again once it
 is. Every job is jobs/eval_run.pbs with its command in <out_root>/jobs/
@@ -287,8 +288,12 @@ def run(cfg_path, ecfg_path, what=KINDS, resample=(), dry_run=False, log=print):
     live_ids = {"calbank": [], "sample": []}
     n_sub, n_done, n_live = 0, 0, 0
     sampling_now = False                         # a sampling job submitted now, or live
+    has_samples = bool(ev_plan.report_inputs(cfg, ecfg)["samples"])
     for u in units:
         kind = u["kind"]
+        if kind == "report" and not (has_samples or sampling_now or u["live"]):
+            log("EVAL SUBMIT: report: nothing to report yet (no ensemble sampled or being sampled)")
+            continue
         if u["live"]:
             n_live += 1
             note = ""

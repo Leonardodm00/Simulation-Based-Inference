@@ -4064,14 +4064,28 @@ Claude; Confirmed: no]
   queued job live and not submitted twice; `n_post` changed: three stale;
   `--resample`; an unknown ensemble and a calibration bank of another seed
   refused with nothing written; a changed `BEST_FIT_COMPLETE.json`: stale.
-  E22d (with the report): the evaluation end to end on the reduced project.
+  E22d the evaluation end to end on the reduced project under the fake
+  PBS: two calibration jobs, three samplings and the report after them
+  (`afterok` on the three, stage I22), every exit 0, the report's three
+  pass lines, `REPORT_COMPLETE.json` with the current
+  `ev_plan.report_inputs` and as many figures as `FIGURES.md` lists; run
+  again, six done; `--resample` of one ensemble puts the report after its
+  sampling; a report value changed (dpi) makes the report alone stale.
+  [2026-11-11 at the build] The report is not submitted while no ensemble
+  is sampled or being sampled (`report: nothing to report yet`), so the
+  committed dry run on a fresh davinci shows five jobs (E22a).
 - Confirmed: yes 2026-11-11 (D-127).
-- Status: [part 1, the calibration bank and the samplings] smoke-tested
-  2026-11-11 (E22a-c pass, E19 still passing: 8 pass and 1 skip in 56 s on
-  the kept fixture `[SANDBOX]`; four mutations -- the samplings not after
-  the bank, the sampling's values ignored, live jobs ignored, the markers
-  before the activation -- each caught; the launcher's modules need Python
-  3.3 or later, `vermin`). The report (`ev_report.py`, E22d): drafted.
+- Status: smoke-tested 2026-11-11: part 1, the calibration bank and the
+  samplings (E22a-c, four mutations -- the samplings not after the bank,
+  the sampling's values ignored, live jobs ignored, the markers before the
+  activation -- each caught; the launcher's modules need Python 3.3 or
+  later, `vermin`); part 2, the report (`ev_report.py`, E22d; four
+  mutations -- the report submitted with nothing sampled, not after the
+  samplings, recording its samples only, a staleness test blind to the
+  report's values -- each caught). The whole suite from a fresh reduced
+  project: 14 of 15 checks pass, the convergence check skipped, in 262 s
+  `[SANDBOX 2026-11-11]`. Not run on davinci: part 1 handed over at
+  59d7f90 (the run sheet's E1-E5), part 2 with the run sheet's E6-E9.
 
 ## 6. Pipeline entry points
 
