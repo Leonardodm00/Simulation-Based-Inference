@@ -55,11 +55,15 @@
   "_ncpus": "Worker processes of the simulations and of the report's per-ensemble work when a command is run by hand; a job passes its own cores (jobs below). [Claude's]",
   "ncpus": 8,
 
-  "_jobs": "Block 22: the PBS queue and each kind of job's resources -- calbank (one job per shard of the calibration bank), sample (one per ensemble: block 19's ev_sample.py), report (one: metrics, then figures). Sized for W 18,000 windows: a bench window simulates in 0.05 s, the members' densities at 1,000 draws dominate the sampling. [Claude's]",
+  "_jobs": "Block 22: the PBS queue and each kind of job's resources -- calbank (one job per shard of the calibration bank), sample (one per ensemble: block 19's ev_sample.py), report (one: metrics, then figures). Sized for W 18,000 windows: a bench window simulates in 0.05 s, the members' densities at 1,000 draws dominate the sampling. Block 23 added data (one: the data overview, ev_dataview.py; 4,000 + 648 windows' statistics and nine figures, a few minutes and under 2 GB in the sandbox). [Claude's]",
   "jobs": {
     "queue": "cpu",
     "calbank": {"ncpus": 1, "mem": "16gb", "walltime": "04:00:00"},
     "sample": {"ncpus": 8, "mem": "64gb", "walltime": "24:00:00"},
-    "report": {"ncpus": 8, "mem": "64gb", "walltime": "24:00:00"}
-  }
+    "report": {"ncpus": 8, "mem": "64gb", "walltime": "24:00:00"},
+    "data": {"ncpus": 2, "mem": "8gb", "walltime": "01:00:00"}
+  },
+
+  "_data_view": "Block 23, the data overview (D-130): sim_shards, the simulated bank's first shards read (2 of 20: 4,000 windows of 2,000 donors, the user's); examples_per_condition, the example windows per condition of each cohort, and as many contaminated ones (D1); sim_examples, the simulated bank's example windows (D1); zoom_s, the seconds shown around a window's maximum (D1); bins, the histograms' bins (D2). [Claude's, but sim_shards]",
+  "data_view": {"sim_shards": 2, "examples_per_condition": 2, "sim_examples": 6, "zoom_s": 20.0, "bins": 60}
 }

@@ -17,13 +17,18 @@ import re
 from collections import namedtuple
 
 FORMATS = ("png", "pdf", "svg")
-JOB_KINDS = ("calbank", "sample", "report")
+JOB_KINDS = ("calbank", "sample", "report", "data")
 # the values a sampling depends on: a sample of other values is stale (block 22);
 # oracle_tol is not one of them: it changes no output, only whether a sampling refuses
 SAMPLE_PARAMS = ("seed", "n_post", "ppc_rows", "ppc_draws", "cal_glob", "cal_n", "cal_seed")
 # the values a report depends on beyond its samples (block 22)
 REPORT_PARAMS = ("seed", "lc2st_null", "lc2st_eval_draws", "bootstrap_n", "level", "dpi",
                  "formats")
+# the values the data overview depends on beyond the banks it reads (block 23)
+DATA_PARAMS = ("seed", "dpi", "formats", "data_view")
+# block 23's data_view: the simulated bank's shards read, the example windows,
+# the zoom (seconds), the histograms' bins
+DATA_VIEW_KEYS = ("sim_shards", "examples_per_condition", "sim_examples", "zoom_s", "bins")
 _MEM = re.compile(r"^[1-9][0-9]*[kmgt]?b$")
 _WALL = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
 
@@ -49,6 +54,7 @@ KEYS = (
     "formats",           # the figures' file formats (Q-E6), a tuple
     "ncpus",             # worker processes when a command is run by hand
     "jobs",              # block 22: queue, and ncpus/mem/walltime per job kind
+    "data_view",         # block 23: the data overview's values (DATA_VIEW_KEYS)
 )
 
 
@@ -75,6 +81,12 @@ class EvalConfig(namedtuple("EvalConfig", KEYS + ("path",))):
         as a dict of JSON types."""
         return dict((k, list(v) if isinstance(v, tuple) else v)
                     for k, v in ((k, getattr(self, k)) for k in REPORT_PARAMS))
+
+    def data_params(self):
+        """The values the data overview depends on beyond its banks
+        (DATA_PARAMS), as a dict of JSON types."""
+        return dict((k, list(v) if isinstance(v, tuple) else (dict(v) if isinstance(v, dict) else v))
+                    for k, v in ((k, getattr(self, k)) for k in DATA_PARAMS))
 
 
 _INTS = ("seed", "n_post", "batch_rows", "ppc_rows", "ppc_draws", "cal_n", "cal_shards",
@@ -142,6 +154,18 @@ def validate(data):
                 if not (isinstance(j["walltime"], str) and _WALL.match(j["walltime"])):
                     probs.append("jobs.%s.walltime must be hh:mm:ss, got %r"
                                  % (kind, j["walltime"]))
+    dv = data.get("data_view")
+    if "data_view" in data:
+        if not (isinstance(dv, dict) and sorted(dv) == sorted(DATA_VIEW_KEYS)):
+            probs.append("data_view must have exactly the keys %s" % ", ".join(DATA_VIEW_KEYS))
+        else:
+            for k in ("sim_shards", "examples_per_condition", "sim_examples", "bins"):
+                v = dv[k]
+                if not (isinstance(v, int) and not isinstance(v, bool) and v >= 1):
+                    probs.append("data_view.%s must be an integer >= 1, got %r" % (k, v))
+            z = dv["zoom_s"]
+            if not (isinstance(z, (int, float)) and not isinstance(z, bool) and z > 0):
+                probs.append("data_view.zoom_s must be a number of seconds > 0, got %r" % (z,))
     if not probs:
         if data["ppc_draws"] > data["n_post"]:
             probs.append("ppc_draws %d exceeds n_post %d" % (data["ppc_draws"], data["n_post"]))

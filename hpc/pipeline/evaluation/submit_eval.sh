@@ -7,6 +7,7 @@
 #   bash hpc/pipeline/evaluation/submit_eval.sh --project synth
 #   bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what calbank,sample
 #   bash hpc/pipeline/evaluation/submit_eval.sh --project synth --resample S-A1:A1
+#   bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what data   (block 23)
 #
 # --project <tag> reads hpc/pipeline/projects/<tag>/<tag>.json and
 # <tag>_eval.json; --config <path> and --eval-config <path> name them
@@ -37,7 +38,7 @@ while [ $# -gt 0 ]; do
                        EVAL="$PIPE/projects/${1:-}/${1:-}_eval.json" ;;
         --config)      shift; CONFIG="${1:-}" ;;
         --eval-config) shift; EVAL="${1:-}" ;;
-        -h|--help)     sed -n '2,25p' "$HERE/submit_eval.sh"; exit 0 ;;
+        -h|--help)     sed -n '2,26p' "$HERE/submit_eval.sh"; exit 0 ;;
         *)             PASS+=("$1") ;;
     esac
     shift || true

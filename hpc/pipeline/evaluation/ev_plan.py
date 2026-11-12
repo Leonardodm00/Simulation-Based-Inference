@@ -7,6 +7,7 @@ python without numpy or torch.
     cfg = ev_plan.load_project(".../synth.json")
     for e in ev_plan.ensembles(cfg): ...          # complete ensembles
     build = ev_plan.calbank_build(cfg, ecfg)      # the builder's argv per shard
+    inputs = ev_plan.data_inputs(cfg, ecfg)       # what the data overview reads (block 23)
 
 An ensemble is one best-fit folder of one search: `<runs_root>/<q>/<tag>_best`
 (block 7) or `<tag>_best_alt` (block 18). Its members are found in the folder
@@ -172,3 +173,45 @@ def report_inputs(cfg, ecfg):
         if os.path.isfile(pj):
             samples[e.stem] = sha256_file(pj)
     return {"samples": samples, "params": ecfg.report_params()}
+
+
+def data_dir(ecfg):
+    """`<out_root>/data`: the data overview's files (block 23)."""
+    return ecfg.sub("data")
+
+
+def data_view_json(ecfg):
+    """`<out_root>/data/DATA_VIEW.json`, the data overview's record, written
+    last (block 23)."""
+    return os.path.join(data_dir(ecfg), "DATA_VIEW.json")
+
+
+def cohort_glob(cfg, name):
+    """The shards of cohort `name` of `synthetic.real`."""
+    return os.path.join(bank_dir(cfg, name), "shard_*.npz")
+
+
+def data_bank_paths(cfg, ecfg):
+    """The shards the data overview reads (block 23), sorted: the first
+    `data_view.sim_shards` of the simulated bank under "sim" (fewer when the
+    bank has fewer: the job refuses then) and every shard of each cohort of
+    `synthetic.real` under its name."""
+    out = {"sim": sorted(glob.glob(sim_bank_glob(cfg)))[:int(ecfg.data_view["sim_shards"])]}
+    for r in cfg.data["synthetic"]["real"]:
+        out[r["name"]] = sorted(glob.glob(cohort_glob(cfg, r["name"])))
+    return out
+
+
+def data_inputs(cfg, ecfg):
+    """What the data overview is made of (block 23): per bank, each shard
+    read as [file name, sha256 of its sidecar or None], and its values
+    (ev_config.DATA_PARAMS). A DATA_VIEW.json whose recorded inputs differ
+    is stale."""
+    banks = {}
+    for name, paths in sorted(data_bank_paths(cfg, ecfg).items()):
+        rows = []
+        for p in paths:
+            side = os.path.splitext(p)[0] + ".json"
+            rows.append([os.path.basename(p), sha256_file(side) if os.path.isfile(side) else None])
+        banks[name] = rows
+    return {"banks": banks, "params": ecfg.data_params()}

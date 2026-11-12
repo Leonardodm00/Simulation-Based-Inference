@@ -868,6 +868,18 @@ grep -h "EVAL METRICS OK\|EVAL FIGURES OK\|EVAL REPORT OK\|REFUSE\|EVAL JOB EXIT
 #     would be submitted" with the report after them; the submission "EVAL SUBMIT OK: 5 job(s) submitted"
 cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --dry-run 2>&1 | grep -E "REFUSE|ABORT| done |would be submitted|not complete|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
 cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth
+
+# E10. the data overview (block 23, D-130): the windows, the eight statistics, theta and their PCA of the
+#      synthetic data set, nine figures; it reads the banks only, so it needs no sampling and waits for none.
+#      Dry run, pass: exit 0, no REFUSE or ABORT, "data would be submitted" with "ncpus=2:mem=8gb" and
+#      "EVAL DRY RUN: 1 job(s) would be submitted, 0 done, 0 live; nothing written"; then the submission,
+#      pass line "EVAL SUBMIT OK: 1 job(s) submitted, 0 done, 0 live"
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what data --dry-run 2>&1 | grep -E "REFUSE|ABORT|data|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what data
+
+# E11. its pass lines, a minute or two after it starts: "EVAL DATA OK: 4000 simulated windows, 324 + 324
+#      cohort windows, 9 figure(s)" and "EVAL JOB EXIT: 0"; then the figures' index
+grep -h "EVAL DATA\|REFUSE\|EVAL JOB EXIT" /davinci-1/home/ldellamea/runs/synth/evaluation/jobs/logs/data.log; cat /davinci-1/home/ldellamea/runs/synth/evaluation/data/FIGURES.md
 ```
 
 A sampling that refuses (a `REFUSE:` line in its log, exit 3) writes
@@ -885,6 +897,15 @@ condition, the posterior-predictive ranks and L-C2ST; `emb_*` the members' embed
 `searches/<q>/` the two arms side by side (`arms_*`, the forest plot of E3 among them) and the search itself
 (`search_*`); `across/` every search's Dbar and every ensemble's NLL on R0 and R3. The numbers behind each
 figure are in `<out_root>/metrics/` (`METRICS.json` is their index).
+
+The data overview (E10, block 23) writes `<out_root>/data/`: `figures/` with `windows_cohorts` and
+`windows_cohorts_zoom` (example windows of R0 and R3 by condition, full and around their maximum),
+`windows_sim` and `windows_contaminated` (the simulated bank's and the contaminated windows), `stats_hist`
+and `stats_strip` (the eight statistics of the first 4,000 simulated windows against the cohorts'),
+`theta_cohorts` and `theta_dagger` (the cohorts' theta* on the unit box; theta-dagger on R3's shifted axes),
+`stats_pca` (the statistics on the simulated windows' first two principal components); `FIGURES.md` with a
+caption per figure, `data_view.npz` with every number drawn, `DATA_VIEW.json` with the counts and what it
+read. `--what data` is never part of the default plan: E3-E9 are unchanged.
 
 ## Tests
 
@@ -904,7 +925,7 @@ python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, 
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # block 9, tools/inputs_check.py, about 1 s, numpy and the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_synthetic.py     # blocks 15-18, the synthetic kind: about 30 s with numpy and scipy, 2 min more with torch, sbi, zuko, skopt (T17 and T18 end to end)
-python3 hpc/pipeline/tests/test_smoke_evaluation.py    # blocks 19-22, the evaluation: builds a reduced project once (about 1 min, torch, sbi, zuko, skopt), then about 5 min; EVAL_FIXTURE=<dir> reuses one, EVAL_KEEP=1 keeps it
+python3 hpc/pipeline/tests/test_smoke_evaluation.py    # blocks 19-23, the evaluation and the data overview: builds a reduced project once (about 1 min, torch, sbi, zuko, skopt), then about 5 min; EVAL_FIXTURE=<dir> reuses one, EVAL_KEEP=1 keeps it
 ```
 
 Block 1's smoke test under the fake PBS; blocks 4-6 (the runner) are tested by

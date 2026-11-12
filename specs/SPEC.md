@@ -531,7 +531,7 @@ L-C2ST settings are blocks 19 and 20's, open in sec. 8 (Q-E1..Q-E6).
 | n_train, n_d | training rows; distinct donors in the bank | int | rows; donors |
 | B_sim, P, N_ep, S | batch size, passes, epochs, steps per epoch | int, float, int, int | rows; passes; epochs; steps |
 | (f_tr, f_sel, f_rep) | split fractions by donor | floats summing to 1 | -- |
-| theta, x | a parameter vector in the unit box; a window | (p,), (W,) float32 | -- ; Hz (IFR) |
+| theta, x | a parameter vector in the unit box; a window | (p,), (W,) float32 | -- ; Hz (IFR) [corrected 2026-11-12: in the bench banks of the synthetic data set, x is the Gaussian-smoothed population spike count per bin of w_size = 1/f_s s divided by the units (sidecar `scale_convention` per_unit_mean; `bench_burst_provider.py`), so spikes per unit per bin and x f_s in spikes/s per unit; the extractor's banks not checked here] |
 | q_omega(theta \| h_psi(x)) | the flow's density at theta given the encoder's summary of x | density on (0, 1)^p | -- |
 | l_{m,i}, L_bar | member m's NLL on report row i; the ensemble's mean NLL | float64 | nats per row |
 | L_sel(e), e_best | selection-split NLL after epoch e; the best epoch | float; int | nats per row; epochs |
@@ -3702,7 +3702,8 @@ Claude; Confirmed: no]
   `ev_models.rebuild(record_path, index) -> (JointDSNNPE in eval mode,
   info)`; `ev_data.sim_index(cfg)`,
   `ev_data.report_rows(index, fracs, seed, split_hash)`,
-  `ev_data.calibration_rows(donor)`, `ev_data.cohort(cfg, name)`,
+  `ev_data.calibration_rows(donor)`, `ev_data.cohort(cfg, name)` ([2026-11-12,
+  block 23] also `window_idx` and `contaminated`, additive),
   `ev_data.pseudo_true(theta, gap_spec) -> (theta_dag, in_box, delta)`;
   `ev_simulate.fixed_stats(x) -> (n, 8)`, `ev_simulate.windows_at(theta,
   latent_spec, seed, ncpus) -> (n, W)`;
@@ -3799,7 +3800,8 @@ Claude; Confirmed: no]
   oracle above), `ppc_rows` 324 and `ppc_draws` 20 (Q-E4), `cal_glob`,
   `cal_n` 10000, `cal_shards`, `cal_seed`, `lc2st_null` 100 and
   `lc2st_eval_draws` (Q-E5), `bootstrap_n`, `level` 0.95, `dpi` 200,
-  `formats` png and pdf (Q-E6), `ncpus`.
+  `formats` png and pdf (Q-E6), `ncpus`; [2026-11-12, block 23] `data_view`
+  and `jobs.data`.
 - Test oracles (`test_smoke_evaluation.py`, on the reduced project of T18,
   W 128): E19a the rebuild reproduces every member's `_perrow.npz` on D_sim
   and on its cohort; E19b theta^dag maps through the unshifted affine map
@@ -4037,6 +4039,8 @@ Claude; Confirmed: no]
   `afterok:<id>:<id>...` (several ids).
 - Public API: `bash hpc/pipeline/evaluation/submit_eval.sh --project <tag>
   [--dry-run] [--what calbank,sample,report] [--resample <q>:<arm>,...|all]`
+  ([2026-11-12, block 23] `--what` also takes `data`, block 23's job, which
+  the default `calbank,sample,report` leaves out)
   (= `ev_submit.py --config ... --eval-config ...`); exit 0 with `EVAL SUBMIT
   OK: <n> job(s) submitted, <d> done, <l> live` (`EVAL DRY RUN: ... nothing
   written`), 2 on the arguments or the configurations, 3 on a refusal
@@ -4109,6 +4113,146 @@ Claude; Confirmed: no]
   `[SANDBOX 2026-11-11]`. Not run on davinci: part 1 handed over at
   59d7f90 (the run sheet's E1-E5), part 2 with the run sheet's E6-E9.
 
+### Block 23: the data overview (added 2026-11-12; confirmed 2026-11-12, D-130; roadmap synth, step S6)
+
+- Modules: `hpc/pipeline/evaluation/ev_dataview.py` (new: the quantities
+  and the job's entry; numpy, torch through `ev_simulate.fixed_stats`,
+  scikit-learn's PCA), `ev_data_figures.py` (new: the figures; matplotlib,
+  Agg; reads `data_view.npz` and computes nothing scientific; block 21's
+  style and colours), `ev_data.cohort` (block 19: also `window_idx` and
+  `contaminated`), `ev_config` (`data_view`, `jobs.data`, `DATA_PARAMS`),
+  `ev_plan` (`data_dir`, `data_view_json`, `cohort_glob`,
+  `data_bank_paths`, `data_inputs`), `ev_submit` and `submit_eval.sh` (the
+  kind `data`), `synth_eval.json` (`data_view`, `jobs.data`), checks E23* of
+  `test_smoke_evaluation.py`.
+- Public API: `python3 hpc/pipeline/evaluation/ev_dataview.py --config
+  <tag>.json --eval-config <tag>_eval.json [--ncpus n]` writes
+  `<out_root>/data/data_view.npz`, the figures
+  `<out_root>/data/figures/<name>.<fmt>` with `<out_root>/data/FIGURES.md`,
+  and last `<out_root>/data/DATA_VIEW.json` (schema `eval_data_view/1`: the
+  inputs, the counts, the PCA's ratios and loadings); pass line `EVAL DATA
+  OK: <n_S> simulated windows, <n_R0> + <n_R3> cohort windows, <k>
+  figure(s)`; exit 2 on the arguments, 3 on a refusal (fewer shards than
+  `sim_shards`, a zoom longer than a window, a statistic constant over
+  S_sub), nothing written then. `ev_dataview.compute(cfg, ecfg) -> (arrays,
+  info)`; `ev_data_figures.make_all(data_dir, ecfg) -> [(name, caption)]`.
+  `bash hpc/pipeline/evaluation/submit_eval.sh --project <tag> --what data
+  [--dry-run]`: one job `ev_data` (`jobs.data`: synth 2 cores, 8gb, 1 h,
+  Claude's), stage I23, after nothing; done when `DATA_VIEW.json` records
+  the current `ev_plan.data_inputs` (`ev_config.DATA_PARAMS` -- seed, dpi,
+  formats, data_view -- and, per bank, each shard read with the sha256 of
+  its sidecar), stale otherwise; `data` is not in the default `--what`, so
+  the evaluation's plan (block 22) is unchanged unless it is named.
+- The data (D-130): S_sub, the first `data_view.sim_shards` shards, sorted,
+  of the simulated bank -- synth: 2 of 20, n_S = 4,000 windows of 2,000
+  donors, each donor's theta, drawn from the box prior p_S(theta) =
+  U(0, 1)^10, shared by its two wells; every window of S_sub is therefore a
+  draw of the prior predictive p_S(x) = int p(x | theta) p_S(theta) dtheta,
+  the realisation and the nuisance included, two windows of a donor not
+  independent; R0 and R3, the cohorts of `synthetic.real`, n_R = 324
+  windows each (27 donors, 9 per condition, 2 wells, 6 windows per well),
+  theta*_d read here although the networks never see it.
+- The quantities (`compute`; D-130, the finer choices [Claude's]):
+  - T(x) in R^8, the eight fixed statistics of every window
+    (`ev_simulate.fixed_stats`, block 19: mean, SD, max, 90 % quantile,
+    burst fraction, lag-1 autocorrelation, skewness, roughness);
+  - the reference standardisation on S_sub: m_j and s_j, the mean and the
+    SD (ddof 1) of T_j over S_sub in float64, and z(x) = (T(x) - m) / s,
+    componentwise; a statistic constant over S_sub is a refusal;
+  - PCA: scikit-learn's `PCA(n_components=2, random_state=seed)` fitted on
+    z of S_sub alone; every window's two coordinates, the explained variance
+    ratios, the loadings (2 x 8);
+  - per statistic, S_sub's quantiles at 0.01, 0.5 and 0.99 (numpy, linear)
+    and each cohort's counts of windows below the first and above the last;
+  - the frames: per statistic, the range of T_j over S_sub and every
+    uncontaminated cohort window (the bank's `contaminated`: gap mode (d)),
+    widened by 2 % of its width on each side; the same for the PCA plane;
+    a window outside a frame is necessarily contaminated (asserted),
+    counted, and drawn at the frame's edge;
+  - the histograms: `bins` equal bins over each frame; heights count /
+    (n_D x width), so that a data set's area over the frame is the fraction
+    of its windows inside;
+  - theta: per cohort donor d, theta*_d (every row of d carries it,
+    asserted) and c_d; theta^dag_d, in_box and delta by
+    `ev_data.pseudo_true` (sec. 2.5: R3 delta = 0.35 x 0.3 = 0.105; R0
+    theta^dag_d = theta*_d); the conditions' centres mu_c (the sidecar's
+    `class_centres`, C x 7, equal in both cohorts, asserted);
+  - the examples (D1): per cohort and condition c, `examples_per_condition`
+    donors of c drawn without replacement by
+    `numpy.random.default_rng(ev_plan.seed_of(seed, "data_view", <cohort>,
+    c))`, sorted, each shown by the first window of its first well; per
+    cohort with contaminated windows, as many contaminated windows drawn the
+    same way (key "contaminated"); `sim_examples` rows of S_sub (key "sim");
+    each example's zoom start z0 = min(max(argmax_t x_t - floor(L/2), 0), W
+    - L), L = round(zoom_s f_s) samples (a zoom longer than the window is a
+    refusal); the strips' jitter uniform in (-0.28, 0.28), seeded the same
+    way (keys "jitter", "jitter_d").
+- The figures (D-130; formats and dpi of the evaluation's configuration;
+  one caption line each in `FIGURES.md`; the conditions' validated hues and
+  markers of block 21, S_sub gray, the cohorts told apart by line style or
+  panel, text in the ink colours, one y-axis per panel, the legend below):
+  - D1: `windows_cohorts` (rows: condition x example, columns: R0, R3; the
+    full window, the zoom shaded; y shared by a row), `windows_cohorts_zoom`
+    (the same windows, zoom_s around each maximum), `windows_sim` (S_sub's
+    examples, full and zoomed side by side), `windows_contaminated` (the
+    contaminated examples, full and zoomed; only where a cohort has some)
+    [Claude's];
+  - D2: `stats_hist` (one panel per statistic: S_sub's histogram as a gray
+    fill, each cohort's as an ink step line, solid R0, dashed R3; the
+    windows beyond the frame counted in the panel's title), `stats_strip`
+    (one panel per statistic: every cohort window as a point in its
+    cohort-and-condition row, contaminated windows ringed, S_sub's 1-99 %
+    band and median; the counts below and above the band in the title);
+  - D3: `theta_cohorts` (one panel per axis: each cohort donor's theta*_{d,k}
+    in its cohort-and-condition row on [0, 1], where p_S is uniform; the
+    conditions' centres as bars on the label axes), `theta_dagger` (the free
+    axes 7-9 of each range-shifted cohort: theta^dag_{d,k} against
+    theta*_{d,k}, with y = x, y = x + delta and the box's edge 1; only where
+    a cohort has delta > 0);
+  - D4: `stats_pca` (S_sub's cloud in gray with each cohort's windows by
+    condition, one panel per cohort on the same frame; a full-extent panel
+    for a cohort with windows beyond the frame; the loadings).
+- Test oracles: E23a on the reduced project (W 128, f_s 10 Hz; S_sub the
+  first 2 of 3 shards, 80 windows): S_sub's rows those of the first two
+  sorted shards read with numpy; the eight statistics against their
+  definitions recomputed in float64 (1e-5 on the means and SDs, one sample
+  in W on the burst fraction); m and s against numpy; the PCA's ratios
+  against the top eigenvalues of the covariance of z over its trace, its
+  loadings against the eigenvectors up to sign, every coordinate against
+  (z - mean z) times the loadings; the quantiles and the counts outside
+  them; the frames holding S_sub and every uncontaminated window; each
+  data set's histogram area equal to its fraction inside; the helpers on
+  known cases (half the values beyond the edges leave half the area; a
+  constant widened; the zoom at both ends); theta*_d the rows' own,
+  theta^dag_d `pseudo_true`'s, delta = pi x shift_max of the sidecar (R3
+  0.105, R0 0); every cohort example the first window of a donor's first
+  well, one per condition, contaminated examples contaminated, every zoom
+  holding its window's maximum; the same arrays twice, other examples under
+  another seed; refusals (3 shards for 4; a zoom of 20 s in 12.8-s windows)
+  and the configuration's checks; E23b the job's entry: its pass line, the
+  figures the rules give (an independent statement in the test) in PNG and
+  PDF, each in `FIGURES.md` with a caption, `DATA_VIEW.json` with the
+  current `ev_plan.data_inputs`; `ev_data_figures.py` imports no statistics
+  library and calls no mean, SD, quantile, median, histogram, fit,
+  transform, argmax or random draw; exit 2 on the arguments, 3 on a
+  refusal with nothing written; E23c `--what data` on the committed
+  configuration: one qsub line with `jobs.data`'s resources, stage I23, the
+  command, nothing written; no data unit in the default plan; on the
+  reduced project under the fake PBS: the job's pass line and exit 0; run
+  again, done; a `data_view` value changed, and a cohort's sidecar changed,
+  stale.
+- Confirmed: yes 2026-11-12 (D-130: D1-D4 and the subset of 2 shards are
+  the user's; the finer choices marked [Claude's]).
+- Status: smoke-tested 2026-11-12 (E23a-c pass `[SANDBOX]`; twelve
+  mutations -- ddof 0, the last window instead of the first, the zoom on
+  the minimum, the PCA on raw statistics, theta-dagger dropped, the windows
+  scaled, the histograms normalised by the windows inside, a mean in the
+  figures, the record's inputs emptied, staleness blind to the inputs, data
+  in the default plan, the job at stage I22 -- each caught); on the
+  full-size banks rebuilt here with davinci's seeds (R0, R3 and the first
+  two simulated shards) the job takes 13 s and 1.2 GB, its nine figures
+  looked at by Claude. Not run on davinci.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
@@ -4127,6 +4271,7 @@ Claude; Confirmed: no]
 | `bash hpc/pipeline/run_pipeline.sh --project synth --dry-run` | blocks 15-17: the synthetic experiment's 13 stages and every kind of qsub line; submits nothing [2026-11-11, block 18: 17 stages with v3; on the running state with `--accept-config-change`] | the committed `synth.json`; davinci paths need not exist | seconds |
 | `python3 hpc/pipeline/tests/test_smoke_synthetic.py` | blocks 15-18's smoke test: T15, T16 and T18's config, graph and dry run under the fake PBS, T17 and T18 end to end | numpy and scipy (the bench generator); T17 and T18's end to end the training environment (torch, sbi, zuko, scikit-optimize) | about 30 s; about 2 min more for T17 and T18 |
 | `python3 hpc/joint/stage4/smoke_test_joint_tune.py -k J37` | block 18's tuner check: `finalists --arm/--out` | numpy, scikit-optimize | seconds |
+| `bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what data [--dry-run]` | block 23: the data overview's job (`ev_dataview.py`): the windows, the eight statistics, theta and the PCA of the synthetic data set, nine figures | davinci (the tests: the reduced project under the fake PBS) | about a minute on 4,000 + 648 windows |
 
 ## 7. Not executable in the sandbox
 

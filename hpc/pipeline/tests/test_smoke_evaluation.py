@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Smoke test for blocks 19-22 of specs/SPEC.md: the synthetic experiment's
-evaluation (the roadmap synth, step S6).
+"""Smoke test for blocks 19-23 of specs/SPEC.md: the synthetic experiment's
+evaluation and its data overview (the roadmap synth, step S6).
 
-Checks (specs/SPEC.md blocks 19-22, "Test oracles")
+Checks (specs/SPEC.md blocks 19-23, "Test oracles")
     test_e19a_rebuild    the ensembles found (best fit and the other arm's,
                          S-A1's two cohorts); every member rebuilt reproduces
                          its _perrow.npz row for row (nll on D_sim,
@@ -92,6 +92,24 @@ Checks (specs/SPEC.md blocks 19-22, "Test oracles")
                          with the current inputs; run again: six done; a
                          resampling puts the report after it; a report value
                          changed: the report alone stale
+    test_e23a_dataview   the data overview's quantities against independent
+                         recomputations: S_sub the first shards read with
+                         numpy, the eight statistics by their definitions in
+                         float64, the standardisation, the PCA from the
+                         eigendecomposition of the covariance, the quantiles
+                         and counts, the frames and the histograms' areas,
+                         theta* per donor and theta-dagger, the examples (the
+                         first window of a donor's first well, distinct
+                         donors, seeded), the zooms; refusals
+    test_e23b_figures    the job's entry on the fixture: its pass line, the
+                         nine figures the rules give in PNG and PDF, each in
+                         FIGURES.md with a caption, DATA_VIEW.json with the
+                         current inputs; the figures' code computes nothing;
+                         exit 2 and 3 with nothing written
+    test_e23c_launcher   --what data: the committed resources and stage I23 in
+                         the dry run, nothing in the default plan; under the
+                         fake PBS the job ends with its pass line; run again,
+                         done; a value or a cohort's sidecar changed, stale
     test_convergence     not a discretisation: skipped
 
 Run
@@ -133,6 +151,7 @@ import test_smoke_synthetic as TS      # noqa: E402  (the reduced project; puts 
 
 PYTHON = sys.executable
 SAMPLER = os.path.join(_EVAL, "ev_sample.py")
+DATAVIEW = os.path.join(_EVAL, "ev_dataview.py")
 BUILDER = os.path.join(_REPO, "hpc", "joint", "stage1", "build_latent_bank.py")
 SUBMIT = os.path.join(_EVAL, "submit_eval.sh")
 JOB = os.path.join(_EVAL, "jobs", "eval_run.pbs")
@@ -186,7 +205,10 @@ def _eval_config(root, name="synth_eval.json", out=None, **over):
          "bootstrap_n": 200, "level": 0.95, "dpi": 60, "formats": ["png"], "ncpus": 2,
          "jobs": {"queue": "test", "calbank": {"ncpus": 1, "mem": "1gb", "walltime": "00:10:00"},
                   "sample": {"ncpus": 2, "mem": "2gb", "walltime": "00:20:00"},
-                  "report": {"ncpus": 2, "mem": "2gb", "walltime": "00:30:00"}}}
+                  "report": {"ncpus": 2, "mem": "2gb", "walltime": "00:30:00"},
+                  "data": {"ncpus": 1, "mem": "1gb", "walltime": "00:10:00"}},
+         "data_view": {"sim_shards": 2, "examples_per_condition": 1, "sim_examples": 3,
+                       "zoom_s": 4.0, "bins": 12}}
     d.update(over)
     path = os.path.join(root, name)
     with open(path, "w") as fh:
@@ -1298,6 +1320,377 @@ def test_e22d_end_to_end():
           "REPORT_COMPLETE.json current; done, resampled and stale as specified" % (time.time() - t0))
 
 
+# ------------------------------------------------------------ block 23 ---
+
+def _stats_by_definition(x):
+    """The eight fixed statistics of each window of x (n, W), in float64 from
+    their definitions in SPEC block 19 (the runner's FixedStatsSummary):
+    mean, SD (ddof 1), max, the 90 % quantile (linear), the fraction above
+    mean + SD, the lag-1 product mean and the third moment of the window
+    standardised by SD + 1e-8, the mean absolute difference."""
+    import numpy as np
+    x = np.asarray(x, dtype=np.float64)
+    mu = x.mean(axis=1, keepdims=True)
+    sd = x.std(axis=1, ddof=1, keepdims=True)
+    xc = (x - mu) / (sd + 1e-8)
+    return np.column_stack([mu[:, 0], sd[:, 0], x.max(axis=1), np.quantile(x, 0.9, axis=1),
+                            (x > mu + sd).mean(axis=1), (xc[:, 1:] * xc[:, :-1]).mean(axis=1),
+                            (xc ** 3).mean(axis=1), np.abs(np.diff(x, axis=1)).mean(axis=1)])
+
+
+def test_e23a_dataview():
+    import numpy as np
+    import ev_config
+    import ev_data
+    import ev_dataview as DV
+    import ev_plan
+    F = _fixture()
+    root = F["root"]
+    out = os.path.join(root, "ev_e23a")
+    shutil.rmtree(out, ignore_errors=True)
+    ec = _eval_config(root, "eval_e23a.json", out=out)
+    cfg = ev_plan.load_project(F["cfg"])
+    ecfg = ev_config.load(ec)
+    a, info = DV.compute(cfg, ecfg, log=lambda t: None)
+    # S_sub: the first two sorted shards of the simulated bank, read here with numpy
+    shards = sorted(glob.glob(ev_plan.sim_bank_glob(cfg)))
+    assert len(shards) == 3, shards
+    zs = [np.load(p) for p in shards[:2]]
+    x = np.concatenate([z["x"] for z in zs]).astype(np.float32)
+    theta = np.concatenate([z["theta"] for z in zs]).astype(np.float64)
+    n, W = x.shape
+    assert a["sim_T"].shape == (n, 8) and info["sim"]["n"] == n == 80, (a["sim_T"].shape, n)
+    assert info["sim"]["shards"] == [os.path.basename(p) for p in shards[:2]]
+    # the statistics by their definitions: float32 windows, float64 reference;
+    # burst_frac is a count of samples over W, compared to 1 sample
+    ref = _stats_by_definition(x)
+    got = a["sim_T"].astype(np.float64)
+    tol = np.array([1e-5, 1e-5, 1e-6, 1e-5, 1.0 / W + 1e-9, 1e-4, 1e-3, 1e-6])
+    err = np.abs(got - ref).max(axis=0)
+    assert np.all(err <= tol), dict(zip(ev_data_names(), err))
+    # the standardisation and the PCA: from the covariance's eigendecomposition
+    assert np.allclose(a["m"], got.mean(axis=0), rtol=1e-12, atol=0)
+    assert np.allclose(a["s"], got.std(axis=0, ddof=1), rtol=1e-12, atol=0)
+    z = (got - a["m"]) / a["s"]
+    lam, vec = np.linalg.eigh(np.cov(z.T))
+    lam, vec = lam[::-1], vec[:, ::-1]
+    assert np.allclose(a["pca_evr"], lam[:2] / lam.sum(), rtol=1e-8, atol=1e-12), (a["pca_evr"], lam)
+    for k in range(2):
+        assert abs(abs(float(np.dot(a["pca_components"][k], vec[:, k]))) - 1.0) < 1e-8, k
+    assert np.allclose(a["sim_pc"], (z - z.mean(axis=0)) @ a["pca_components"].T, atol=2e-5)
+    # the quantiles and the counts outside them
+    q = np.quantile(got, [0.01, 0.5, 0.99], axis=0)
+    assert np.array_equal(a["q_sim"], q), "the quantiles of S_sub"
+    cohorts = [r["name"] for r in cfg.data["synthetic"]["real"]]
+    assert cohorts == ["R0", "R3"] and list(a["cohort_names"]) == cohorts
+    bank = {}
+    for c in cohorts:
+        paths = sorted(glob.glob(ev_plan.cohort_glob(cfg, c)))
+        assert len(paths) == 1, paths
+        zc = np.load(paths[0])
+        bank[c] = dict((k, zc[k]) for k in zc.files)
+        T = a[c + "_T"].astype(np.float64)
+        err = np.abs(T - _stats_by_definition(bank[c]["x"])).max(axis=0)
+        assert np.all(err <= tol), (c, dict(zip(ev_data_names(), err)))
+        assert np.array_equal(a[c + "_below_q"], (T < q[0]).sum(axis=0))
+        assert np.array_equal(a[c + "_above_q"], (T > q[2]).sum(axis=0))
+        assert np.array_equal(a[c + "_contam"], bank[c]["contaminated"].astype(bool))
+        assert np.array_equal(a[c + "_cls"], bank[c]["cls"]) and np.array_equal(
+            a[c + "_widx"], bank[c]["window_idx"])
+        assert np.allclose(a[c + "_pc"], ((T - a["m"]) / a["s"] - z.mean(axis=0))
+                           @ a["pca_components"].T, atol=2e-5)
+    assert int(a["R3_contam"].sum()) >= 1 and int(a["R0_contam"].sum()) == 0
+    # the frames hold S_sub and every uncontaminated cohort window; the
+    # histograms' area over a frame is the fraction of windows inside it
+    lo, hi = a["frame_T"][:, 0], a["frame_T"][:, 1]
+    assert np.all((got >= lo) & (got <= hi))
+    widths = np.diff(a["edges"], axis=1)
+    assert np.allclose((a["hist_sim"] * widths).sum(axis=1), 1.0, atol=1e-12)
+    for c in cohorts:
+        T = a[c + "_T"].astype(np.float64)
+        clean = ~a[c + "_contam"]
+        assert np.all((T[clean] >= lo) & (T[clean] <= hi)), c
+        inside = ((T >= lo) & (T <= hi)).sum(axis=0) / float(T.shape[0])
+        assert np.allclose((a[c + "_hist"] * widths).sum(axis=1), inside, atol=1e-12), c
+        assert not np.any(a[c + "_pc_out"] & clean), c
+    # the helpers on cases with a known answer: half the windows beyond the
+    # edges leave half the area; a constant is widened; the zoom kept inside
+    e4 = np.linspace(0.0, 1.0, 5)
+    hh = DV.heights([0.1, 0.6, 5.0, -2.0], e4, 4)
+    assert np.allclose(hh, [1.0, 0.0, 1.0, 0.0]) and abs((hh * np.diff(e4)).sum() - 0.5) < 1e-12, hh
+    assert DV.frame([2.0, 2.0]) == (2.0 - 0.04, 2.0 + 0.04) and DV.frame([0.0]) == (-0.02, 0.02)
+    lo_, hi_ = DV.frame([1.0, 3.0])
+    assert abs(lo_ - 0.96) < 1e-12 and abs(hi_ - 3.04) < 1e-12, (lo_, hi_)
+    w = np.zeros(100)
+    for peak, z0 in ((0, 0), (99, 80), (50, 40)):
+        w[:] = 0.0
+        w[peak] = 1.0
+        assert DV.zoom_start(w, 20) == z0, (peak, DV.zoom_start(w, 20))
+    # theta* per donor and theta-dagger; delta = pi x shift_max of the sidecar
+    for c in cohorts:
+        side = json.load(open(sorted(glob.glob(ev_plan.cohort_glob(cfg, c)))[0][:-4] + ".json"))
+        gs = side["gap_spec"]
+        delta = gs["pi"] * gs["shift_max"] if "range_shift" in gs["modes"] else 0.0
+        assert abs(float(a[c + "_delta"]) - delta) < 1e-12, (c, a[c + "_delta"], delta)
+        ids = np.unique(bank[c]["donor"])
+        assert np.array_equal(a[c + "_donors"], ids)
+        for i, d in enumerate(ids):
+            rows = bank[c]["donor"] == d
+            assert np.all(bank[c]["theta"][rows] == a[c + "_theta_d"][i]), (c, d)
+        dag, inb, dl = ev_data.pseudo_true(a[c + "_theta_d"], gs)
+        assert np.array_equal(a[c + "_theta_dag_d"], dag) and np.array_equal(a[c + "_in_box_d"], inb)
+        if delta == 0:
+            assert np.array_equal(a[c + "_theta_dag_d"], a[c + "_theta_d"]), c
+    assert abs(float(a["R3_delta"]) - 0.105) < 1e-12
+    # the examples: the first window of a donor's first well, one donor per
+    # condition here, conditions ascending; contaminated examples contaminated
+    L = int(round(4.0 * float(a["fs"])))
+    assert int(a["zoom_len"]) == L
+    for c in cohorts:
+        b = bank[c]
+        rows = a[c + "_ex_rows"]
+        assert list(b["cls"][rows]) == sorted(set(b["cls"].tolist())), (c, b["cls"][rows])
+        for r in rows:
+            mine = np.flatnonzero(b["donor"] == b["donor"][r])
+            assert b["well"][r] == b["well"][mine].min() and b["window_idx"][r] == 0, (c, r)
+        assert np.array_equal(a[c + "_ex_x"], b["x"][rows].astype(np.float32))
+        cx = a[c + "_cx_rows"]
+        assert cx.size == min(1, int(b["contaminated"].sum())) and np.all(b["contaminated"][cx])
+        for xx, z0 in list(zip(a[c + "_ex_x"], a[c + "_ex_z0"])) + list(zip(a[c + "_cx_x"],
+                                                                           a[c + "_cx_z0"])):
+            assert 0 <= z0 <= W - L and z0 <= int(np.argmax(xx)) < z0 + L, (c, z0)
+    ex = a["sim_ex_rows"]
+    assert ex.size == 3 and len(set(ex.tolist())) == 3
+    assert np.array_equal(a["sim_ex_x"], x[ex]) and np.array_equal(a["sim_ex_theta"], theta[ex])
+    # seeded: the same twice, another seed another choice
+    a2, _i2 = DV.compute(cfg, ecfg, log=lambda t: None)
+    for k in ("sim_ex_rows", "R0_ex_rows", "R3_ex_rows", "R0_jit", "sim_pc"):
+        assert np.array_equal(a[k], a2[k]), k
+    e3 = ev_config.load(_eval_config(root, "eval_e23a_seed.json", out=out, seed=4243))
+    a3, _i3 = DV.compute(cfg, e3, log=lambda t: None)
+    assert not np.array_equal(a3["sim_ex_rows"], ex), "another seed, the same examples"
+    # refusals: more shards than the bank has; a zoom longer than a window
+    for over, needle in (({"sim_shards": 4}, "data_view.sim_shards is 4, the simulated bank has 3"),
+                         ({"zoom_s": 20.0}, "is longer than a window")):
+        dv = dict(ecfg.data_view, **over)
+        bad = ev_config.load(_eval_config(root, "eval_e23a_bad.json", out=out, data_view=dv))
+        try:
+            DV.compute(cfg, bad, log=lambda t: None)
+            raise AssertionError("not refused: %r" % over)
+        except ev_plan.RefuseError as exc:
+            assert needle in str(exc), str(exc)
+    assert not os.path.exists(out), "compute wrote %s" % out
+    # the configuration's checks
+    for dv, needle in (({"sim_shards": 0}, "data_view.sim_shards must be an integer >= 1"),
+                       ({"zoom_s": 0}, "data_view.zoom_s must be a number of seconds > 0"),
+                       ({"bins": "60"}, "data_view.bins must be an integer >= 1")):
+        bad = _eval_config(root, "eval_e23a_bad.json", out=out,
+                           data_view=dict(ecfg.data_view, **dv))
+        try:
+            ev_config.load(bad)
+            raise AssertionError("accepted: %r" % dv)
+        except ev_config.EvalConfigError as exc:
+            assert needle in str(exc), str(exc)
+    d = dict(ecfg.data_view)
+    d.pop("bins")
+    try:
+        ev_config.load(_eval_config(root, "eval_e23a_bad.json", out=out, data_view=d))
+        raise AssertionError("accepted a data_view without bins")
+    except ev_config.EvalConfigError as exc:
+        assert "data_view must have exactly the keys" in str(exc), str(exc)
+    print("[e23a] %d simulated and 24 + 24 cohort windows: the statistics by definition, the PCA "
+          "by eigendecomposition, quantiles, frames, histograms, theta, examples and refusals "
+          "as specified" % n)
+
+
+def ev_data_names():
+    import ev_simulate
+    return ev_simulate.STAT_NAMES
+
+
+def _expected_data_figures(npz):
+    """The figures block 23's rules give for a data_view.npz (an independent
+    statement of SPEC block 23's list)."""
+    import numpy as np
+    with np.load(npz) as z:
+        names = [str(c) for c in z["cohort_names"]]
+        contaminated = any(z[c + "_contam"].any() for c in names)
+        shifted = any(float(z[c + "_delta"]) > 0 for c in names)
+    want = {"windows_cohorts", "windows_cohorts_zoom", "windows_sim", "stats_hist", "stats_strip",
+            "theta_cohorts", "stats_pca"}
+    if contaminated:
+        want.add("windows_contaminated")
+    if shifted:
+        want.add("theta_dagger")
+    return want
+
+
+def test_e23b_figures():
+    import ast
+    import ev_config
+    import ev_plan
+    F = _fixture()
+    root = F["root"]
+    out = os.path.join(root, "ev_e23b")
+    shutil.rmtree(out, ignore_errors=True)
+    ec = _eval_config(root, "eval_e23b.json", out=out, formats=["png", "pdf"])
+    t0 = time.time()
+    r = subprocess.run([PYTHON, DATAVIEW, "--config", F["cfg"], "--eval-config", ec, "--ncpus", "1"],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True,
+                       timeout=900)
+    assert r.returncode == 0, r.stdout[-3000:]
+    assert "EVAL DATA OK: 80 simulated windows, 24 + 24 cohort windows, 9 figure(s)" in r.stdout, \
+        r.stdout[-1500:]
+    ddir = os.path.join(out, "data")
+    want = _expected_data_figures(os.path.join(ddir, "data_view.npz"))
+    assert len(want) == 9, want
+    fdir = os.path.join(ddir, "figures")
+    on_disk = set(os.listdir(fdir))
+    assert on_disk == set("%s.%s" % (n, f) for n in want for f in ("png", "pdf")), \
+        sorted(on_disk)[:12]
+    for n in want:
+        assert open(os.path.join(fdir, n + ".png"), "rb").read(8) == b"\x89PNG\r\n\x1a\n", n
+        assert open(os.path.join(fdir, n + ".pdf"), "rb").read(5) == b"%PDF-", n
+    listed = []
+    for l in open(os.path.join(ddir, "FIGURES.md")).read().splitlines():
+        if l.startswith("- `figures/"):
+            listed.append(l[len("- `figures/"):l.index(".{")])
+            cap = l[l.index("`: ") + 3:]
+            assert cap.endswith(".") and len(cap) > 40 and "%%" not in cap, l
+    assert sorted(listed) == sorted(want), listed
+    rec = json.load(open(os.path.join(ddir, "DATA_VIEW.json")))
+    cfg = ev_plan.load_project(F["cfg"])
+    ecfg = ev_config.load(ec)
+    assert rec["schema"] == "eval_data_view/1" and rec["n_figures"] == 9, rec.get("schema")
+    assert rec["inputs"] == ev_plan.data_inputs(cfg, ecfg), "DATA_VIEW.json's inputs"
+    assert [s for s, _h in rec["inputs"]["banks"]["sim"]] == ["shard_0000.npz", "shard_0001.npz"]
+    assert all(h for b in rec["inputs"]["banks"].values() for _s, h in b), rec["inputs"]["banks"]
+    assert rec["cohorts"]["R3"]["delta"] == 0.105 and rec["cohorts"]["R0"]["contaminated"] == 0
+    # the figures' code computes nothing
+    tree = ast.parse(open(os.path.join(_EVAL, "ev_data_figures.py")).read())
+    mods, calls = set(), set()
+    for nd in ast.walk(tree):
+        if isinstance(nd, ast.Import):
+            mods |= set(x.name.split(".")[0] for x in nd.names)
+        elif isinstance(nd, ast.ImportFrom):
+            mods.add((nd.module or "").split(".")[0])
+        elif isinstance(nd, ast.Call) and isinstance(nd.func, ast.Attribute):
+            calls.add(nd.func.attr)
+    assert not (mods & {"scipy", "sklearn", "torch", "ev_dataview", "ev_simulate", "ev_metrics"}), mods
+    assert not (calls & {"quantile", "percentile", "mean", "std", "var", "median", "histogram",
+                         "fit", "transform", "cov", "argmax", "uniform", "choice"}), calls
+    # exit 2 on the arguments, 3 on a refusal, nothing written
+    r2 = subprocess.run([PYTHON, DATAVIEW, "--config", F["cfg"]], stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, universal_newlines=True, timeout=120)
+    assert r2.returncode == 2, r2.stdout[-600:]
+    out3 = os.path.join(root, "ev_e23b_refused")
+    shutil.rmtree(out3, ignore_errors=True)
+    ec3 = _eval_config(root, "eval_e23b_refused.json", out=out3,
+                       data_view=dict(ecfg.data_view, sim_shards=9))
+    r3 = subprocess.run([PYTHON, DATAVIEW, "--config", F["cfg"], "--eval-config", ec3],
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True,
+                        timeout=300)
+    assert r3.returncode == 3 and "REFUSE: data_view.sim_shards is 9" in r3.stdout, r3.stdout[-600:]
+    assert not os.path.exists(out3), "a refusal wrote %s" % out3
+    print("[e23b] the job's entry: 9 figures in PNG and PDF with their captions, DATA_VIEW.json "
+          "current, nothing computed in the figures' code, exits 2 and 3 (%.0f s)" % (time.time() - t0))
+
+
+def test_e23c_launcher():
+    import ev_config
+    import ev_plan
+    # the committed configuration (paths.sbi_dir here): the data job only when named
+    tmp = tempfile.mkdtemp(prefix="e23c_")
+    d = json.load(open(TS.SYNTH))
+    d["paths"]["sbi_dir"] = _REPO
+    here_cfg = os.path.join(tmp, "synth.json")
+    with open(here_cfg, "w") as fh:
+        json.dump(d, fh, indent=1)
+    committed = ev_config.load(SYNTH_EVAL)
+    e = dict(os.environ)
+    e["PIPELINE_SKIP_CONDA"] = "0"
+    e.pop("ROADMAP_DISABLE", None)
+    try:
+        r = subprocess.run([PYTHON, os.path.join(_EVAL, "ev_submit.py"), "--config", here_cfg,
+                            "--eval-config", SYNTH_EVAL, "--what", "data", "--dry-run"],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True, env=e, timeout=120)
+        out = r.stdout
+        assert r.returncode == 0 and "REFUSE" not in out, out[-2000:]
+        j = committed.jobs["data"]
+        assert (j["ncpus"], j["mem"], j["walltime"]) == (2, "8gb", "01:00:00"), j
+        qline = ("qsub -N ev_data -q %s -l select=1:ncpus=2:mem=8gb -l walltime=01:00:00 -j oe -o %s"
+                 % (committed.jobs["queue"], os.path.join(committed.out_root, "jobs", "logs",
+                                                          "data.log")))
+        assert "EVAL SUBMIT: data would be submitted:" in out and qline in out, out[-1500:]
+        assert out.count("ROADMAP_STAGE=I23") == 1 and "SKIP_CONDA=0," in out, out[-1500:]
+        cmd = "command: python %s --config %s --eval-config %s --ncpus 2" % (DATAVIEW, here_cfg,
+                                                                            SYNTH_EVAL)
+        assert cmd in out, (cmd, out[-1500:])
+        assert "EVAL DRY RUN: 1 job(s) would be submitted, 0 done, 0 live; nothing written" in out
+        assert not os.path.exists(committed.out_root)
+        r = subprocess.run([PYTHON, os.path.join(_EVAL, "ev_submit.py"), "--config", here_cfg,
+                            "--eval-config", SYNTH_EVAL, "--dry-run"], stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, universal_newlines=True, env=e, timeout=120)
+        assert r.returncode == 0 and "EVAL SUBMIT: data" not in r.stdout and \
+            "ev_dataview.py" not in r.stdout, r.stdout[-1500:]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # the fixture under the fake PBS
+    F = _fixture()
+    root = F["root"]
+    out_root = os.path.join(root, "ev_e23c")
+    shutil.rmtree(out_root, ignore_errors=True)
+    ec = _eval_config(root, "eval_e23c.json", out=out_root)
+    spool = os.path.join(root, "spool_e23c")
+    shutil.rmtree(spool, ignore_errors=True)
+    env = _fake_pbs_env(spool)
+    t0 = time.time()
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--what", "data", env=env)
+    assert rc == 0 and "EVAL SUBMIT OK: 1 job(s) submitted, 0 done, 0 live" in out, out[-2000:]
+    while time.time() - t0 < 600:
+        recs = TS._records(spool)
+        if len(recs) == 1 and recs[0]["finished"]:
+            break
+        time.sleep(1)
+    recs = TS._records(spool)
+    assert len(recs) == 1 and recs[0]["name"] == "ev_data", recs
+    rec = recs[0]
+    log = open(rec["out"]).read()
+    assert rec["exit_status"] == 0 and rec["depend"] is None, (rec.get("comment"), log[-2000:])
+    assert rec["vars"]["ROADMAP_STAGE"] == "I23" and "EVAL DATA OK: " in log, log[-1500:]
+    assert log.rstrip().endswith("EVAL JOB EXIT: 0"), log[-300:]
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--what", "data", env=env)
+    assert rc == 0 and "EVAL SUBMIT OK: 0 job(s) submitted, 1 done, 0 live" in out, out[-1500:]
+    # a value changed: stale
+    ecfg = ev_config.load(ec)
+    ec2 = _eval_config(root, "eval_e23c_bins.json", out=out_root,
+                       data_view=dict(ecfg.data_view, bins=10))
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec2, "--what", "data", "--dry-run",
+                      env=env)
+    assert rc == 0 and "data would be submitted (stale: its banks or its values changed" in out, \
+        out[-1500:]
+    # a cohort's sidecar changed: stale
+    cfg = ev_plan.load_project(F["cfg"])
+    side = os.path.splitext(ev_plan.data_bank_paths(cfg, ecfg)["R0"][0])[0] + ".json"
+    keep = open(side, "rb").read()
+    try:
+        with open(side, "wb") as fh:
+            fh.write(keep + b"\n")
+        rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--what", "data", "--dry-run",
+                          env=env)
+        assert rc == 0 and "data would be submitted (stale: its banks or its values changed" in out, \
+            out[-1500:]
+    finally:
+        with open(side, "wb") as fh:
+            fh.write(keep)
+    rc, out = _submit("--config", F["cfg"], "--eval-config", ec, "--what", "data", "--dry-run",
+                      env=env)
+    assert rc == 0 and "EVAL DRY RUN: 0 job(s) would be submitted, 1 done, 0 live" in out, out[-800:]
+    print("[e23c] the data job: committed resources and stage I23, not in the default plan; through "
+          "the fake PBS in %.0f s; done and stale as specified" % (time.time() - t0))
+
+
 def test_convergence():
     raise unittest.SkipTest("not a discretisation: no convergence order")
 
@@ -1312,6 +1705,8 @@ CHECKS = [("test_e19a_rebuild", test_e19a_rebuild), ("test_e19b_dagger", test_e1
           ("test_e22a_dry_run", test_e22a_dry_run),
           ("test_e22b_job_script", test_e22b_job_script), ("test_e22c_launcher", test_e22c_launcher),
           ("test_e22d_end_to_end", test_e22d_end_to_end),
+          ("test_e23a_dataview", test_e23a_dataview), ("test_e23b_figures", test_e23b_figures),
+          ("test_e23c_launcher", test_e23c_launcher),
           ("test_convergence", test_convergence)]
 
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Block 22: the evaluation's launcher on davinci's PBS -- the calibration
 bank, one sampling job per complete ensemble, the report (specs/SPEC.md
-block 22; D-126, D-127).
+block 22; D-126, D-127); and block 23's data overview (D-130).
 
     bash hpc/pipeline/evaluation/submit_eval.sh --project synth [--dry-run] \\
-        [--what calbank,sample,report] [--resample <q>:<arm>|all]
+        [--what calbank,sample,report,data] [--resample <q>:<arm>|all]
 
 (the wrapper runs `python3 hpc/pipeline/evaluation/ev_submit.py --config
 <synth.json> --eval-config <synth_eval.json> ...` in envs.extract). Each
@@ -26,6 +26,11 @@ unit is done, live (its recorded job queued, held or running), or submitted:
                       other inputs (ev_plan.report_inputs); after the sampling
                       jobs (afterok); not while no ensemble is sampled or
                       being sampled
+    data              block 23: ev_dataview.py, the data overview: done when
+                      <out_root>/data/DATA_VIEW.json records the current
+                      ev_plan.data_inputs (its values and the sidecars of the
+                      shards it reads); after nothing; only when --what names
+                      it (the default is calbank,sample,report)
 
 An ensemble whose best fit is not complete is named; run this again once it
 is. Every job is jobs/eval_run.pbs with its command in <out_root>/jobs/
@@ -56,8 +61,9 @@ from stages import common as CM
 from stages.synthetic import _normalise
 
 EXIT_ARGS, EXIT_REFUSE, EXIT_QSUB = 2, 3, 4
-KINDS = ("calbank", "sample", "report")
-STAGE_OF = {"calbank": "I19", "sample": "I19", "report": "I22"}
+KINDS = ("calbank", "sample", "report", "data")
+DEFAULT_WHAT = ("calbank", "sample", "report")     # block 23's data only when named
+STAGE_OF = {"calbank": "I19", "sample": "I19", "report": "I22", "data": "I23"}
 REPORT_COMPLETE = "REPORT_COMPLETE.json"
 _SHARD = re.compile(r"^shard_(\d+)\.(npz|json)$")
 
@@ -76,7 +82,8 @@ def code_paths(cfg):
             "script": os.path.join(ev, "jobs", "eval_run.pbs"),
             "builder": os.path.join(sbi, "hpc", "joint", "stage1", "build_latent_bank.py"),
             "sampler": os.path.join(ev, "ev_sample.py"),
-            "report": os.path.join(ev, "ev_report.py")}
+            "report": os.path.join(ev, "ev_report.py"),
+            "dataview": os.path.join(ev, "ev_dataview.py")}
 
 
 def jobs_dir(ecfg):
@@ -177,6 +184,19 @@ def report_state(cfg, ecfg):
     return "done", rc
 
 
+def data_state(cfg, ecfg):
+    """(state, why): done, absent or stale, for the data overview (block 23)."""
+    rec = ev_plan.data_view_json(ecfg)
+    if not os.path.isfile(rec):
+        return "absent", rec
+    obj, problem = CM.try_read_json(rec)
+    if obj is None or obj.get("schema") != "eval_data_view/1":
+        return "stale", "%s cannot be read (%s)" % (rec, problem or "another schema")
+    if obj.get("inputs") != ev_plan.data_inputs(cfg, ecfg):
+        return "stale", "its banks or its values changed since %s" % obj.get("finished", "?")
+    return "done", rec
+
+
 def ensemble_job_name(cfg, e):
     """ev_s<i><b|a>: search i of the configuration, its best fit or the
     other arm's (PBS's 15 characters cannot hold the stem)."""
@@ -209,7 +229,7 @@ def qsub_line(cfg, ecfg, kind, name, log, argv_file, depend):
 
 # ---------------------------------------------------------------- the plan
 
-def plan(cfg_path, ecfg_path, what=KINDS, resample=(), log=print):
+def plan(cfg_path, ecfg_path, what=DEFAULT_WHAT, resample=(), log=print):
     """(cfg, ecfg, units): every unit as dict(unit, kind, name, state, why,
     argv, live) -- nothing submitted, nothing written. Refuse when the
     launcher cannot go on."""
@@ -262,6 +282,12 @@ def plan(cfg_path, ecfg_path, what=KINDS, resample=(), log=print):
                 "--ncpus", str(int(ecfg.jobs["report"]["ncpus"]))]
         units.append({"unit": "report", "kind": "report", "state": state, "why": why,
                       "name": CM.job_name("ev_report"), "argv": argv, "live": live("report")})
+    if "data" in what:
+        state, why = data_state(cfg, ecfg)
+        argv = [py, p["dataview"], "--config", cfg.path, "--eval-config", ecfg.path,
+                "--ncpus", str(int(ecfg.jobs["data"]["ncpus"]))]
+        units.append({"unit": "data", "kind": "data", "state": state, "why": why,
+                      "name": CM.job_name("ev_data"), "argv": argv, "live": live("data")})
     for u in units:
         if not os.path.isfile(u["argv"][1]):
             raise Refuse("%s's program %s is not in this checkout (git pull)"
@@ -271,7 +297,7 @@ def plan(cfg_path, ecfg_path, what=KINDS, resample=(), log=print):
     return cfg, ecfg, units
 
 
-def run(cfg_path, ecfg_path, what=KINDS, resample=(), dry_run=False, log=print):
+def run(cfg_path, ecfg_path, what=DEFAULT_WHAT, resample=(), dry_run=False, log=print):
     """Submits what the plan says; returns the exit code."""
     try:
         cfg, ecfg, units = plan(cfg_path, ecfg_path, what, resample, log)
@@ -360,8 +386,9 @@ def main(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True, help="the pipeline's project file (<tag>.json)")
     ap.add_argument("--eval-config", required=True, help="the evaluation's file (<tag>_eval.json)")
-    ap.add_argument("--what", default=",".join(KINDS),
-                    help="a comma-separated subset of %s (default: all)" % ",".join(KINDS))
+    ap.add_argument("--what", default=",".join(DEFAULT_WHAT),
+                    help="a comma-separated subset of %s (default: %s)"
+                         % (",".join(KINDS), ",".join(DEFAULT_WHAT)))
     ap.add_argument("--resample", default="",
                     help="comma-separated ensembles <q>:<arm> to sample again although done, "
                          "or all")

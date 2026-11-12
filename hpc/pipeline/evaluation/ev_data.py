@@ -73,7 +73,8 @@ def cohort_paths(cfg, name):
 
 def cohort(cfg, name):
     """Cohort `name` of `synthetic.real`: dict(x (n, W) float32, theta (n, 10)
-    float64, donor, well, cls (n,) int64, sidecar, paths)."""
+    float64, donor, well, cls, window_idx (n,) int64, contaminated (n,) bool,
+    sidecar, paths). [block 23: window_idx and contaminated added]"""
     paths = cohort_paths(cfg, name)
     pattern = os.path.join(bank_dir(cfg, name), "shard_*.npz")
     arrays, sidecar = R.concat_shards(paths)
@@ -84,6 +85,8 @@ def cohort(cfg, name):
             "donor": np.asarray(arrays["donor"], dtype=np.int64),
             "well": np.asarray(arrays["well"], dtype=np.int64),
             "cls": np.asarray(arrays["cls"], dtype=np.int64),
+            "window_idx": np.asarray(arrays["window_idx"], dtype=np.int64),
+            "contaminated": np.asarray(arrays["contaminated"], dtype=bool),
             "sidecar": sidecar, "paths": paths}
 
 
