@@ -4119,8 +4119,9 @@ Claude; Confirmed: no]
   and the job's entry; numpy, torch through `ev_simulate.fixed_stats`,
   scikit-learn's PCA), `ev_data_figures.py` (new: the figures; matplotlib,
   Agg; reads `data_view.npz` and computes nothing scientific; block 21's
-  style and colours), `ev_data.cohort` (block 19: also `window_idx` and
-  `contaminated`), `ev_config` (`data_view`, `jobs.data`, `DATA_PARAMS`),
+  style and colours), `ev_data.py` (block 19's `cohort()` also returns
+  `window_idx` and `contaminated`), `ev_config` (`data_view`, `jobs.data`,
+  `DATA_PARAMS`),
   `ev_plan` (`data_dir`, `data_view_json`, `cohort_glob`,
   `data_bank_paths`, `data_inputs`), `ev_submit` and `submit_eval.sh` (the
   kind `data`), `synth_eval.json` (`data_view`, `jobs.data`), checks E23* of
