@@ -870,6 +870,14 @@ cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --dry-ru
 cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth
 ```
 
+A sampling that refuses (a `REFUSE:` line in its log, exit 3) writes
+nothing, and PBS then drops the report queued after it. Once the cause is
+fixed, the dry run lists that sampling again under "would be submitted",
+with a new report after it, and the submission sends both; the samplings
+already done stay done. (2026-11-12: four samplings refused on the rebuild
+oracle's 1e-4 nats; the tolerance is now `oracle_tol` in `synth_eval.json`,
+2e-3 -- `specs/SPEC.md` block 19.)
+
 What is drawn and where (`<out_root>/figures/`, FIGURES.md lists each with its caption): per ensemble
 `ensembles/<q>_<arm>/` -- `cal_*` the HPD expected coverage, SBC and TARP; `acc_*` the recovery, the z-scores
 against the contraction, the posterior SDs and the NLL; `post_*` the corner plots of one example donor per

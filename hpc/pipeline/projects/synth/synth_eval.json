@@ -13,6 +13,9 @@
   "_batch_rows": "Windows per batch through a member (memory, not results). [Claude's]",
   "batch_rows": 64,
 
+  "_oracle_tol": "Nats: each rebuilt member must reproduce its recorded per-row NLL (on D_sim and on its search's cohort) within it, row for row, or the sampling refuses; it changes no output. 2e-3 (2026-11-12): on davinci four of the five finalists' ensembles differed by 1.2e-4 to 5.6e-4 nats, float32 roundoff of the full-size networks under another batch size and thread count than the runner's; in the sandbox a wrong member differed by 0.30 to 2.4 nats and rows misaligned by one by 9 to 11 nats. [Claude's]",
+  "oracle_tol": 0.002,
+
   "_ppc_rows": "D_sim's posterior-predictive rows: the first ppc_rows of its calibration rows (Q-E4: 324, a cohort's size).",
   "ppc_rows": 324,
 

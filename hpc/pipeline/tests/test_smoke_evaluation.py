@@ -179,7 +179,8 @@ def _build_project(root):
 def _eval_config(root, name="synth_eval.json", out=None, **over):
     """A reduced evaluation configuration in `root`; returns its path."""
     out = out or os.path.join(root, "evaluation_test")
-    d = {"out_root": out, "seed": 4242, "n_post": 40, "batch_rows": 16, "ppc_rows": 3,
+    d = {"out_root": out, "seed": 4242, "n_post": 40, "batch_rows": 16, "oracle_tol": 1e-4,
+         "ppc_rows": 3,
          "ppc_draws": 4, "cal_glob": os.path.join(out, "calbank", "shard_*.npz"), "cal_n": 20,
          "cal_shards": 2, "cal_seed": 55, "lc2st_null": 5, "lc2st_eval_draws": 10,
          "bootstrap_n": 200, "level": 0.95, "dpi": 60, "formats": ["png"], "ncpus": 2,
@@ -540,16 +541,26 @@ def test_e19d_contract():
         e5 = _eval_config(tmp, "bad.json", out=os.path.join(tmp, "o5"), n_post=0, level=1.5)
         cases.append((e5, "S-A1:A1", 3, "n_post must be an integer >= 1, got 0; level must be",
                       os.path.join(tmp, "o5")))
+        # the oracle's tolerance (2026-11-12): below the rebuild's roundoff it refuses, naming
+        # the tolerance, before anything is written; out of range it is a configuration error
+        e6 = _eval_config(tmp, "tight.json", out=os.path.join(tmp, "o6"), oracle_tol=1e-6,
+                          cal_glob=ecfg.cal_glob)
+        cases.append((e6, "S-A1:A1", 3, ("does not reproduce its report-split NLL",
+                                         "above oracle_tol 1e-06"), os.path.join(tmp, "o6")))
+        e7 = _eval_config(tmp, "loose.json", out=os.path.join(tmp, "o7"), oracle_tol=0.5)
+        cases.append((e7, "S-A1:A1", 3, "oracle_tol must be a number of nats in (0, 0.1], got 0.5",
+                      os.path.join(tmp, "o7")))
         for ec, name, code, needle, odir in cases:
             rc, text = _cli("--config", F["cfg"], "--eval-config", ec, "--ensemble", name)
-            assert rc == code and needle in text, (name, ec, rc, text[-2000:])
+            needles = needle if isinstance(needle, tuple) else (needle,)
+            assert rc == code and all(n in text for n in needles), (name, ec, rc, text[-2000:])
             if odir is not None:
                 assert _files_under(odir) == [], (odir, _files_under(odir))
         rc, text = _cli("--config", F["cfg"], "--eval-config", F["ecfg"])
         assert rc == 2 and "--ensemble" in text, (rc, text[-800:])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    print("[e19d] 5 files of the contract; identical on a second run; 5 refusals and the "
+    print("[e19d] 5 files of the contract; identical on a second run; 7 refusals and the "
           "argument error write nothing")
 
 

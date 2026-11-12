@@ -3723,9 +3723,22 @@ Claude; Confirmed: no]
     equal the record's), then `load_checkpoint` with its digest check;
   - the oracle: each member's -log q at theta^ref on D_sim equals its
     `_perrow.npz` `nll`, and on the search's own cohort its
-    `nll_pseudo_real`, within 1e-4 nats row for row, or the job refuses
-    naming the member (the rebuild reproduced a member exactly, 0.0,
-    `[SANDBOX 2026-11-11]`);
+    `nll_pseudo_real`, within `oracle_tol` nats row for row, or the job
+    refuses naming the member, the largest and the mean difference and the
+    tolerance (the rebuild reproduced a member exactly, 0.0,
+    `[SANDBOX 2026-11-11]`). [amended 2026-11-12: the tolerance was the
+    constant 1e-4 at the build; on davinci four of the five finalists'
+    samplings refused at 1.2e-4 to 5.6e-4 nats, S-A1's passed at 9.5e-6
+    `[CLUSTER 2026-11-12, the user's paste of 15:38]` -- float32 roundoff of
+    the full-size networks scored in batches of another size and with
+    another thread count than the runner's (256 rows); in the sandbox a
+    wrong member differs by 0.30 to 2.4 nats and rows misaligned by one by
+    9 to 11 nats, a correct rebuild by 0 to 9.5e-6 whatever the batch size
+    (64, 256, 7) `[SANDBOX 2026-11-12]`. So the tolerance is a value of the
+    configuration, `oracle_tol`, 2e-3 nats in synth: about 4 times the
+    largest roundoff seen, 150 times under the smallest wrong rebuild
+    measured. It is not one of SAMPLE_PARAMS: it changes no output, so a
+    sample made under another tolerance stays current.];
   - the data sets: D_sim the report rows of the members' split, in global
     row order; its calibration rows the first row of each donor (Q-E2); its
     PPC rows the first `ppc_rows` calibration rows (Q-E4); D_<r> every window
@@ -3782,7 +3795,8 @@ Claude; Confirmed: no]
   calibration file: `theta` (cal_n, 10), `stats` (cal_n, 8), `draws`
   (cal_n, 10), `member` (cal_n,).
 - EvalConfig (`synth_eval.json`): `out_root`, `seed`, `n_post` 1000 (Q-E1),
-  `batch_rows`, `ppc_rows` 324 and `ppc_draws` 20 (Q-E4), `cal_glob`,
+  `batch_rows`, `oracle_tol` 2e-3 nats (in (0, 0.1]; 2026-11-12, the
+  oracle above), `ppc_rows` 324 and `ppc_draws` 20 (Q-E4), `cal_glob`,
   `cal_n` 10000, `cal_shards`, `cal_seed`, `lc2st_null` 100 and
   `lc2st_eval_draws` (Q-E5), `bootstrap_n`, `level` 0.95, `dpi` 200,
   `formats` png and pdf (Q-E6), `ncpus`.
@@ -3800,7 +3814,9 @@ Claude; Confirmed: no]
   the embed-once densities with sbi's `log_prob` (equal in one batch, 0.0
   in the sandbox; float32 roundoff in batches of another shape, 1.1e-5
   nats, under the oracle's 1e-4); E19d also the seeds common to the
-  ensembles and five refusals that write nothing; E19e recomputes the PPC
+  ensembles and five refusals that write nothing [2026-11-12: seven -- a
+  tolerance under the rebuild's roundoff, 1e-6 nats, refuses naming
+  `oracle_tol` and writes nothing; 0.5 is a configuration error]; E19e recomputes the PPC
   statistics from the stored draws in one process (the sampler's two give
   the same bytes) and checks the calibration bank's arguments against
   `calbank_build`. Six mutations of the code (the mixture's -log M, the
@@ -3813,7 +3829,13 @@ Claude; Confirmed: no]
   `[SANDBOX]`, the reduced project built from scratch in 66 s; the six
   mutations above each caught). Not run on davinci: the sampling of the
   real ensembles is block 22's job (W 18,000, n_post 1,000, M 5; a bench
-  window of that size simulates in 0.05 s `[SANDBOX]`).
+  window of that size simulates in 0.05 s `[SANDBOX]`). [2026-11-12, on
+  davinci `[CLUSTER, the user's paste of 15:38]`: S-A1's sampling done in
+  756 s, oracle 9.5e-6 nats; the four others refused on the then 1e-4
+  (the oracle above). Amended the same day: `oracle_tol` in the
+  configuration, two refusal cases in E19d; `test_smoke_evaluation.py`
+  14 of 15 checks pass, the convergence check skipped, from a fresh reduced
+  project in 278 s; the oracle disabled fails E19d `[SANDBOX 2026-11-12]`.]
 
 ### Block 20: the evaluation's quantities (added 2026-11-11; confirmed 2026-11-11, D-127; roadmap synth, step S6)
 

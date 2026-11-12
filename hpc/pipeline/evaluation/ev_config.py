@@ -18,7 +18,8 @@ from collections import namedtuple
 
 FORMATS = ("png", "pdf", "svg")
 JOB_KINDS = ("calbank", "sample", "report")
-# the values a sampling depends on: a sample of other values is stale (block 22)
+# the values a sampling depends on: a sample of other values is stale (block 22);
+# oracle_tol is not one of them: it changes no output, only whether a sampling refuses
 SAMPLE_PARAMS = ("seed", "n_post", "ppc_rows", "ppc_draws", "cal_glob", "cal_n", "cal_seed")
 # the values a report depends on beyond its samples (block 22)
 REPORT_PARAMS = ("seed", "lc2st_null", "lc2st_eval_draws", "bootstrap_n", "level", "dpi",
@@ -33,6 +34,7 @@ KEYS = (
     "seed",              # the base of every seed of the evaluation
     "n_post",            # posterior draws per row (Q-E1), a multiple of M
     "batch_rows",        # windows per batch through a member
+    "oracle_tol",        # nats: a rebuilt member reproduces its recorded per-row NLL within it
     "ppc_rows",          # D_sim's PPC rows (Q-E4)
     "ppc_draws",         # simulated windows per PPC row (Q-E4)
     "cal_glob",          # the calibration bank's shards (Q-E5)
@@ -111,6 +113,9 @@ def validate(data):
     lv = data.get("level")
     if "level" in data and not (isinstance(lv, float) and 0.0 < lv < 1.0):
         probs.append("level must be a number in (0, 1), got %r" % (lv,))
+    ot = data.get("oracle_tol")
+    if "oracle_tol" in data and not (isinstance(ot, float) and 0.0 < ot <= 0.1):
+        probs.append("oracle_tol must be a number of nats in (0, 0.1], got %r" % (ot,))
     fm = data.get("formats")
     if "formats" in data and not (isinstance(fm, list) and fm and all(f in FORMATS for f in fm)
                                   and len(set(fm)) == len(fm)):

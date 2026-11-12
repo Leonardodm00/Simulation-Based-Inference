@@ -60,7 +60,6 @@ import run_joint_arms as R
 from latent_bank import ShardIndex
 
 EXIT_ARGS, EXIT_REFUSE = 2, 3
-ORACLE_TOL = 1e-4          # nats: float32 batches of another size (the runner's are 256 rows)
 
 
 seed_of = ev_plan.seed_of      # a seed for (base, parts...), stable across machines and runs
@@ -282,12 +281,14 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
     s = sample_set(models, x, th, in_box, ecfg.n_post, seeds["sim"], batch, log)
     for k, info in enumerate(infos):
         pr = np.load(info["record"][:-len(".json")] + "_perrow.npz")
-        diff = float(np.max(np.abs(pr["nll"] + s["logq_ref_members"][:, k])))
+        dif = pr["nll"] + s["logq_ref_members"][:, k]
+        diff = float(np.max(np.abs(dif)))
         oracle["sim/seed%d" % info["seed"]] = diff
-        if not diff <= ORACLE_TOL:
+        if not diff <= ecfg.oracle_tol:
             raise ev_plan.RefuseError("member seed %d does not reproduce its report-split NLL: "
-                                      "largest difference %.3g nats (%s)"
-                                      % (info["seed"], diff, info["record"]))
+                                      "largest difference %.3g nats, mean %+.2g, above oracle_tol "
+                                      "%.3g (%s)" % (info["seed"], diff, float(np.mean(dif)),
+                                                     ecfg.oracle_tol, info["record"]))
     pidx, pst = ppc_set(s["draws"], ppc_rows, ecfg.ppc_draws, latent,
                         seed_of(ecfg.seed, "sim", "ppc"), ncpus)
     finish("sim", s, {"theta_ref": th, "in_box": in_box, "rows": rows.astype(np.int64),
@@ -311,12 +312,14 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
                 pr = np.load(info["record"][:-len(".json")] + "_perrow.npz")
                 if "nll_pseudo_real" not in pr.files:
                     continue
-                diff = float(np.max(np.abs(pr["nll_pseudo_real"] + s["logq_ref_members"][:, k])))
+                dif = pr["nll_pseudo_real"] + s["logq_ref_members"][:, k]
+                diff = float(np.max(np.abs(dif)))
                 oracle["%s/seed%d" % (cname, info["seed"])] = diff
-                if not diff <= ORACLE_TOL:
+                if not diff <= ecfg.oracle_tol:
                     raise ev_plan.RefuseError(
                         "member seed %d does not reproduce its NLL on %s: largest difference "
-                        "%.3g nats" % (info["seed"], cname, diff))
+                        "%.3g nats, mean %+.2g, above oracle_tol %.3g"
+                        % (info["seed"], cname, diff, float(np.mean(dif)), ecfg.oracle_tol))
         stats = ev_simulate.fixed_stats(coh["x"])
         allrows = np.arange(n, dtype=np.int64)
         pidx, pst = ppc_set(s["draws"], allrows, ecfg.ppc_draws, latent,
@@ -351,7 +354,7 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
             "best_fit_complete_sha256": ev_plan.sha256_file(
                 os.path.join(e.folder, "BEST_FIT_COMPLETE.json")),
             "n_post": ecfg.n_post, "ppc_draws": ecfg.ppc_draws, "ppc_rows": ecfg.ppc_rows,
-            "seeds": seeds, "oracle_max_abs_nats": oracle, "oracle_tol": ORACLE_TOL,
+            "seeds": seeds, "oracle_max_abs_nats": oracle, "oracle_tol": ecfg.oracle_tol,
             "sim_bank": sim_paths, "cal_bank": ecfg.cal_glob, "files": written,
             "eval_config": ecfg.path, "config": cfg.path, "config_sha256": cfg.sha256,
             "seconds": round(time.time() - t0, 1), "torch_threads": torch.get_num_threads(),
