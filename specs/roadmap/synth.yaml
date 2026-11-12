@@ -215,3 +215,12 @@ implementation:
     needs_theory: []
     needs_hpc: true
     jobs: ["hpc/pipeline/evaluation/jobs/eval_run.pbs"]
+  - id: I23
+    title: "the data overview"
+    summary: "What the synthetic data set looks like before any network: example windows of R0 and R3 by condition and of the simulated bank, full and zoomed; the eight window statistics of 4,000 simulated windows (the prior predictive) against the cohorts'; the cohorts' theta* on the unit box and theta-dagger on R3's shifted axes; the statistics on the simulated windows' first two principal components. One small job (--what data), nine figures (D-130)."
+    block: 23
+    parent: S6
+    depends_on: [I19, I22]
+    needs_theory: [T2.1]
+    needs_hpc: true
+    jobs: ["hpc/pipeline/evaluation/jobs/eval_run.pbs"]
