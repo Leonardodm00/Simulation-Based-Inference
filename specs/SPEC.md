@@ -4251,7 +4251,9 @@ Claude; Confirmed: no]
   in the default plan, the job at stage I22 -- each caught); on the
   full-size banks rebuilt here with davinci's seeds (R0, R3 and the first
   two simulated shards) the job takes 13 s and 1.2 GB, its nine figures
-  looked at by Claude. Not run on davinci.
+  looked at by Claude. The whole suite from a fresh reduced project in a
+  clean clone of `bb37614`: 17 of 18 checks pass, the convergence check
+  skipped, in 319 s `[SANDBOX 2026-11-12]`. Not run on davinci.
 
 ## 6. Pipeline entry points
 
