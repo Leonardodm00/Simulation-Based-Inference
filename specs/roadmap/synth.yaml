@@ -233,3 +233,21 @@ implementation:
     needs_theory: []
     needs_hpc: false
     jobs: []
+  - id: I25
+    title: "the bench's label axes from the configuration"
+    summary: "fragment_duty class-bearing (D-132): the builder takes the label axes from synthetic.builder.label_axes (synth.json v4: axes 0-7, centre scale 0.562743, the centres still 0.442 apart), gap mode (a) shifts the bank's own free axes (8-9), and the evaluation reads the split from the bank's sidecar."
+    block: 25
+    parent: S2
+    depends_on: [I13, I16, I19]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I26
+    title: "one search per arm: the term-only campaigns"
+    summary: "Campaigns S-A2-only and S-A5-only (the term always on, no nested A1 trials) and synth.json v4's five searches -- S-A1 on R0, each term arm on R0 and on R3 -- each with its own best fit of 5 members and no fit of another arm (D-132)."
+    block: 26
+    parent: S4
+    depends_on: [I14, I15, I17]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
