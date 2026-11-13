@@ -51,6 +51,16 @@ take them from STATES below):
     done      green    pushed, tested, and (if needs_hpc) the HPC run
                        finished on the current code
 
+Tester reports and runs: every report of a commit counts, once (the copy
+on the branch and the one on its tester/ branch are the same file). A
+report covers the blocks its Scope line names; "whole" there, or a
+full-mode report that names no block, covers every block -- so a full audit
+split into group and chain runs (one report each, on one commit) is read
+block by block. A block's open findings are those of every report that
+covers it at the newest tested commit. A running run marks a block
+"testing" only if its status file's Scope line (optional) names it;
+without that line the older rule holds (full mode: every block).
+
 Theory states: open (grey), studying (blue), closed (green).
 
 Theory and implementation progress independently: a topic can be closed
@@ -155,6 +165,8 @@ STATUS_FIELD = re.compile(r"Run status:\s*(\w+)")
 STATUS_COMMIT = re.compile(r"Commit under test:\s*([0-9a-fA-F]{7,40})")
 STATUS_MODE = re.compile(r"Mode:\s*(\w+)")
 STATUS_STARTED = re.compile(r"Started \(UTC\):\s*([0-9: -]+)")
+STATUS_SCOPE = re.compile(r"^Scope:\s*(.*)$", re.MULTILINE)
+VERDICT_ORDER = ["", "PASS", "PASS WITH ISSUES", "FAIL"]
 RESOLVED_WORDS = re.compile(
     r"not a problem|resolved|fixed|closed|withdrawn|superseded|no longer",
     re.IGNORECASE)
@@ -562,13 +574,33 @@ def parse_report(text, path):
         "findings": [],
         "decisions": {},
     }
-    scope_text = report["scope"]
-    report["scope_blocks"] = (None if report["mode"] == "full"
-                              or "whole" in scope_text.lower()
-                              else block_refs(scope_text))
+    report["scope_blocks"] = scope_blocks_of(report["scope"], report["mode"])
     report["findings"] = parse_findings(text)
     report["decisions"] = parse_decisions(text)
     return report
+
+
+def scope_blocks_of(scope_text, mode):
+    """The blocks a Scope line covers; None means every block.
+
+    "whole" in the line covers every block, and so does a full-mode line
+    that names no block (the older full reports: "whole pipeline"). A line
+    that names blocks covers those, whatever the mode: a full audit run as
+    group and chain runs names each run's blocks. Parenthesised
+    annotations are dropped first (block_refs).
+    """
+    text = scope_text or ""
+    if "whole" in text.lower():
+        return None
+    numbers = block_refs(text)
+    if mode == "full" and not numbers:
+        return None
+    return numbers
+
+
+def worst_verdict(verdicts):
+    known = [v for v in verdicts if v in VERDICT_ORDER]
+    return max(known, key=VERDICT_ORDER.index) if known else ""
 
 
 def table_rows(text, heading_regex):
@@ -646,8 +678,12 @@ def collect_reports(root, head, reports_dir="specs/test_reports"):
                         found.setdefault(cells[0], cells[-1])
                 continue
             report = parse_report(text, path)
-            if report and report["commit"] not in seen:
-                seen.add(report["commit"])
+            # one entry per report file and commit: the branch's copy and the
+            # tester/ branch's copy are one report; two reports of one commit
+            # (the runs of a split audit) are two
+            key = (report["commit"], os.path.basename(path)) if report else None
+            if report and key not in seen:
+                seen.add(key)
                 reports.append(report)
     for report in reports:
         day = os.path.basename(report["path"])[:10]
@@ -693,12 +729,17 @@ def tester_runs(root, reports_dir="specs/test_reports"):
                 continue
             mode = STATUS_MODE.search(text)
             started = STATUS_STARTED.search(text)
+            scope = STATUS_SCOPE.search(text)
+            run_mode = (mode.group(1).lower() if mode else "full")
             runs.append({
                 "branch": ref.replace("refs/remotes/origin/", "").replace("refs/heads/", ""),
                 "status": status.group(1).lower(),
                 "commit": commit.group(1),
-                "mode": (mode.group(1).lower() if mode else "full"),
+                "mode": run_mode,
                 "started": (started.group(1).strip() if started else ""),
+                "scope": (scope.group(1).strip() if scope else ""),
+                # None: no Scope line, the older rule applies (evaluate_stage)
+                "scope_blocks": (scope_blocks_of(scope.group(1), run_mode) if scope else None),
             })
     return runs
 
@@ -1214,22 +1255,33 @@ def evaluate_stage(stage, data, root, head, remote_head, worktree_is_branch,
             continue
         if not is_ancestor(root, last_change, run["commit"]):
             continue
-        in_scope = (run["mode"] == "full" or last_finished is None
-                    or not resolve_rev(root, last_finished["commit"])
-                    or not is_ancestor(root, last_change, last_finished["commit"]))
+        if run.get("scope_blocks") is not None:
+            in_scope = bool(set(stage["blocks"]) & set(run["scope_blocks"]))
+        else:
+            in_scope = (run["mode"] == "full" or last_finished is None
+                        or not resolve_rev(root, last_finished["commit"])
+                        or not is_ancestor(root, last_change, last_finished["commit"]))
         if in_scope:
             running.append(run)
     tester = {}
     if covering:
         report = covering[0]
-        open_findings = [f for f in report["findings"]
-                         if f["severity"] in ("BLOCKER", "MAJOR")
-                         and set(f["blocks"]) & set(stage["blocks"])
-                         and not RESOLVED_WORDS.search(report["decisions"].get(f["id"], ""))]
+        # every report that covers the block at that commit: the group and
+        # chain runs of a split audit each report on their own blocks
+        same = [r for r in covering if r["commit"] == report["commit"]]
+        open_findings = []
+        for r in same:
+            for f in r["findings"]:
+                if (f["severity"] in ("BLOCKER", "MAJOR")
+                        and set(f["blocks"]) & set(stage["blocks"])
+                        and not RESOLVED_WORDS.search(r["decisions"].get(f["id"], ""))):
+                    open_findings.append(f["id"] + " " + f["severity"] + (
+                        "" if len(same) == 1 else " (%s)" % os.path.basename(r["path"])))
         tester = {
             "report": report["path"], "commit": report["commit"][:7],
-            "date": report["date"], "verdict": report["verdict"],
-            "open_findings": [f["id"] + " " + f["severity"] for f in open_findings],
+            "reports": [r["path"] for r in same],
+            "date": report["date"], "verdict": worst_verdict([r["verdict"] for r in same]),
+            "open_findings": open_findings,
         }
     elif reports:
         older = [r for r in reports if report_covers(r, stage["blocks"])]
@@ -1244,7 +1296,10 @@ def evaluate_stage(stage, data, root, head, remote_head, worktree_is_branch,
         return result
     if tester.get("open_findings"):
         result["status"] = "failing"
-        result["reason"] = "open %s in %s" % (", ".join(tester["open_findings"]), tester["report"])
+        result["reason"] = "open %s in %s" % (
+            ", ".join(tester["open_findings"]),
+            tester["report"] if len(tester.get("reports", [])) <= 1
+            else "%d reports at %s" % (len(tester["reports"]), tester["commit"]))
         return result
     if hpc and hpc.get("state") == "failed" and hpc.get("covers_current_code"):
         result["status"] = "failing"
