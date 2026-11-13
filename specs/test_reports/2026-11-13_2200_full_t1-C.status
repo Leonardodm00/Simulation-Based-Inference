@@ -4,6 +4,6 @@ Commit under test: 8d5b16285140f1a4181c0901bf535c7da041ae39
 Mode: full
 Scope: Blocks 18-23 (tier 1, group C)
 Started (UTC): 2026-11-13 22:00
-Last update (UTC): 2026-11-13 22:27
-Phase: step 5: spec-derived tests (blocks 18-23)
+Last update (UTC): 2026-11-13 22:36
+Phase: step 6-7: end to end and block boundaries
 Note: -
