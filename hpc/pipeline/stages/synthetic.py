@@ -316,7 +316,9 @@ def _builder_options(cfg):
             "--wells-per-donor", str(int(b["wells_per_donor"])),
             "--donors-per-batch", str(int(b["donors_per_batch"])),
             "--n-classes", str(int(b["n_classes"])), "--tau-ov", _num(b["tau_ov"]),
-            "--class-centres", str(b["class_centres"]), "--centre-scale", _num(b["centre_scale"])]
+            "--class-centres", str(b["class_centres"]), "--centre-scale", _num(b["centre_scale"]),
+            # [block 25, D-132] the class-bearing axes, on every bank's shards
+            "--label-axes", ",".join(str(int(k)) for k in b["label_axes"])]
 
 
 def build_of(cfg, bank):

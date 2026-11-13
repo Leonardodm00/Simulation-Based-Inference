@@ -178,9 +178,17 @@ def _build_project(root):
     its synth.json."""
     searches = [{"name": "S-A1", "campaign": "S-A1", "real": "R0", "alt_best_fit": False},
                 {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0", "alt_best_fit": True}]
+    # [block 25, D-132] R3's seed 34: under v4's split the range shift moves axes 8-9 only, and
+    # _small's seed 33 leaves every one of R3's 6 donors with theta-dagger inside the box, so
+    # e19c's out-of-box rows would not be exercised; seed 34 puts 3 of the 6 outside
+    real = [{"name": "R0", "seed": 22, "donors_per_class": 2, "n_windows": 2, "pi": 0.0,
+             "gap_modes": ["range_shift", "drift", "contamination"]},
+            {"name": "R3", "seed": 34, "donors_per_class": 2, "n_windows": 2, "pi": 0.3,
+             "gap_modes": ["range_shift", "drift", "contamination"]}]
     path, _d = TS._small(root, searches=searches,
                          **{"synthetic.sim": {"seed": 11, "n_theta": 60, "n_windows": 1,
-                                              "traces_per_shard": 40}})
+                                              "traces_per_shard": 40},
+                            "synthetic.real": real})
     saved = dict(os.environ)
     try:
         env = TS._fake_env(os.path.join(root, "spool"))
@@ -1062,7 +1070,8 @@ def test_e22a_dry_run():
     assert "EVAL SUBMIT: report: nothing to report yet (no ensemble sampled or being sampled)" in out
     names = [q["name"] for q in cfg.data["synthetic"]["searches"]]
     n_alt = sum(1 for q in cfg.data["synthetic"]["searches"] if q["alt_best_fit"])
-    assert out.count("EVAL SUBMIT: not complete: ") == len(names) + n_alt == 9, out[-3000:]
+    # v4 (D-132): five searches, no other-arm fits -- five best-fit folders (v3: nine)
+    assert out.count("EVAL SUBMIT: not complete: ") == len(names) + n_alt == 5, out[-3000:]
     build = ev_plan.calbank_build(cfg, ecfg)
     sbi = _REPO
     j = ecfg.jobs["calbank"]
@@ -1095,7 +1104,7 @@ def test_e22a_dry_run():
     assert rc3 == 2 and "ABORT: --what takes a subset of calbank,sample,report" in out3, out3
     rc4, out4 = _submit("--project", "nosuch")
     assert rc4 == 2 and "ABORT: no configuration at" in out4, out4
-    print("[e22a] the committed plan: 5 calibration shards, 9 folders not complete, nothing written")
+    print("[e22a] the committed plan: 5 calibration shards, 5 folders not complete, nothing written")
 
 
 def test_e22b_job_script():
@@ -1437,8 +1446,12 @@ def test_e23a_dataview():
         for i, d in enumerate(ids):
             rows = bank[c]["donor"] == d
             assert np.all(bank[c]["theta"][rows] == a[c + "_theta_d"][i]), (c, d)
-        dag, inb, dl = ev_data.pseudo_true(a[c + "_theta_d"], gs)
+        # [block 25, D-132] the bank's own free axes, read from its sidecar: 8-9 under v4
+        free = tuple(int(k) for k in side["latent_spec"]["free_idx"])
+        assert free == (8, 9), (c, free)
+        dag, inb, dl = ev_data.pseudo_true(a[c + "_theta_d"], gs, free)
         assert np.array_equal(a[c + "_theta_dag_d"], dag) and np.array_equal(a[c + "_in_box_d"], inb)
+        assert np.array_equal(a[c + "_theta_dag_d"][:, :8], a[c + "_theta_d"][:, :8]), c
         if delta == 0:
             assert np.array_equal(a[c + "_theta_dag_d"], a[c + "_theta_d"]), c
     assert abs(float(a["R3_delta"]) - 0.105) < 1e-12

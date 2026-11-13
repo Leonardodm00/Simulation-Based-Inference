@@ -328,7 +328,8 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
                "stats": stats, "calib": np.ones(n, dtype=bool)}
         finish(cname, s, dict(ids, theta_ref=th, in_box=in_box, ppc_rows=allrows,
                               ppc_draw_idx=pidx, ppc_stats=pst))
-        dag, dag_in, delta = ev_data.pseudo_true(th, coh["sidecar"].get("gap_spec"))
+        dag, dag_in, delta = ev_data.pseudo_true(th, coh["sidecar"].get("gap_spec"),
+                                                 ev_data.free_axes_of(coh["sidecar"]))
         if delta > 0.0:
             lq = np.stack([logq_at(m, dag, coh["x"], dag_in, batch) for m in models], axis=1)
             with np.errstate(divide="ignore"):

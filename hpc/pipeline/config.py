@@ -34,7 +34,7 @@ CONFIG_VERSION = 10          # v10, 2026-10-19: D-101 (values only: gp_seed, max
 _WALLTIME = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
 _MEM = re.compile(r"^[0-9]+(kb|mb|gb|tb)$")
 _TAG = re.compile(r"^[a-z0-9_]+$")
-_CAMPAIGNS = ("S-A1", "S-A2", "S-A5", "S-A25")
+_CAMPAIGNS = ("S-A1", "S-A2", "S-A5", "S-A25", "S-A2-only", "S-A5-only")   # block 26: the last two
 _ARMS = ("A0", "A0s", "A1", "A2", "A2s", "A3", "A5", "A_ref", "shuffled")
 
 
@@ -170,6 +170,7 @@ SCHEMA_SYNTHETIC = tuple(
     ("synthetic.builder.tau_ov", "float>0"),
     ("synthetic.builder.class_centres", "synthetic_centres"),
     ("synthetic.builder.centre_scale", "float>0"),
+    ("synthetic.builder.label_axes", "synthetic_label_axes"),     # block 25, D-132
     ("synthetic.sim.seed", "int>=0"),
     ("synthetic.sim.n_theta", "int>=1"),
     ("synthetic.sim.n_windows", "int>=1"),
@@ -183,6 +184,7 @@ SCHEMA_SYNTHETIC = tuple(
     ("synthetic.bank_job.max_resubmits", "int>=0"),
 )
 _GAP_MODES = ("range_shift", "drift", "contamination")
+_BENCH_N_AXES = 10       # [block 25] the bench generator's axes (bench_burst_provider.BENCH_AXES)
 _REAL_KEYS = ("name", "seed", "donors_per_class", "n_windows", "pi", "gap_modes")
 _SEARCH_KEYS = ("name", "campaign", "real", "alt_best_fit")
 
@@ -313,6 +315,17 @@ def _check_value(key, kind, v):
     elif kind == "synthetic_centres":
         if v not in ("simplex", "regular"):
             return bad + "must be 'simplex' or 'regular', got %r" % (v,)
+    elif kind == "synthetic_label_axes":
+        # [block 25, D-132] the bench's class-bearing axes: its 10 axes are
+        # bench_burst_provider.BENCH_AXES (the provider is 'bench', above);
+        # the same rule as bench_burst_provider.bench_free_idx
+        if not (isinstance(v, list) and v and all(_is_int(x) for x in v)):
+            return bad + "must be a non-empty list of the bench's axis indices, got %r" % (v,)
+        if v != sorted(set(v)) or v[0] < 0 or v[-1] > _BENCH_N_AXES - 1:
+            return bad + ("must be distinct axis indices 0-%d in increasing order, got %r"
+                          % (_BENCH_N_AXES - 1, v))
+        if len(v) >= _BENCH_N_AXES:
+            return bad + "must leave at least one free axis (gap mode (a)'s), got %r" % (v,)
     elif kind == "synthetic_real_list":
         return _check_list(bad, v, _REAL_KEYS, _check_real_item)
     elif kind == "synthetic_search_list":

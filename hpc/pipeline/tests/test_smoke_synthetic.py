@@ -41,14 +41,15 @@ Checks (specs/SPEC.md blocks 15-17, "Test oracles")
                         and its record carrying L_pseudo_real; at least one
                         S-A2 trial with the metric term on; nothing over
                         the core cap
-    test_t18_config     [block 18] the committed v3 loads; alt_best_fit
+    test_t18_config     [block 18] the committed v4 has no alt_best_fit
+                        true (D-132); on v3's layout: alt_best_fit
                         true on S-A1, true on an S-A25 search, not a bool,
                         missing: each refused
-    test_t18_graph      the committed v3's 17 stages, each best_fit_alt_<q>
+    test_t18_graph      a v3-like copy's 17 stages, each best_fit_alt_<q>
                         after best_fit_<q>, its dependency, folder, job
                         prefix and renamed log lines; S-A1's view has no
                         other arm
-    test_t18_dry_run    the committed v3's dry run: four best fits of the
+    test_t18_dry_run    a v3-like copy's dry run: four best fits of the
                         other arm, their ba_ qsub lines, no REFUSE (skipped
                         as test_t15_dry_run)
     test_t18_end_to_end the training environment: a reduced project with
@@ -252,8 +253,8 @@ def test_t15_config():
     refused(lambda d: syn(d)["searches"][1].update(real="R9"),
             "names the real bank 'R9', which synthetic.real does not list")
     refused(lambda d: syn(d)["searches"][2].update(name="S-A1"), "the names must be unique, S-A1")
-    refused(lambda d: syn(d)["searches"][2].update(campaign="S-A2"),
-            "are the same search (S-A2 on R0)")
+    refused(lambda d: syn(d)["searches"][2].update(campaign="S-A2-only"),
+            "are the same search (S-A2-only on R0)")        # v4's campaigns (D-132)
     refused(lambda d: syn(d)["sim"].update(traces_per_shard=3000), "must be a multiple of")
     refused(lambda d: syn(d)["builder"].update(wells_per_donor=1), "wells_per_donor: must be >= 2")
     refused(lambda d: syn(d)["builder"].update(n_classes=1), "n_classes: must be >= 2")
@@ -298,7 +299,7 @@ def test_t15_graph():
     names = [s.name for s in graph]
     want = ["sim_bank", "real_bank_R0", "real_bank_R3"]
     for q in ("S-A1", "S-A2-R0", "S-A5-R0", "S-A2-R3", "S-A5-R3"):
-        want += ["search_" + q, "best_fit_" + q] + (["best_fit_alt_" + q] if q != "S-A1" else [])
+        want += ["search_" + q, "best_fit_" + q]          # v4 (D-132): no other-arm fits
     assert names == want, names
     deps = dict((s.name, tuple(s.deps)) for s in graph)
     assert deps["search_S-A1"] == ("sim_bank", "real_bank_R0")
@@ -315,7 +316,7 @@ def test_t15_graph():
         pass
     p = cfg.data["paths"]
     by = dict((s.name, s) for s in graph)
-    for q, camp, real in (("S-A1", "S-A1", "R0"), ("S-A2-R3", "S-A2", "R3")):
+    for q, camp, real in (("S-A1", "S-A1", "R0"), ("S-A2-R3", "S-A2-only", "R3")):
         st = by["search_" + q]
         v = st._view(cfg)
         assert st._view(v) is v and st._view(cfg) is v, "a view of a view is itself (cached)"
@@ -365,8 +366,9 @@ def test_t15_graph():
     a = r3["argv"][0]
     for flag, val in (("--n-traces", "54"), ("--donors-per-class", "9"), ("--n-windows", "6"),
                       ("--pi", "0.3"), ("--seed", "3000"), ("--class-centres", "regular"),
-                      ("--centre-scale", "0.6"), ("--T-win", "180.0"), ("--fs", "100.0"),
-                      ("--gap-modes", "range_shift,drift,contamination")):
+                      ("--centre-scale", "0.562743"), ("--T-win", "180.0"), ("--fs", "100.0"),
+                      ("--gap-modes", "range_shift,drift,contamination"),
+                      ("--label-axes", "0,1,2,3,4,5,6,7")):     # v4, D-132 (blocks 15, 25)
         assert a[a.index(flag) + 1] == val, (flag, a)
     assert json.loads(json.dumps(b)) == b, "the build survives its JSON copy unchanged"
 
@@ -679,15 +681,36 @@ def test_t17_end_to_end():
 
 # ------------------------------------------------------- block 18 (T18) ---
 
+V3_SEARCHES = [
+    {"name": "S-A1", "campaign": "S-A1", "real": "R0", "alt_best_fit": False},
+    {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0", "alt_best_fit": True},
+    {"name": "S-A5-R0", "campaign": "S-A5", "real": "R0", "alt_best_fit": True},
+    {"name": "S-A2-R3", "campaign": "S-A2", "real": "R3", "alt_best_fit": True},
+    {"name": "S-A5-R3", "campaign": "S-A5", "real": "R3", "alt_best_fit": True}]
+
+
+def _v3_like(root):
+    """[block 26] The committed file with v3's mixed searches and the other
+    arm's fits, at the committed paths: block 18's checks (the committed v4
+    has none). Returns its path."""
+    d = _committed()
+    d["synthetic"]["searches"] = [dict(q) for q in V3_SEARCHES]
+    path = os.path.join(root, "synth.json")
+    with open(path, "w") as fh:
+        json.dump(d, fh, indent=1, sort_keys=True)
+    return path
+
+
 def test_t18_config():
     cfg = C.load_config(SYNTH, synthetic_ok=True)
     flags = dict((q["name"], q["alt_best_fit"]) for q in cfg.data["synthetic"]["searches"])
-    assert flags == {"S-A1": False, "S-A2-R0": True, "S-A5-R0": True, "S-A2-R3": True,
-                     "S-A5-R3": True}, flags
+    assert flags == {"S-A1": False, "S-A2-R0": False, "S-A5-R0": False, "S-A2-R3": False,
+                     "S-A5-R3": False}, flags            # v4 (D-132): none
     assert C.ALT_ARMS == {"S-A2": ("A1", "A2"), "S-A5": ("A1", "A5")}, C.ALT_ARMS
 
     def problems(mutate):
         d = _committed()
+        d["synthetic"]["searches"] = [dict(x) for x in V3_SEARCHES]     # block 18's v3 layout
         mutate(d)
         return C.validate(d)
 
@@ -715,7 +738,11 @@ def test_t18_config():
 def test_t18_graph():
     import stages as S
     from stages import synthetic as SY
-    cfg = C.load_config(SYNTH, synthetic_ok=True)
+    root = _tmp()
+    try:
+        cfg = C.load_config(_v3_like(root), synthetic_ok=True)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
     graph = S.topological_order(S.default_graph(cfg))
     names = [s.name for s in graph]
     assert len(names) == 17, names
@@ -765,9 +792,10 @@ def test_t18_dry_run():
     try:
         env = dict(os.environ)
         env["PIPELINE_SKIP_CONDA"] = "1"
-        r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config", SYNTH,
-                            "--dry-run"], cwd=root, env=env, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT, universal_newlines=True, timeout=120)
+        r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config",
+                            _v3_like(root), "--dry-run"], cwd=root, env=env,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True, timeout=120)
         out = r.stdout
         assert r.returncode == 0 and "REFUSE" not in out, out[-4000:]
         assert out.count("qsub -N ba_synth_s<k>") == 4, out.count("qsub -N ba_synth_s<k>")
@@ -862,6 +890,301 @@ def test_t18_end_to_end():
         shutil.rmtree(root, ignore_errors=True)
 
 
+# ------------------------------------------------- block 25 (D-132) ---
+
+MUTATION = os.environ.get("MUTATION", "")
+if MUTATION not in ("", "shift", "scale"):
+    raise SystemExit("unknown MUTATION %r; known: shift, scale" % MUTATION)
+_FIELDS = ("lambda_b", "sigma_d", "ibi_cv", "n_frag_mean", "lambda_burst", "p_mean", "d_med",
+           "duty", "kappa", "lambda_bg")
+D_KEEP = 0.441934          # the centres' pairwise distance on 7 axes at 0.6 (D-132 (2))
+
+
+def _bbp():
+    """bench_burst_provider, with MUTATION=shift applied once: the map shifts
+    the default free axes whatever it is given."""
+    import bench_burst_provider as bbp
+    if MUTATION == "shift" and not getattr(bbp, "_mutated", False):
+        orig = bbp.phi_to_bench_params
+
+        def mutated(*a, **k):
+            k.pop("free_idx", None)
+            return orig(*a, **k)
+        bbp.phi_to_bench_params = mutated
+        bbp._mutated = True
+    return bbp
+
+
+def _distances(mu):
+    import numpy as np
+    return [float(np.linalg.norm(mu[i] - mu[j])) for i in range(len(mu)) for j in range(i + 1, len(mu))]
+
+
+def test_t25a_split():
+    import numpy as np
+    bbp = _bbp()
+    assert bbp.bench_free_idx(bbp.BENCH_LABEL_IDX) == (7, 8, 9) == tuple(bbp.BENCH_FREE_IDX)
+    assert bbp.bench_free_idx(list(range(8))) == (8, 9)
+    for bad in ([], [1, 1], [2, 1], [0, 10], [-1, 2], list(range(10)), [0.5], [True, 2]):
+        try:
+            bbp.bench_free_idx(bad)
+        except ValueError:
+            continue
+        raise AssertionError("bench_free_idx accepted %r" % (bad,))
+    phi = np.full(10, 0.9)
+
+    def vec(**k):
+        p = bbp.phi_to_bench_params(phi, 100, 100.0, **k)
+        return np.array([getattr(p, f) for f in _FIELDS], dtype=np.float64)
+    base = vec()
+    sh_old = vec(free_axis_shift=0.105)
+    sh_def = vec(free_axis_shift=0.105, free_idx=bbp.BENCH_FREE_IDX)
+    assert np.array_equal(sh_old, sh_def), "the default free axes changed the old map"
+    sh_new = vec(free_axis_shift=0.105, free_idx=(8, 9))
+    assert np.array_equal(sh_new[:8], base[:8]), ("a class-bearing axis moved", sh_new, base)
+    # the analytic oracle on 8 and 9: [L + d w, U + d w] at 0.9
+    for k, (lo, hi) in ((8, (3.0, 15.0)), (9, (0.01, 0.06))):
+        w = hi - lo
+        want = (lo + 0.105 * w) * 0.1 + (hi + 0.105 * w) * 0.9
+        assert abs(sh_new[k] - want) < 1e-12, (k, sh_new[k], want)
+    assert sh_def[7] == 1.0 and base[7] == 0.935, (sh_def[7], base[7])     # the old shift, clipped
+    assert bbp.BenchBurstProvider(None, label_idx=range(8)).free_idx == (8, 9)
+    assert bbp.BenchBurstProvider(None).free_idx == (7, 8, 9)
+
+
+def test_t25b_centres():
+    import argparse
+    import build_latent_bank as BLB
+    a8 = argparse.Namespace(class_centres="regular", centre_scale=0.562743, n_classes=3,
+                            dsn_main_dir=None)
+    mu8 = BLB.class_centres_for(a8, 8)
+    assert mu8.shape == (3, 8), mu8.shape
+    d8 = _distances(mu8)
+    assert all(abs(x - D_KEEP) < 1e-6 for x in d8), d8
+    a7 = argparse.Namespace(class_centres="regular", centre_scale=0.6, n_classes=3,
+                            dsn_main_dir=None)
+    d7 = _distances(BLB.class_centres_for(a7, 7))
+    assert all(abs(x - D_KEEP) < 1e-6 for x in d7), d7
+
+
+def test_t25c_banks():
+    import numpy as np
+    from stages import synthetic as SY
+    root = _tmp()
+    try:
+        path, _d = _small(root)
+        cfg = C.load_config(path, synthetic_ok=True)
+        r3 = SY.build_of(cfg, "R3")["argv"][0]
+        assert r3[r3.index("--label-axes") + 1] == "0,1,2,3,4,5,6,7", r3
+        out = os.path.join(root, "r3")
+        _build_by_hand(out, r3)
+        with open(os.path.join(out, "shard_0000.json")) as fh:
+            lat = json.load(fh)["latent_spec"]
+        assert lat["label_idx"] == list(range(8)) and lat["free_idx"] == [8, 9], lat
+        assert np.asarray(lat["class_centres"]).shape == (3, 8)
+        assert all(abs(x - D_KEEP) < 1e-6 for x in _distances(np.asarray(lat["class_centres"])))
+        s0 = SY.build_of(cfg, "sim")["argv"][0]
+        s7 = list(s0)
+        s7[s7.index("--label-axes") + 1] = "0,1,2,3,4,5,6"
+        a, b = os.path.join(root, "s8"), os.path.join(root, "s7")
+        _build_by_hand(a, s0)
+        _build_by_hand(b, s7)
+        with np.load(os.path.join(a, "shard_0000.npz")) as za, \
+                np.load(os.path.join(b, "shard_0000.npz")) as zb:
+            for k in ("theta", "x"):
+                assert za[k].tobytes() == zb[k].tobytes(), "arm S's %s depends on the split" % k
+        with open(os.path.join(a, "shard_0000.json")) as fh:
+            assert json.load(fh)["latent_spec"]["free_idx"] == [8, 9]
+        for bad, provider in ((["--label-axes", "0,1"], "reference"),
+                              (["--label-axes", "1,1"], "bench"),
+                              (["--label-axes", "0,1,2,3,4,5,6,7,8,9"], "bench")):
+            argv = [x for x in s0]
+            argv[argv.index("--label-axes") + 1] = bad[1]
+            argv[argv.index("--provider") + 1] = provider
+            rr = subprocess.run([PYTHON, BUILDER, "--out-dir", os.path.join(root, "bad")] + argv,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                universal_newlines=True, timeout=300)
+            assert rr.returncode != 0 and "--label-axes" in rr.stdout, (bad, provider, rr.stdout)
+            assert not os.path.exists(os.path.join(root, "bad", "shard_0000.npz"))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_t25d_config():
+    import numpy as np
+    import latent_sbi_simulator as lss
+    from stages import synthetic as SY
+    cfg = C.load_config(SYNTH, synthetic_ok=True)
+    b = cfg.data["synthetic"]["builder"]
+    assert b["label_axes"] == list(range(8)), b["label_axes"]
+    scale = 0.6 if MUTATION == "scale" else b["centre_scale"]
+    lbg, _gbd = lss.load_dsn_modules(None)
+    d = _distances(lss.regular_centres(lbg, b["n_classes"], len(b["label_axes"]), scale))
+    assert all(abs(x - D_KEEP) < 1e-6 for x in d), ("the committed centres are not 0.442 apart", d)
+    for bank in ["sim"] + [r["name"] for r in cfg.data["synthetic"]["real"]]:
+        for argv in SY.build_of(cfg, bank)["argv"]:
+            assert argv[argv.index("--label-axes") + 1] == "0,1,2,3,4,5,6,7", (bank, argv)
+
+    def refused(value, needle):
+        dd = _committed()
+        if value is None:
+            dd["synthetic"]["builder"].pop("label_axes")
+        else:
+            dd["synthetic"]["builder"]["label_axes"] = value
+        p = C.validate(dd)
+        assert any(needle in x for x in p), (value, needle, p)
+    refused(None, "synthetic.builder.label_axes: missing")
+    refused([], "must be a non-empty list")
+    refused(["0", "1"], "must be a non-empty list")
+    refused([1, 1], "distinct axis indices 0-9 in increasing order")
+    refused([2, 1], "distinct axis indices 0-9 in increasing order")
+    refused([0, 10], "distinct axis indices 0-9 in increasing order")
+    refused(list(range(10)), "must leave at least one free axis")
+    assert np is not None
+
+
+def test_t25e_dagger():
+    import numpy as np
+    try:
+        sys.path.insert(0, os.path.join(_PIPE, "evaluation"))
+        import ev_data
+    except ImportError as exc:
+        raise unittest.SkipTest("the evaluation's modules need the training environment (%s)" % exc)
+    gap = {"modes": ["range_shift", "drift", "contamination"], "pi": 0.3, "shift_max": 0.35,
+           "drift_amp_max": 0.5, "drift_period_s": 120.0, "contam_frac_max": 0.36}
+    th = np.array([[0.5] * 7 + [0.95, 0.2, 0.92], [0.1] * 10], dtype=np.float64)
+    dag, inb, delta = ev_data.pseudo_true(th, gap, (8, 9))
+    assert abs(delta - 0.105) < 1e-12, delta
+    assert np.array_equal(dag[:, :8], th[:, :8]), "a class-bearing axis moved"
+    assert np.array_equal(dag[:, 8:], th[:, 8:] + delta), (dag, th)
+    assert dag[0, 7] == 0.95 and list(inb) == [False, True], (dag, inb)
+    # the default free axes: the function of blocks 19-23 (theta* + delta on 7-9, the duty capped)
+    old = th.copy()
+    old[:, 7:] += delta
+    old[:, 7] = np.minimum(old[:, 7], (1.0 - 0.35) / (1.0 - 0.35))
+    dag0, inb0, _d0 = ev_data.pseudo_true(th, gap)
+    assert np.array_equal(dag0, old) and list(inb0) == [False, True], (dag0, old)
+    assert ev_data.free_axes_of({"latent_spec": {"free_idx": [8, 9]}}) == (8, 9)
+    assert ev_data.free_axes_of({}) == (7, 8, 9)
+
+
+# ------------------------------------------------- block 26 (D-132) ---
+
+def _joint_space():
+    stage4 = os.path.join(_REPO, "hpc", "joint", "stage4")
+    if stage4 not in sys.path:
+        sys.path.insert(0, stage4)
+    import joint_space as JS
+    return JS
+
+
+def test_t26a_campaigns():
+    import numpy as np
+    JS = _joint_space()
+    a2, a5 = JS.campaign("S-A2-only"), JS.campaign("S-A5-only")      # each partitions the space
+    assert a2.pinned["dsn_on"] == 1 and a2.pinned["rep_on"] == 0, a2.pinned
+    assert a5.pinned["rep_on"] == 1 and a5.pinned["dsn_on"] == 0, a5.pinned
+    for axis in ("log10_lambda_dsn", "loss_type", "mining_strategy"):
+        assert axis in a2.free() and axis not in a5.free(), axis
+    for axis in ("log10_lambda_rep", "warmup_frac_rep"):
+        assert axis in a5.free() and axis not in a2.free(), axis
+    assert a2.pinned["head_pool_ops"] == 1 == a5.pinned["head_pool_ops"]
+    for name, sw in (("S-A1", {"dsn_on": 0, "rep_on": 0}), ("S-A2", {"rep_on": 0}),
+                     ("S-A5", {"dsn_on": 0})):
+        c = JS.campaign(name)
+        assert all(c.pinned[k] == v for k, v in sw.items()), (name, c.pinned)
+    assert "dsn_on" in JS.campaign("S-A2").free() and "rep_on" in JS.campaign("S-A5").free()
+    stage4 = os.path.join(_REPO, "hpc", "joint", "stage4")
+    import npe_tune_joint as T
+    spec = JS.default_joint_space(p=10, embedding_dim=64, d_theta=10)
+    rng = np.random.default_rng(26)
+    for name, arm in (("S-A2-only", "A2"), ("S-A5-only", "A5")):
+        for _ in range(200):
+            pt = []
+            for axis in JS.free_axes(name):
+                r = spec.range_of(axis)
+                if axis in JS._STR_AXES:
+                    pt.append(str(rng.choice(list(r))))
+                elif axis in ("block_family", "head_fusion", "batch_size_npe"):
+                    pt.append(int(rng.choice(list(r))))
+                elif axis in JS._INT_AXES:
+                    pt.append(int(rng.integers(int(r[0]), int(r[1]) + 1)))
+                else:
+                    pt.append(float(rng.uniform(float(r[0]), float(r[1]))))
+            cfg = JS.config_from_point(pt, name, spec=spec)
+            assert T.arm_for_config(cfg) == arm, (name, cfg)
+    assert stage4
+
+
+def test_t26b_committed():
+    import stages as S
+    cfg = C.load_config(SYNTH, synthetic_ok=True)
+    got = [(q["name"], q["campaign"], q["real"], q["alt_best_fit"])
+           for q in cfg.data["synthetic"]["searches"]]
+    assert got == [("S-A1", "S-A1", "R0", False), ("S-A2-R0", "S-A2-only", "R0", False),
+                   ("S-A5-R0", "S-A5-only", "R0", False), ("S-A2-R3", "S-A2-only", "R3", False),
+                   ("S-A5-R3", "S-A5-only", "R3", False)], got
+    graph = S.topological_order(S.default_graph(cfg))
+    names = [s.name for s in graph]
+    assert len(names) == 13 and not any(n.startswith("best_fit_alt_") for n in names), names
+    by = dict((s.name, s) for s in graph)
+    for q, camp in (("S-A2-R0", "S-A2-only"), ("S-A5-R3", "S-A5-only")):
+        v = by["search_" + q]._view(cfg)
+        assert v.data["search"]["campaign"] == camp, v.data["search"]
+        assert v.data["paths"]["tune_root"] == os.path.join(cfg.data["paths"]["tune_root"], q)
+
+    def refused(mutate, needle):
+        d = _committed()
+        mutate(d)
+        p = C.validate(d)
+        assert any(needle in x for x in p), (needle, p)
+    refused(lambda d: d["synthetic"]["searches"][1].update(alt_best_fit=True),
+            "S-A2-R0: alt_best_fit true needs a campaign of two arms (S-A2, S-A5), got S-A2-only")
+    refused(lambda d: d["synthetic"]["searches"][2].update(campaign="S-A5-solo"),
+            "S-A5-R0: campaign must be one of")
+
+
+def test_t26c_end_to_end():
+    try:
+        import torch  # noqa: F401
+        import sbi    # noqa: F401
+        import skopt  # noqa: F401
+        import zuko   # noqa: F401
+    except ImportError as exc:
+        raise unittest.SkipTest("the training environment is not installed here (%s)" % exc)
+    import glob as _glob
+    root = _tmp()
+    try:
+        path, d = _small(root, searches=[
+            {"name": "S-A2-R0", "campaign": "S-A2-only", "real": "R0", "alt_best_fit": False}])
+        spool = os.path.join(root, "spool")
+        env = _fake_env(spool)
+        r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "run", "--config", path,
+                            "--poll-seconds", "0.5"], cwd=root, env=env, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, universal_newlines=True, timeout=1800)
+        out = r.stdout
+        assert r.returncode == 0 and "PIPELINE DONE" in out, out[-5000:]
+        p = d["paths"]
+        camp = os.path.join(p["tune_root"], "S-A2-R0", "S-A2-only")
+        sc = json.load(open(os.path.join(camp, "SEARCH_COMPLETE.json")))
+        assert sc["campaign"] == "S-A2-only" and sc["n_trials"]["ok"] == 3, sc
+        trials = sorted(_glob.glob(os.path.join(camp, "trials", "*.json")))
+        assert len(trials) == 3, trials
+        for tp in trials:
+            rec = json.load(open(tp))
+            assert rec["status"] == "ok" and rec["arm"] == "A2", (tp, rec.get("arm"))
+        bf = json.load(open(os.path.join(p["runs_root"], "S-A2-R0", "synth_best",
+                                         "BEST_FIT_COMPLETE.json")))
+        assert bf["ensemble"]["M"] == 2, bf
+        sys.path.insert(0, os.path.join(_PIPE, "evaluation"))
+        import ev_plan
+        cfg = ev_plan.load_project(path)
+        ens = ev_plan.ensembles(cfg)
+        assert [(e.name, e.arm) for e in ens] == [("S-A2-R0:A2", "A2")], [(e.name, e.arm) for e in ens]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # ------------------------------------------------------------------ main ---
 
 CHECKS = [("test_t15_config", test_t15_config), ("test_t15_graph", test_t15_graph),
@@ -869,7 +1192,12 @@ CHECKS = [("test_t15_config", test_t15_config), ("test_t15_graph", test_t15_grap
           ("test_t16_banks", test_t16_banks), ("test_convergence", test_convergence),
           ("test_t17_end_to_end", test_t17_end_to_end), ("test_t18_config", test_t18_config),
           ("test_t18_graph", test_t18_graph), ("test_t18_dry_run", test_t18_dry_run),
-          ("test_t18_end_to_end", test_t18_end_to_end)]
+          ("test_t18_end_to_end", test_t18_end_to_end),
+          ("test_t25a_split", test_t25a_split), ("test_t25b_centres", test_t25b_centres),
+          ("test_t25c_banks", test_t25c_banks), ("test_t25d_config", test_t25d_config),
+          ("test_t25e_dagger", test_t25e_dagger),
+          ("test_t26a_campaigns", test_t26a_campaigns), ("test_t26b_committed", test_t26b_committed),
+          ("test_t26c_end_to_end", test_t26c_end_to_end)]
 
 
 def main():

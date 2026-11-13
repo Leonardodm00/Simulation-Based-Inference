@@ -4379,6 +4379,162 @@ Claude; Confirmed: no]
   root untouched (R2 replaced by a `qdel`: no real sequencer there; R4's
   status lines not reproduced) `[SANDBOX 2026-11-13]`. Not run on davinci.
 
+### Block 25: the bench's label axes from the configuration (added 2026-11-13; D-132; roadmap synth, step S2)
+
+`fragment_duty` (axis 7) becomes class-bearing in the synth project
+(D-132): the bench builder takes its class-bearing axes from the
+configuration instead of the provider's constant, gap mode (a) displaces
+the bank's own free axes, and every consumer of the split reads it from
+the bank's sidecar. [the user's choices of 2026-11-13, D-132 (1)-(3); the
+configuration key, the defaults and the refusals proposed by Claude;
+Confirmed: no]
+
+- Modules: `hpc/joint/stage1/bench_burst_provider.py` (`bench_free_idx`;
+  `phi_to_bench_params(..., free_idx)`; `BenchBurstProvider(...,
+  label_idx)`; `load_bench_provider(..., label_idx)`),
+  `hpc/joint/stage1/build_latent_bank.py` (`--label-axes`),
+  `hpc/pipeline/config.py` (`synthetic.builder.label_axes`),
+  `hpc/pipeline/stages/synthetic.py` (`_builder_options`),
+  `hpc/pipeline/projects/synth/synth.json` (v4: the label axes 0-7,
+  `centre_scale` 0.562743), `hpc/pipeline/evaluation/ev_data.py`
+  (`free_axes_of`, `pseudo_true(..., free_idx)`), `ev_dataview.py`,
+  `ev_sample.py`, `ev_data_figures.py` (theta-dagger's caption), checks
+  T25a-T25e of `hpc/pipeline/tests/test_smoke_synthetic.py`, and the
+  evaluation's fixture in `test_smoke_evaluation.py` (R3's seed 34: under
+  v4's split the seed 33 leaves all 6 of its donors' theta-dagger inside
+  the box, and e19c needs some outside; 34 puts 3 outside).
+- The split: the label axes L, a non-empty strictly increasing list of
+  distinct indices in {0, ..., 9} that leaves at least one free axis; the
+  free axes F = {0, ..., 9} \ L in increasing order -- `bench_free_idx(L)`,
+  ValueError otherwise. The default L = (0, ..., 6), F = (7, 8, 9)
+  (`BENCH_LABEL_IDX`, `BENCH_FREE_IDX`), unchanged for every caller that
+  passes none.
+- Gap mode (a): `phi_to_bench_params(phi, ..., free_axis_shift=delta,
+  free_idx=F)` displaces the ranges [L_k, U_k] of the axes k in F only, by
+  delta (U_k - L_k); the duty's clip at 1 stays and is the identity when
+  the duty is not in F (its unshifted range ends at U_7 = 1).
+  `BenchBurstProvider(gbd, ..., label_idx=L)` holds F = `bench_free_idx(L)`
+  and passes it on every call.
+- The builder: `build_latent_bank.py --label-axes i,j,...` (`--provider
+  bench` only; SystemExit for another provider or a list `bench_free_idx`
+  refuses): the spec's `label_idx` = L, its `class_centres` (C, |L|) from
+  `class_centres_for` (the DSN generator's regular simplex on |L| axes,
+  scaled about 0.5 by `--centre-scale`), the provider built with L.
+  Without the flag, the bench's default. The sidecar's `latent_spec`
+  records `label_idx` and `free_idx` (as before).
+- The configuration: `synthetic.builder.label_axes`, required, the rule
+  above (one problem per violation); `_builder_options` passes
+  `--label-axes` to the shards of every bank, so arm S's sidecars record
+  the same split -- its theta, drawn uniformly on the whole box, does not
+  depend on it. `synth.json` v4: `label_axes` [0, ..., 7] and
+  `centre_scale` 0.562743, which puts the three centres 0.441934 apart on
+  8 axes, their distance on 7 axes at 0.6 (D-132 (2)).
+- The evaluation: `ev_data.free_axes_of(sidecar)` is the bank's
+  `latent_spec.free_idx`, or `BENCH_FREE_IDX` for a sidecar without one;
+  `pseudo_true(theta, gap_spec, free_idx)` adds delta on those axes only
+  and caps the duty at (1 - L_7) / (U_7 - L_7) only when the duty is among
+  them; its three callers pass the cohort's own.
+- Test oracles (`tests/test_smoke_synthetic.py`, T25a-T25d; numpy and
+  scipy): T25a the split -- `bench_free_idx` on the default and on 0-7;
+  refused: empty, duplicates, unsorted, out of range, all ten axes;
+  `phi_to_bench_params` at phi 0.9 on every axis with delta 0.105: with F
+  = (8, 9) the duty equals the unshifted map's and axes 8 and 9 the
+  shifted map's; with the default F the parameters equal those of the
+  call without `free_idx` (regression); the provider built with L = 0-7
+  holds F = (8, 9). T25b the centres -- `class_centres_for` on 8 axes at
+  0.562743: shape (3, 8), the three pairwise distances 0.441934 within
+  1e-6 and equal; on 7 axes at 0.6 the same distance. T25c the banks --
+  the builder by hand at W 128 with L = 0-7: arm R's sidecar records
+  `label_idx` 0-7, `free_idx` [8, 9] and centres (3, 8); arm S's theta and
+  x byte-identical to the same build with the default L (the box prior
+  does not depend on the split); `--label-axes` with `--provider
+  reference` and an invalid list each refused. T25d the configuration --
+  the committed `synth.json` loads with L = 0-7 and the scale 0.562743;
+  refused: the key missing, empty, duplicates, unsorted, all ten, out of
+  range, not integers; every bank's build argv carries `--label-axes
+  0,1,2,3,4,5,6,7`; `pseudo_true` with F = (8, 9) shifts those axes only
+  and leaves a duty of 0.95 at 0.95, with the default F it equals the old
+  function's output. Mutations: `shift` (`phi_to_bench_params` shifts the
+  default F whatever it is given) fails T25a; `scale` (the committed file
+  read at the scale 0.6) fails T25d. T25e (`pseudo_true`, the
+  evaluation's modules; skipped without the training environment):
+  with F = (8, 9) only those axes move by delta and a duty of 0.95 stays
+  0.95; with the default F the output equals blocks 19-23's function
+  (theta* + delta on 7-9, the duty capped); `free_axes_of` on a sidecar
+  with and without `free_idx`.
+- Confirmed: no (the configuration key, the defaults, the refusals and the
+  sidecar as the evaluation's source of the split are Claude's proposal on
+  the user's call of 2026-11-13, D-132 (1)-(3)).
+- Status: smoke-tested 2026-11-13: T25a-T25e pass in the synthetic suite
+  (18 of 19, the convergence check skipped, 207 s); the mutations `shift`
+  and `scale` each caught (T25a, respectively T25d, FAIL); the evaluation's
+  suite 17 of 18 (the convergence check skipped, 382 s) on R3's seed 34;
+  stage 1's smoke tests: the bench provider 19/19, the latent SBI 46 pass
+  and 1 skip, the demo classes 14/14, the burst generator 69/69 with
+  `scipy.stats.kstest(x, "norm", args=...)` rerouted to the frozen
+  distribution's cdf by a sandbox-only driver (scipy 1.18.1 here raises
+  TypeError inside `kstest` at check B4, the same on `0e62645`; the test
+  file unchanged); the other pipeline suites (blocks 1-3, 7-10, 24 and the
+  tools) pass with only their convergence skips and block 1c's launcher
+  skip (no Sbi-extractor checkout); the committed v4's dry run exits 0 with
+  `--label-axes 0,1,2,3,4,5,6,7` on its three bank commands `[SANDBOX
+  2026-11-13]`. Not run on davinci.
+
+### Block 26: one search per arm -- the term-only campaigns (added 2026-11-13; D-132; roadmap synth, step S4)
+
+Each arm is optimised by its own search (D-132 (4)): A1 by S-A1, as
+before, and A2 and A5 by searches in which their term is always on, so no
+A1 trial is nested in them; each search's best trial is refitted as a
+5-seed ensemble by its best fit, and no fit of another arm is made.
+[the user's choice of 2026-11-13, D-132 (4); the campaigns' names and
+pins proposed by Claude; Confirmed: no]
+
+- Modules: `hpc/joint/stage4/joint_space.py` (the campaigns `S-A2-only`
+  and `S-A5-only`), `hpc/pipeline/config.py` (`_CAMPAIGNS`),
+  `hpc/pipeline/projects/synth/synth.json` (v4: the five searches),
+  checks T26a-T26c of `hpc/pipeline/tests/test_smoke_synthetic.py`, and
+  T15's and T18's expectations moved to v4 (T18 reads a v3-like copy:
+  block 18's other-arm fits stay tested on the mixed campaigns).
+- `S-A2-only`: S-A2's pins (the replicate axes off, `head_pool_ops` 1)
+  and `dsn_on` = 1; free: everything else, the DSN term's axes among them.
+  `S-A5-only`: S-A5's pins (the DSN axes off, `head_pool_ops` 1) and
+  `rep_on` = 1. `campaign()` verifies each partitions the space; every
+  configuration of `S-A2-only` maps to arm A2 and of `S-A5-only` to A5
+  (`npe_tune_joint.arm_for_config`). `apply_overrides` frees or pins
+  their axes as it does the others'. S-A1, S-A2, S-A5 and S-A25 are
+  unchanged.
+- The configuration: `_CAMPAIGNS` gains the two names; `alt_best_fit` true
+  stays refused for any campaign outside `ALT_ARMS` (S-A2, S-A5), so for
+  the two new ones. `synth.json` v4's searches, in this order (the core
+  cap's priority): S-A1 (`S-A1`, R0), S-A2-R0 (`S-A2-only`, R0), S-A5-R0
+  (`S-A5-only`, R0), S-A2-R3 (`S-A2-only`, R3), S-A5-R3 (`S-A5-only`, R3),
+  every `alt_best_fit` false: the graph's 13 stages (three banks, then
+  each search and its best fit). The search's and the best fit's values
+  are unchanged (D-123, D-125); the searches' folders keep their names,
+  `<tune_root>/<q>/<campaign>` now with the new campaign names.
+- Test oracles (`tests/test_smoke_synthetic.py`): T26a the campaigns --
+  each partitions the space; its pins (`dsn_on` 1 and the replicate axes
+  off; `rep_on` 1 and the DSN axes off); the term's own axes free; 200
+  random points of each over the default space's free axes (seed 26) all
+  map to A2, respectively A5; the four old campaigns' pins unchanged.
+  T26b the committed v4 -- the five searches with their campaigns and
+  cohorts, `alt_best_fit` false on all five, the 13 stages in order, each
+  view's campaign; refused: `alt_best_fit` true on an `S-A2-only` search,
+  an unknown campaign. T26c (the training environment; skipped
+  otherwise) a reduced project with the one search S-A2-R0 on `S-A2-only`
+  runs to PIPELINE DONE: every trial of the ledger has `dsn_on` 1 and arm
+  A2, the best fit's members are A2.
+- Confirmed: no (the campaigns' names and pins and the searches' order are
+  Claude's proposal on the user's call of 2026-11-13, D-132 (4)).
+- Status: smoke-tested 2026-11-13: T26a-T26c pass in the synthetic suite
+  (T26c's reduced project to PIPELINE DONE in 41 s), T15's and T18's moved
+  expectations pass (T18 on the v3-like copy); stage 4's joint-space test
+  9/9 and joint-tune test 9/9 (the latter with `SKIP_CONDA=1`: its J36 runs
+  the PBS element, and the sandbox has no conda); the committed v4's dry
+  run exits 0 with the five searches on S-A1, S-A2-only (R0, R3) and
+  S-A5-only (R0, R3), five best fits and no other arm's fit `[SANDBOX
+  2026-11-13]`. Not run on davinci.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |

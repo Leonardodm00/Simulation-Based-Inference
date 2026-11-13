@@ -241,7 +241,8 @@ def compute(cfg, ecfg, ncpus=1, log=print):
         if np.any(np.any(off_T, axis=1) & ~c["contaminated"]) or np.any(off_pc & ~c["contaminated"]):
             raise AssertionError("an uncontaminated window of %s lies outside its frame" % n)
         ids, theta_d, cls_d = donors_of(c)
-        dag, in_box, delta = ev_data.pseudo_true(theta_d, c["sidecar"].get("gap_spec"))
+        dag, in_box, delta = ev_data.pseudo_true(theta_d, c["sidecar"].get("gap_spec"),
+                                                  ev_data.free_axes_of(c["sidecar"]))
         ex = cohort_examples(c, dv["examples_per_condition"], seed, n)
         cx = drawn_rows(np.flatnonzero(c["contaminated"]), dv["examples_per_condition"], seed, n,
                         "contaminated")

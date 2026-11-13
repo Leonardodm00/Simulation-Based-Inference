@@ -68,7 +68,7 @@ from bench_burst_generator import BenchBurstParams, generate_spike_times  # noqa
 from latent_sbi_simulator import BurstProvider, load_dsn_modules          # noqa: E402
 
 __all__ = [
-    "BENCH_AXES", "BENCH_LABEL_IDX", "BENCH_FREE_IDX",
+    "BENCH_AXES", "BENCH_LABEL_IDX", "BENCH_FREE_IDX", "bench_free_idx",
     "phi_to_bench_params", "BenchBurstProvider", "load_bench_provider",
 ]
 
@@ -93,12 +93,35 @@ BENCH_AXES = (
     ("background",           0.01,  0.06),      # spikes/s/neuron    10
 )
 
-BENCH_LABEL_IDX = (0, 1, 2, 3, 4, 5, 6)   # class-bearing, spec S4
-BENCH_FREE_IDX = (7, 8, 9)                # label-irrelevant, spec S4
+BENCH_LABEL_IDX = (0, 1, 2, 3, 4, 5, 6)   # class-bearing, spec S4 (the default)
+BENCH_FREE_IDX = (7, 8, 9)                # label-irrelevant, spec S4 (the default)
+
+
+def bench_free_idx(label_idx):
+    """[block 25, D-132] The free axes of a set of class-bearing axes: the
+    bench's axes not in `label_idx`, in increasing order. `label_idx` must
+    be a non-empty strictly increasing list of distinct axis indices that
+    leaves at least one free axis; ValueError otherwise. The default
+    BENCH_LABEL_IDX gives BENCH_FREE_IDX."""
+    n = len(BENCH_AXES)
+    try:
+        lab = tuple(int(k) for k in label_idx)
+    except (TypeError, ValueError):
+        raise ValueError("label axes must be integers, got %r" % (label_idx,))
+    if any(isinstance(k, bool) or int(k) != k for k in label_idx):
+        raise ValueError("label axes must be integers, got %r" % (label_idx,))
+    if not lab or list(lab) != sorted(set(lab)) or lab[0] < 0 or lab[-1] >= n:
+        raise ValueError("label axes must be distinct indices 0-%d in increasing order, got %r"
+                         % (n - 1, list(label_idx)))
+    free = tuple(k for k in range(n) if k not in lab)
+    if not free:
+        raise ValueError("label axes %r leave no free axis (the range shift's axes)"
+                         % (list(label_idx),))
+    return free
 
 
 def phi_to_bench_params(phi, n_neurons, duration_s, overlap="merge",
-                        free_axis_shift=0.0):
+                        free_axis_shift=0.0, free_idx=BENCH_FREE_IDX):
     """The affine map of spec S2: phi in [0, 1]^10 -> BenchBurstParams.
 
     `free_axis_shift` implements gap perturbation (a) with the same
@@ -106,16 +129,19 @@ def phi_to_bench_params(phi, n_neurons, duration_s, overlap="merge",
     [L_k, U_k] is displaced by that fraction of its own width BEFORE the
     map, so the same phi maps to physics the unshifted prior box cannot
     reach, while every recorded coordinate stays in [0, 1]. Class-bearing
-    axes are never shifted (latent_gap, perturbation (a)).
+    axes are never shifted (latent_gap, perturbation (a)). [block 25,
+    D-132] `free_idx` names the free axes, the bank's own (default the
+    bench's 7-9).
     """
     phi = np.asarray(phi, dtype=np.float64).ravel()
     if phi.size != len(BENCH_AXES):
         raise ValueError("phi must have %d entries, got %d"
                          % (len(BENCH_AXES), phi.size))
+    free = tuple(int(k) for k in free_idx)
     a = np.empty(len(BENCH_AXES), dtype=np.float64)
     shift = float(free_axis_shift)
     for k, (_name, lo, hi) in enumerate(BENCH_AXES):
-        if shift and k in BENCH_FREE_IDX:
+        if shift and k in free:
             width = hi - lo
             lo, hi = lo + shift * width, hi + shift * width
         # convex-combination form: exact at BOTH endpoints, unlike
@@ -170,13 +196,18 @@ class BenchBurstProvider(BurstProvider):
     #: deterministically. The discarded tail changes no kept sample.
     PAD_BINS = 2
 
-    def __init__(self, gbd, gaussian_window=0.04, overlap="merge"):
+    def __init__(self, gbd, gaussian_window=0.04, overlap="merge",
+                 label_idx=BENCH_LABEL_IDX):
         self.gbd = gbd
         self.gaussian_window = float(gaussian_window)
         if not (self.gaussian_window > 0):
             raise ValueError("gaussian_window must be > 0, got %r"
                              % (self.gaussian_window,))
         self.overlap = str(overlap)
+        # [block 25, D-132] the bank's class-bearing axes; gap mode (a)
+        # displaces the others
+        self.free_idx = bench_free_idx(label_idx)          # validates the raw list first
+        self.label_idx = tuple(int(k) for k in label_idx)
 
     def __call__(self, phi, n_windows, W, fs, n_neurons, seed,
                  param_overrides=None):
@@ -197,7 +228,8 @@ class BenchBurstProvider(BurstProvider):
         params = phi_to_bench_params(phi, n_neurons=n_neurons,
                                      duration_s=duration_s,
                                      overlap=self.overlap,
-                                     free_axis_shift=shift)
+                                     free_axis_shift=shift,
+                                     free_idx=self.free_idx)
         rng = np.random.default_rng(int(seed) % (2 ** 63))
         spikes, _stats = generate_spike_times(params, rng)
 
@@ -225,13 +257,15 @@ class BenchBurstProvider(BurstProvider):
 
 
 def load_bench_provider(dsn_main_dir=None, gaussian_window=0.04,
-                        overlap="merge"):
+                        overlap="merge", label_idx=BENCH_LABEL_IDX):
     """Build a BenchBurstProvider, mirroring `load_dsn_provider`.
 
     The DSN tree is still required -- not for the generator (ours), but for
     `compute_ifr_trace`, which is imported unchanged for parity (spec S6).
     It is the in-repo <hpc>/dsn unless `dsn_main_dir` says otherwise.
+    [block 25, D-132] `label_idx`: the bank's class-bearing axes (default
+    the bench's 0-6).
     """
     _lbg, gbd = load_dsn_modules(dsn_main_dir)
     return BenchBurstProvider(gbd, gaussian_window=gaussian_window,
-                              overlap=overlap)
+                              overlap=overlap, label_idx=label_idx)

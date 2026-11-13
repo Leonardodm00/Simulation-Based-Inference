@@ -1,5 +1,5 @@
 {
-  "_comment": "The synthetic A2/A5 experiment's pipeline configuration, v3 (v1 2026-11-03; v2 2026-11-04, D-125: the trials' and the members' memory 96gb, was 32gb; v3 2026-11-11, D-126: the best fit of the other arm for the four searches with a term, `alt_best_fit`, block 18; decisions D-118..D-123, D-125 and D-126 of claude/SBI_decisions_and_ideas_log.md, project knowledge; specs/SPEC.md secs. 1.1, 2.4, 2.5 and blocks 11-18; the roadmap specs/roadmap/synth.yaml, steps S4 and S6). A synthetic data set (\"kind\": \"synthetic\", block 15): both arms built by the bench generator, the simulated arm S on the whole parameter box and the synthetic 'real' cohorts R0 (pi = 0) and R3 (pi = 0.3), whose theta is recorded and withheld; five searches and their best fits under one command and one core cap (D-123). Values marked [Claude's] are not the user's: they are logistics proposed with this file and can change before the first submission (--dry-run first). Every key is required; a key starting with '_' documents the key after it and is ignored.",
+  "_comment": "The synthetic A2/A5 experiment's pipeline configuration, v4 (v1 2026-11-03; v2 2026-11-04, D-125: the trials' and the members' memory 96gb, was 32gb; v3 2026-11-11, D-126: the best fit of the other arm for the four searches with a term, `alt_best_fit`, block 18; v4 2026-11-13, D-132, the relaunch: `fragment_duty` class-bearing, `label_axes` 0-7 with `centre_scale` 0.562743, block 25, and one search per arm on the campaigns S-A2-only and S-A5-only with every alt_best_fit false, block 26; decisions D-118..D-123, D-125 and D-126 of claude/SBI_decisions_and_ideas_log.md, project knowledge; specs/SPEC.md secs. 1.1, 2.4, 2.5 and blocks 11-18; the roadmap specs/roadmap/synth.yaml, steps S4 and S6). A synthetic data set (\"kind\": \"synthetic\", block 15): both arms built by the bench generator, the simulated arm S on the whole parameter box and the synthetic 'real' cohorts R0 (pi = 0) and R3 (pi = 0.3), whose theta is recorded and withheld; five searches and their best fits under one command and one core cap (D-123). Values marked [Claude's] are not the user's: they are logistics proposed with this file and can change before the first submission (--dry-run first). Every key is required; a key starting with '_' documents the key after it and is ignored.",
   "config_version": 10,
   "kind": "synthetic",
   "dataset": "synth",
@@ -17,7 +17,7 @@
   "envs": {"extract": "sbi_export", "train": "sbi_env"},
 
   "synthetic": {
-    "_builder": "The bench generator (D-119) at the decided shape (D-120): 180-s windows at 100 Hz (W 18,000), 100 units, two wells per donor (D-119), batches of 8 donors (the builder's default, SPEC sec. 2.4), three conditions, tau_ov 0.10, the DSN's regular simplex scaled by 0.6 about the box's centre ('medium', D-120). The centres are recorded in arm S's sidecar too and unused by its box draw.",
+    "_builder": "The bench generator (D-119) at the decided shape (D-120): 180-s windows at 100 Hz (W 18,000), 100 units, two wells per donor (D-119), batches of 8 donors (the builder's default, SPEC sec. 2.4), three conditions, tau_ov 0.10, the DSN's regular simplex scaled about the box's centre ('medium', D-120): by 0.6 on the 7 axes of v1-v3, by 0.562743 on the 8 of v4, which keeps the centres 0.441934 apart (D-132 (2)). label_axes (v4, D-132, block 25): the class-bearing axes, the bench's 0-6 and fragment_duty (7); the free axes 8-9 (participation_kappa, background) are uniform in every condition and the only axes R3's range shift moves. The centres are recorded in arm S's sidecar too and unused by its box draw.",
     "builder": {
       "provider": "bench",
       "fs": 100.0,
@@ -28,7 +28,8 @@
       "n_classes": 3,
       "tau_ov": 0.10,
       "class_centres": "regular",
-      "centre_scale": 0.6
+      "centre_scale": 0.562743,
+      "label_axes": [0, 1, 2, 3, 4, 5, 6, 7]
     },
     "_sim": "Arm S (D-120): 20,000 theta i.i.d. on the box, 2 wells x 1 window each, 40,000 windows. seed 1000 [Claude's; D-120 asks only that the arms' seeds differ]. 2,000 wells per shard [Claude's]: 20 shards of about 120 MB, one job each, about 4 min each at the sandbox's 0.1 s per well.",
     "sim": {"seed": 1000, "n_theta": 20000, "n_windows": 1, "traces_per_shard": 2000},
@@ -39,13 +40,13 @@
       {"name": "R3", "seed": 3000, "donors_per_class": 9, "n_windows": 6, "pi": 0.3,
        "gap_modes": ["range_shift", "drift", "contamination"]}
     ],
-    "_searches": "The five searches (D-122, D-123): S-A1 once (its trials scored on R0, its best fit scored on R3 at the evaluation), S-A2 and S-A5 on each cohort. The order is the priority under the core cap: the free cores go to the earliest search and its best fits first. alt_best_fit (D-126, block 18, added 2026-11-11 after the run of v2): true fits, beside the search's best fit, the best trial on the simulated report split's nll of the arm the search's finalist is not (A1 or the term's arm), in <runs_root>/<search>/synth_best_alt with the same best_fit values, so the evaluation has an ensemble of 5 members per arm; S-A1 has one arm (false).",
+    "_searches": "The five searches (D-122, D-123): S-A1 once (its trials scored on R0, its best fit scored on R3 at the evaluation), S-A2 and S-A5 on each cohort. The order is the priority under the core cap: the free cores go to the earliest search and its best fits first. alt_best_fit (D-126, block 18, added 2026-11-11 after the run of v2): true fits, beside the search's best fit, the best trial on the simulated report split's nll of the arm the search's finalist is not (A1 or the term's arm), in <runs_root>/<search>/synth_best_alt with the same best_fit values, so the evaluation has an ensemble of 5 members per arm; S-A1 has one arm (false). v4 (2026-11-13, D-132, block 26): one search per arm -- S-A1 for A1 as before, and the four term searches on the campaigns S-A2-only and S-A5-only (the term always on, dsn_on = 1 or rep_on = 1: no nested A1 trial), each of 60 trials; each search's best trial refitted as a 5-seed ensemble by its best fit; alt_best_fit false on all five (the evaluation pairs each term arm's ensemble with S-A1's).",
     "searches": [
       {"name": "S-A1", "campaign": "S-A1", "real": "R0", "alt_best_fit": false},
-      {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0", "alt_best_fit": true},
-      {"name": "S-A5-R0", "campaign": "S-A5", "real": "R0", "alt_best_fit": true},
-      {"name": "S-A2-R3", "campaign": "S-A2", "real": "R3", "alt_best_fit": true},
-      {"name": "S-A5-R3", "campaign": "S-A5", "real": "R3", "alt_best_fit": true}
+      {"name": "S-A2-R0", "campaign": "S-A2-only", "real": "R0", "alt_best_fit": false},
+      {"name": "S-A5-R0", "campaign": "S-A5-only", "real": "R0", "alt_best_fit": false},
+      {"name": "S-A2-R3", "campaign": "S-A2-only", "real": "R3", "alt_best_fit": false},
+      {"name": "S-A5-R3", "campaign": "S-A5-only", "real": "R3", "alt_best_fit": false}
     ],
     "_bank_job": "[Claude's] One core per shard job (the builder is single-threaded), 8gb, 2 h (about 30 times the sandbox's time for a shard), queue cpu; a job that ends without its shard is submitted again twice at most.",
     "bank_job": {"ncpus": 1, "mem": "8gb", "walltime": "02:00:00", "queue": "cpu", "max_resubmits": 2}

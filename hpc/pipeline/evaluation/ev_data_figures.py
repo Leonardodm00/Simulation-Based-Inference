@@ -366,10 +366,12 @@ def fig_theta_dagger(d):
                                                             d[n + "_in_box_d"].size)
                     for n in shifted)
     finish(fig, "theta-dagger against theta* on the free axes (%s)" % ins, axs, ncol=6)
+    cap = (", the duty capped where the generator clips it" if 7 in free else
+           " (the duty is class-bearing here and not shifted, block 25)")
     return fig, ("theta-dagger_d against theta*_d on the free axes for each donor of the "
-                 "range-shifted cohort(s) (%s): theta* + delta, the duty capped where the "
-                 "generator clips it; the donors whose theta-dagger reaches the box's edge are "
-                 "those the evaluation scores outside the box (%s)" % (", ".join(shifted), ins))
+                 "range-shifted cohort(s) (%s): theta* + delta%s; the donors whose theta-dagger "
+                 "reaches the box's edge are those the evaluation scores outside the box (%s)"
+                 % (", ".join(shifted), cap, ins))
 
 
 # ---------------------------------------------------------------- D4: PCA

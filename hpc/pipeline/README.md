@@ -369,7 +369,14 @@ report-split NLL) of the arm its finalist is not -- A1, or the term's arm --
 as `best_fit_alt_<q>`: S8 again with the same `best_fit` values, its members
 named `ba_<tag>_s<k>`, its finalist chosen by the tuner's `finalists --arm`
 for each of the two arms (the files `finalists_<arm>.json` in its folder), so
-that every such search has an ensemble per arm for the evaluation. The stages share
+that every such search has an ensemble per arm for the evaluation. [blocks
+25-26, D-132, 2026-11-13] `synthetic.builder.label_axes` names the bench's
+class-bearing axes (passed to every shard as `--label-axes`; the others are
+free, uniform in every condition and the only axes R3's range shift moves),
+and the campaigns `S-A2-only` and `S-A5-only` search one arm each (the term
+always on, no nested A1 trial): `synth.json` v4 has `fragment_duty` among
+the label axes (0-7, the centres scaled by 0.562743, still 0.442 apart) and
+one search per arm with every `alt_best_fit` false. The stages share
 `resources.max_cores`, and each tick fills the free cores in the graph's
 order: the first search and its best fit first. The tools that read a
 recorded data set's single search (`search_report.py`, `search_reset.py`,
@@ -963,6 +970,36 @@ cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && nohu
 #     checksum "OK"; the listing with only "absent" lines and "in all: 0 target(s), 0 file(s), 0.00 GB" (while
 #     P3 still runs: DELETED lines so far)
 tail -n 6 ~/purge_synth_delete.log; tar tzf ~/synth_eval_2026-11-13.tar.gz | wc -l; (cd ~ && sha256sum -c synth_eval_2026-11-13.tar.gz.sha256); cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/purge_outputs.py --config hpc/pipeline/projects/synth/synth.json --what evaluation,best_fits,searches,banks,state 2>&1 | grep -E "REFUSED|absent|would DELETE|in all"
+```
+
+### synth: the relaunch -- the launch (2026-11-13, blocks 25-26, D-132)
+
+After the deletion above (P1-P4), `synth.json` v4: `fragment_duty` class-bearing and one
+search per arm. The work root holds only `purge/`, so the pipeline starts a new state; the
+banks, the five searches and their best fits are made from nothing, about as long as the
+first run took (3-13 Nov). The evaluation of the new design (block 27, the pairing of each
+term arm with S-A1) comes before the best fits end; do not run E1-E9 on this run until then.
+
+```
+# L1. the code (blocks 25-26) and the synthetic kind's fast checks under the fake PBS, in sbi_env (about 1 min;
+#     the training checks T17, T18 and T26c ran in the sandbox); pass: the table with PASS on every row but
+#     test_t15_dry_run and test_t18_dry_run, which SKIP here (the work root exists: L2 is that check), and
+#     "13 of 15 checks pass"
+cd ~/SBI && git pull && eval "$(conda shell.bash hook)" && conda activate sbi_env && python3 hpc/pipeline/tests/test_smoke_synthetic.py test_t15_config test_t15_graph test_t15_dry_run test_t16_record test_t16_banks test_t18_config test_t18_graph test_t18_dry_run test_t25a_split test_t25b_centres test_t25c_banks test_t25d_config test_t25e_dagger test_t26a_campaigns test_t26b_committed 2>&1 | grep -E "^\| test|checks pass"
+
+# L2. the dry run; pass: exit 0, no REFUSE or STOP line, "new state file" absent (a dry run writes none), "sim_bank:
+#     would run" with "bank sim: 20 shard(s) of 2000 row(s)", real_bank_R0 and real_bank_R3 "would run" (324 rows
+#     each), five "search_<q>: would wait for ..." with "campaign S-A1", "campaign S-A2-only" (S-A2-R0, S-A2-R3)
+#     and "campaign S-A5-only" (S-A5-R0, S-A5-R3), five best fits, no best_fit_alt line, "cores: at most 120 at
+#     once", the sequencer pl_synth; then the count of bank commands carrying the new label axes: 3
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --dry-run 2>&1 | tee ~/pipeline_synth_relaunch_dry.log | grep -E "REFUSE|STOP|FAILED|would|bank |campaign|best_fit_alt|cores: at most|the sequencer" ; echo "exit ${PIPESTATUS[0]}"; grep -c "label-axes 0,1,2,3,4,5,6,7" ~/pipeline_synth_relaunch_dry.log
+
+# L3. the run; pass line: SUBMITTED the sequencer: job <id> (pl_synth)
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth
+
+# L4. any time: the status and the log, as Y4 of the first submission (banks, then each search's budget gate,
+#     rounds and SEARCH COMPLETE, then each BEST FIT COMPLETE; at the end PIPELINE DONE)
+bash ~/SBI/hpc/pipeline/run_pipeline.sh --project synth --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/synth/pipeline.log
 ```
 
 ## Tests

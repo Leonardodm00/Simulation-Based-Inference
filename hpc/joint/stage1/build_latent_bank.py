@@ -87,6 +87,12 @@ def build_parser():
     p.add_argument("--centre-scale", type=float, default=1.0,
                    help="s in mu_c = 0.5 + s (m_c - 0.5), with "
                         "--class-centres regular only (D-120: 0.6)")
+    p.add_argument("--label-axes", default=None,
+                   help="[block 25, D-132] --provider bench only: the "
+                        "class-bearing axes, comma-separated increasing "
+                        "indices (default the bench's 0-6); the others are "
+                        "free -- uniform whatever the condition, and the "
+                        "axes gap mode (a) displaces")
     p.add_argument("--donors-per-class", type=int, default=0,
                    help="a cohort with exactly this many donors per class, the "
                         "classes assigned to donor indices by a permutation "
@@ -135,8 +141,9 @@ def make_provider_and_spec(args):
     With --provider dsn the bench spec is DERIVED from the DSN LatentSpec
     rather than restated, so the class-centre convention cannot drift between
     the generator and the prior. With --provider bench the axis set is
-    STRUCTURAL (10 axes, 7 class-bearing -- STAGE_A_BENCH_GENERATOR_SPEC_v1
-    S4), so --n-latent and --n-label-axes are ignored, as the dsn branch
+    STRUCTURAL (10 axes, 7 class-bearing by default -- STAGE_A_BENCH_
+    GENERATOR_SPEC_v1 S4; --label-axes names others, block 25, D-132), so
+    --n-latent and --n-label-axes are ignored, as the dsn branch
     already ignores them. With --provider reference it is built from the CLI
     flags, since there is no generator to agree with.
 
@@ -153,16 +160,29 @@ def make_provider_and_spec(args):
     """
     if args.provider == "bench":
         from bench_burst_provider import (BENCH_AXES, BENCH_LABEL_IDX,
-                                          load_bench_provider)
-        provider = load_bench_provider(args.dsn_main_dir)
+                                          bench_free_idx, load_bench_provider)
+        label = BENCH_LABEL_IDX
+        if args.label_axes is not None:
+            # [block 25, D-132] the class-bearing axes from the command line
+            try:
+                label = tuple(int(t) for t in str(args.label_axes).split(",") if t.strip())
+                bench_free_idx(label)
+            except ValueError as exc:
+                raise SystemExit("--label-axes %r: %s" % (args.label_axes, exc))
+        provider = load_bench_provider(args.dsn_main_dir, label_idx=label)
         spec = LatentSBISpec(
             n_latent=len(BENCH_AXES),
-            label_idx=BENCH_LABEL_IDX,
-            class_centres=class_centres_for(args, len(BENCH_LABEL_IDX)),
+            label_idx=label,
+            class_centres=class_centres_for(args, len(label)),
             tau_ov=args.tau_ov, n_windows_per_trace=args.n_windows,
             T_win=args.T_win, fs=args.fs, n_neurons=args.n_neurons,
             seed=args.seed)
         return provider, "bench", spec, "per_unit_mean"
+
+    if args.label_axes is not None:
+        raise SystemExit("--label-axes is for --provider bench (block 25): the dsn "
+                         "provider's label axes are the DSN spec's, the reference "
+                         "fixture's the first --n-label-axes")
 
     if args.provider == "dsn":
         from latent_sbi_simulator import (latent_spec_from_dsn,

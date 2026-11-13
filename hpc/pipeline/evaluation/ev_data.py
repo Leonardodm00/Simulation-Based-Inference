@@ -6,14 +6,17 @@ sets", and block 19).
     calib = ev_data.calibration_rows(index.donor[rows])
     coh = ev_data.cohort(cfg, "R3")                # arm R: x, theta*, ids, sidecar
     paths = ev_data.cohort_paths(cfg, "R3")        # its shards alone
-    theta_dag, in_box, delta = ev_data.pseudo_true(coh["theta"], coh["sidecar"]["gap_spec"])
+    theta_dag, in_box, delta = ev_data.pseudo_true(coh["theta"], coh["sidecar"]["gap_spec"],
+                                                   ev_data.free_axes_of(coh["sidecar"]))
 
 theta^dag is the parameter at which the unshifted generator gives the
 physics the range-shifted generator gave at theta*: theta* + delta on the
-free axes, the duty (axis 7) capped where `phi_to_bench_params` clips it.
-delta is the gap code's own (`latent_gap.free_axis_range_shift`), read from
-the bank's sidecar, and the axes and their ranges are the provider's
-(`BENCH_AXES`, `BENCH_FREE_IDX`), so nothing here restates them.
+bank's free axes, the duty (axis 7) capped where `phi_to_bench_params`
+clips it when it is one of them. delta is the gap code's own
+(`latent_gap.free_axis_range_shift`), read from the bank's sidecar, the free
+axes are the sidecar's own (`latent_spec.free_idx`; block 25, D-132: the
+synth project's are 8-9 since v4) and the axes' ranges the provider's
+(`BENCH_AXES`), so nothing here restates them.
 
 Pure ASCII, LF only.
 """
@@ -103,15 +106,27 @@ def range_shift_of(gap_spec):
     return float(free_axis_range_shift(g))
 
 
-def pseudo_true(theta, gap_spec):
+def free_axes_of(sidecar):
+    """[block 25, D-132] The bank's free axes: its sidecar's
+    `latent_spec.free_idx`, or the bench's default (7-9) for a sidecar
+    without one."""
+    lat = (sidecar or {}).get("latent_spec") or {}
+    free = lat.get("free_idx")
+    return tuple(int(k) for k in free) if free is not None else tuple(BENCH_FREE_IDX)
+
+
+def pseudo_true(theta, gap_spec, free_idx=BENCH_FREE_IDX):
     """(theta_dag (n, 10) float64, in_box (n,) bool, delta): theta* + delta on
-    the free axes, the duty capped at (1 - L_7) / (U_7 - L_7); in_box when every
+    the free axes `free_idx` (the bank's, `free_axes_of`; block 25), the duty
+    capped at (1 - L_7) / (U_7 - L_7) when it is one of them; in_box when every
     coordinate is in the open box (0, 1)."""
     delta = range_shift_of(gap_spec)
+    free = tuple(int(k) for k in free_idx)
     t = np.array(theta, dtype=np.float64, copy=True)
-    for k in BENCH_FREE_IDX:
+    for k in free:
         t[:, k] += delta
-    _name, lo, hi = BENCH_AXES[DUTY_AXIS]
-    t[:, DUTY_AXIS] = np.minimum(t[:, DUTY_AXIS], (1.0 - lo) / (hi - lo))
+    if DUTY_AXIS in free:
+        _name, lo, hi = BENCH_AXES[DUTY_AXIS]
+        t[:, DUTY_AXIS] = np.minimum(t[:, DUTY_AXIS], (1.0 - lo) / (hi - lo))
     in_box = np.all((t > 0.0) & (t < 1.0), axis=1)
     return t, in_box, delta

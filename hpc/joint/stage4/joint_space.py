@@ -469,6 +469,18 @@ CAMPAIGNS: Dict[str, Campaign] = {
         pinned=dict(**_DSN_AXES_OFF, **_HEAD_POOL_PIN),
         note="Replicate term free (rep_on searched), DSN term off. Nests "
              "S-A1 at rep_on = 0."),
+    # [block 26, D-132] one search per arm: the term always on, no nested A1
+    # trial (A1 has its own search, S-A1)
+    "S-A2-only": Campaign(
+        name="S-A2-only",
+        pinned=dict(dsn_on=1, **_REP_AXES_OFF, **_HEAD_POOL_PIN),
+        note="Arm A2 alone (D-132): the DSN term always on (dsn_on = 1), the "
+             "replicate term off; its axes searched, no nested A1 trial."),
+    "S-A5-only": Campaign(
+        name="S-A5-only",
+        pinned=dict(rep_on=1, **_DSN_AXES_OFF, **_HEAD_POOL_PIN),
+        note="Arm A5 alone (D-132): the replicate term always on (rep_on = 1), "
+             "the DSN term off; its axes searched, no nested A1 trial."),
     "S-A25": Campaign(
         name="S-A25",
         pinned=dict(**_HEAD_POOL_PIN),
