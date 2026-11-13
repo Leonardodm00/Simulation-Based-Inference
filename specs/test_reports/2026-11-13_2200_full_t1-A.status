@@ -4,6 +4,6 @@ Commit under test: 8d5b16285140f1a4181c0901bf535c7da041ae39
 Mode: full
 Scope: Blocks 1-10 (tier 1, group A)
 Started (UTC): 2026-11-13 22:00
-Last update (UTC): 2026-11-13 22:10
-Phase: step 3: regression suite (existing tests) running
+Last update (UTC): 2026-11-13 22:20
+Phase: step 5: spec-derived tests (blocks 1, 7, 9, 10 written; 4-6 pending)
 Note: -
