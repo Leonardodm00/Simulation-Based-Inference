@@ -4273,6 +4273,10 @@ verified before anything is deleted. [the user's choices of 2026-11-13
 (D-132); the targets, the archive's content and the refusals proposed by
 Claude; Confirmed: no]
 
+- Modules: `hpc/pipeline/tools/purge_outputs.py` (block 10's tool: the
+  synthetic kinds, the archive, the evaluation's ledger in the jobs
+  check), `hpc/pipeline/tests/test_smoke_purge.py` (checks T24a-T24e, the
+  mutation `evaljobs`); the README's run sheet "synth: the relaunch".
 - Command: `python3 hpc/pipeline/tools/purge_outputs.py --config
   <synth.json> --what <kinds> [--eval-config <file>] [--archive
   <file.tar.gz> | --no-archive] [--confirm <CODE>]`, on a login node,
@@ -4362,6 +4366,18 @@ Claude; Confirmed: no]
   left, the record `archive failed`. Mutations: `code` (a constant
   CODE) and the new `evaljobs` (the ledger check off: T24d's live job does
   not refuse) each make a check FAIL.
+- Confirmed: no (the targets, the archive's content and the refusals are
+  Claude's proposal on the user's call of 2026-11-13, D-132).
+- Status: smoke-tested 2026-11-13 (T24a-T24e with block 10's checks: 11
+  pass, 1 skip; the mutations `code`, `chain` and `evaljobs` each caught
+  `[SANDBOX]`); the run sheet's R1, R3, R4 and P1-P4 rehearsed as written
+  on a stand-in of the committed `synth.json`'s tree under the fake PBS
+  and the fake conda -- R1 lists the chain's and the evaluation's jobs and
+  not another chain's, R3 refuses while the sequencer's job exists and
+  then deletes the two others, P1's pull and test pass, P2-P4 archive 9
+  files and delete 17 targets, the other projects' banks, runs and work
+  root untouched (R2 replaced by a `qdel`: no real sequencer there; R4's
+  status lines not reproduced) `[SANDBOX 2026-11-13]`. Not run on davinci.
 
 ## 6. Pipeline entry points
 
