@@ -4,6 +4,6 @@ Commit under test: 8d5b16285140f1a4181c0901bf535c7da041ae39
 Mode: full
 Scope: Blocks 11-17 (tier 1, group B)
 Started (UTC): 2026-11-13 22:00
-Last update (UTC): 2026-11-13 22:38
-Phase: step 5: spec-derived tests
+Last update (UTC): 2026-11-13 22:42
+Phase: step 6: end to end and determinism
 Note: -
