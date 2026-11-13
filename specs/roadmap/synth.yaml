@@ -97,7 +97,7 @@ implementation:
     needs_hpc: false
   - id: S5
     title: "Runs on davinci"
-    summary: "One arm-S bank, two arm-R banks (pi 0 and 0.3), the five searches (S-A2 and S-A5 on each, one S-A1, D-122) of about 60 trials, and their best fits."
+    summary: "One arm-S bank, two arm-R banks (pi 0 and 0.3), five searches of about 60 trials and their best fits. Relaunched by D-132 (2026-11-13): the first run archived and deleted (I24), then fragment_duty class-bearing and one search per arm -- S-A1 and the term-only A2 and A5 on each cohort -- each refitted as a 5-seed ensemble."
     depends_on: [S4]
     needs_theory: []
     needs_hpc: true
@@ -224,3 +224,12 @@ implementation:
     needs_theory: [T2.1]
     needs_hpc: true
     jobs: ["hpc/pipeline/evaluation/jobs/eval_run.pbs"]
+  - id: I24
+    title: "the purge of a synthetic project, with the archive"
+    summary: "Before the relaunch (D-132): the last run's evaluation packed into one archive (all but the samples and the calibration bank), then its evaluation, best fits, searches, banks and the work root's state deleted by the user through the list-then-delete tool with a CODE."
+    block: 24
+    parent: S5
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
