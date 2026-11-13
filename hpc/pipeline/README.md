@@ -373,8 +373,10 @@ that every such search has an ensemble per arm for the evaluation. The stages sh
 `resources.max_cores`, and each tick fills the free cores in the graph's
 order: the first search and its best fit first. The tools that read a
 recorded data set's single search (`search_report.py`, `search_reset.py`,
-`perrow_check.py`, `purge_outputs.py`, `inputs_check.py`) refuse a synthetic
-configuration.
+`perrow_check.py`, `inputs_check.py`) refuse a synthetic configuration;
+`purge_outputs.py` takes one with its own kinds (block 24, 2026-11-13:
+`evaluation`, `best_fits`, `searches`, `banks`, `state`, and the archive of
+the evaluation's results; the run sheet "synth: the relaunch" below).
 
 ## The project folder
 
@@ -907,6 +909,62 @@ and `stats_strip` (the eight statistics of the first 4,000 simulated windows aga
 caption per figure, `data_view.npz` with every number drawn, `DATA_VIEW.json` with the counts and what it
 read. `--what data` is never part of the default plan: E3-E9 are unchanged.
 
+### synth: the relaunch -- the halt, the archive and the deletion (2026-11-13, block 24, D-132)
+
+The synthetic experiment is relaunched with `fragment_duty` class-bearing and one search per
+arm (D-132), so the last run's outputs go first. The halt as for Giulia (D-116): the
+sequencer stopped with `--stop` (the chain ends on purpose, no watchdog revives it), then the
+jobs left deleted -- the chain's (`CHAIN_NAME=pl_synth`, among them S-A2-R0's fit of the other
+arm, which ends unfinished) and the evaluation's (`ev_*`). Then `tools/purge_outputs.py`
+(blocks 10 and 24): it lists, prints a CODE, and with that CODE first packs the evaluation's
+results into one archive in your home -- everything under `runs/synth/evaluation` but the
+posterior samples and the calibration bank: the metrics, the figures, the report, the data
+overview, the jobs' logs -- re-reads it and writes its `.sha256`, and only then deletes: the
+evaluation, the five searches' best-fit folders (`runs/synth/<q>`), the five searches'
+folders (`tune_joint_synth/<q>`), the banks `synth_sim`, `synth_real_R0`, `synth_real_R3`,
+and every entry of the work root but `purge/` (the state file, the log): the next
+submission starts a new run. It refuses while any job of the chain or of the evaluation's
+ledger exists. Do NOT submit the pipeline afterwards until the relaunch's blocks (25-26)
+are pulled: a submission would rebuild the old design.
+
+```
+# R1. read-only: the chain's jobs and the evaluation's; pass line: LISTED: <n> synth job(s), the jobs above it
+n=0; while read -r j; do f=$(qstat -f "$j" 2>/dev/null | sed ':a;N;$!ba;s/\n\t//g'); nm=$(echo "$f" | awk -F' = ' '/^ *Job_Name = /{print $2; exit}'); if echo "$f" | grep -qE 'CHAIN_NAME=pl_synth(,|$)' || [[ "$nm" == ev_* ]]; then n=$((n+1)); echo "SYNTH $j $nm $(echo "$f" | awk -F' = ' '/^ *job_state = /{print $2; exit}')"; fi; done < <(qselect -u "$USER" | tr -s ' \t' '\n'); echo "LISTED: $n synth job(s)"
+
+# R2. stop the sequencer (up to 3 min); pass lines: stop: deleted the waiting sequencer job <id> ..., then stop: the
+#     sequencer has stopped (still running after 180 s: run R2 again; once stopped it says stop: no sequencer is running)
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --stop --wait 180 2>&1
+
+# R3. delete the jobs left (the chain's and the evaluation's); refused while a pl_synth job exists;
+#     pass line: DELETE DONE: <n> synth job(s) deleted
+s=(); g=(); while read -r j; do f=$(qstat -f "$j" 2>/dev/null | sed ':a;N;$!ba;s/\n\t//g'); nm=$(echo "$f" | awk -F' = ' '/^ *Job_Name = /{print $2; exit}'); echo "$f" | grep -qE 'CHAIN_NAME=pl_synth(,|$)' || [[ "$nm" == ev_* ]] || continue; if [ "$nm" = "pl_synth" ]; then s+=("$j"); else g+=("$j"); fi; done < <(qselect -u "$USER" | tr -s ' \t' '\n'); if [ ${#s[@]} -gt 0 ]; then echo "REFUSED: the sequencer job(s) ${s[*]} still there -- run R2 again first; nothing deleted"; else c=0; for j in "${g[@]}"; do qdel "$j" && { echo "DELETED $j"; c=$((c+1)); }; done; echo "DELETE DONE: $c synth job(s) deleted"; fi
+
+# R4. the check; pass lines: lock: none (no sequencer ticking), sequencer jobs (pl_synth): none queued or running,
+#     chain: ended on purpose at ... stopped, synth jobs left: 0 (a LEFT <id> ... E line is a job still exiting: R4
+#     again in a minute)
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --status 2>&1 | grep -E 'lock: |sequencer jobs|chain: ended on purpose'; n=0; while read -r j; do f=$(qstat -f "$j" 2>/dev/null | sed ':a;N;$!ba;s/\n\t//g'); nm=$(echo "$f" | awk -F' = ' '/^ *Job_Name = /{print $2; exit}'); echo "$f" | grep -qE 'CHAIN_NAME=pl_synth(,|$)' || [[ "$nm" == ev_* ]] || continue; n=$((n+1)); echo "LEFT $j $nm $(echo "$f" | awk -F' = ' '/^ *job_state = /{print $2; exit}')"; done < <(qselect -u "$USER" | tr -s ' \t' '\n'); echo "synth jobs left: $n"
+
+# P1. the code (block 24) and its test under the fake PBS (stdlib and find, about 20 s); pass line:
+#     -- 11 pass, 0 fail, 0 error, 1 skip
+cd ~/SBI && git pull && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tests/test_smoke_purge.py 2>&1 | tail -n 1
+
+# P2. the listing, deletes nothing; pass: "would ARCHIVE <m> file(s), <x> GB uncompressed, into
+#     /davinci-1/home/ldellamea/synth_eval_2026-11-13.tar.gz", the two "not archived:" lines (samples/, calbank/),
+#     the "would DELETE" lines (the evaluation, five runs/synth/<q>, five tune_joint_synth/<q>, three banks, the
+#     work root's entries), "kept: /davinci-1/home/ldellamea/pipeline/synth/purge", and CODE <8 hex>
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/purge_outputs.py --config hpc/pipeline/projects/synth/synth.json --what evaluation,best_fits,searches,banks,state --archive ~/synth_eval_2026-11-13.tar.gz 2>&1 | tee ~/purge_synth_list.txt
+
+# P3. the archive, then the deletion, with the CODE that P2 printed in place of <CODE>; in the background (the
+#     checkpoints take minutes; the log survives a closed session); prints nothing here
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && nohup python3 hpc/pipeline/tools/purge_outputs.py --config hpc/pipeline/projects/synth/synth.json --what evaluation,best_fits,searches,banks,state --archive ~/synth_eval_2026-11-13.tar.gz --confirm <CODE> > ~/purge_synth_delete.log 2>&1 &
+
+# P4. read-only, any time after P3; pass lines: the log's "ARCHIVED <m> file(s) ..." and "PURGE DONE: <k> target(s)
+#     deleted, ..., archive ... the next submission starts a new run"; the archive's member count <m>; its
+#     checksum "OK"; the listing with only "absent" lines and "in all: 0 target(s), 0 file(s), 0.00 GB" (while
+#     P3 still runs: DELETED lines so far)
+tail -n 6 ~/purge_synth_delete.log; tar tzf ~/synth_eval_2026-11-13.tar.gz | wc -l; (cd ~ && sha256sum -c synth_eval_2026-11-13.tar.gz.sha256); cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/purge_outputs.py --config hpc/pipeline/projects/synth/synth.json --what evaluation,best_fits,searches,banks,state 2>&1 | grep -E "REFUSED|absent|would DELETE|in all"
+```
+
 ## Tests
 
 ```
@@ -920,7 +978,7 @@ python3 hpc/pipeline/tests/test_smoke_block7b.py       # block 7's node faults, 
 python3 hpc/pipeline/tests/test_smoke_block7c.py       # D-111: the environment's fallback, environment faults, the driver's replacement, the watchdog; D-113's stage_job_units; about 3 min, the same
 python3 hpc/pipeline/tests/test_smoke_report.py        # tools/search_report.py, a few seconds, stdlib
 python3 hpc/pipeline/tests/test_smoke_reset.py         # tools/search_reset.py, about 20 s, stdlib and the fake PBS
-python3 hpc/pipeline/tests/test_smoke_purge.py         # block 10, tools/purge_outputs.py, about 15 s, stdlib and the fake PBS
+python3 hpc/pipeline/tests/test_smoke_purge.py         # blocks 10 and 24, tools/purge_outputs.py, about 20 s, stdlib and the fake PBS
 python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, a few seconds, numpy (with torch, sbi and zuko also the real-flow oracle)
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # block 9, tools/inputs_check.py, about 1 s, numpy and the Sbi-extractor checkout (SBIX_CLONE)

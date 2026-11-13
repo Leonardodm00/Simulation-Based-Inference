@@ -66,6 +66,10 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   check J37 in `hpc/joint/stage4/smoke_test_joint_tune.py`, and the changes
   to `hpc/pipeline/` listed in its entry; blocks 19-22's
   `hpc/pipeline/evaluation/` once built (drafted, sec. 8 Q-E1..Q-E6)
+- the synthetic experiment's relaunch (D-132; blocks 24-27; added
+  2026-11-13): the purge of a synthetic project with its archive (block
+  24, `hpc/pipeline/tools/purge_outputs.py`), and the changes blocks 25-27
+  make, listed per block in sec. 5 as they are written
 
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
@@ -4255,6 +4259,109 @@ Claude; Confirmed: no]
   looked at by Claude. The whole suite from a fresh reduced project in a
   clean clone of `bb37614`: 17 of 18 checks pass, the convergence check
   skipped, in 319 s `[SANDBOX 2026-11-12]`. Not run on davinci.
+
+### Block 24: the purge of a synthetic project, with the archive (added 2026-11-13; D-132; roadmap synth, step S5)
+
+The deletion of everything a synthetic project's last run made, before
+its relaunch (D-132: "remove everything from the last session of
+synthetic data generation and optimization and training"; "Archive
+results, delete rest"). Block 10's tool, extended: the same
+list-then-delete discipline with a CODE (Claude never deletes data; the
+user deletes through the tool), five kinds for a configuration of kind
+`synthetic`, and an archive of the evaluation's results written and
+verified before anything is deleted. [the user's choices of 2026-11-13
+(D-132); the targets, the archive's content and the refusals proposed by
+Claude; Confirmed: no]
+
+- Command: `python3 hpc/pipeline/tools/purge_outputs.py --config
+  <synth.json> --what <kinds> [--eval-config <file>] [--archive
+  <file.tar.gz> | --no-archive] [--confirm <CODE>]`, on a login node,
+  stdlib only. For a configuration of kind `synthetic`, `<kinds>` is a
+  comma-separated subset of `evaluation`, `best_fits`, `searches`,
+  `banks`, `state`; block 10's kinds are refused for it, and these five
+  for any other kind (exit 2). `--eval-config` defaults to
+  `<the configuration's folder>/<dataset>_eval.json`; it must load when
+  `evaluation` is named or when the file exists (exit 2 otherwise), and
+  its ledger enters the jobs check whatever the kinds; `--eval-config`,
+  `--archive` and `--no-archive` are refused for any other kind (exit 2).
+- Targets, from the configurations, listed and deleted in this order:
+  `evaluation` -- the evaluation's `out_root`; `best_fits` --
+  `<runs_root>/<q>` for each search q of `synthetic.searches` (the run
+  view's `runs_root`: the best fit `<dataset>_best` and the other arm's
+  `<dataset>_best_alt`, block 18); `searches` -- `<tune_root>/<q>` for
+  each q (the run view's `tune_root`: the campaign folder and any rounds
+  set aside); `banks` -- `bank_dir` of `sim` and of each real bank
+  (`<banks_root>/<dataset>_sim`, `<banks_root>/<dataset>_real_<name>`);
+  `state` -- every entry of the work root except `purge/`, by name (the
+  state file and its `.prev`, the log, the reports, the sequencer's
+  folders), files allowed. Never touched, printed as kept:
+  `<work_root>/purge` (the purge records). A missing state file is a
+  fresh start (`state.py`), so after `state` the next submission starts a
+  new run.
+- The archive (`--archive <path>`, `~` expanded): required when
+  `evaluation` is named and its `out_root` exists, unless `--no-archive`
+  (exit 2 otherwise); every regular file under `out_root` except its
+  top-level `samples/` and `calbank/` subtrees, member names relative to
+  `out_root`'s parent (so they start with its folder name), sorted. The
+  listing prints its file count, bytes (uncompressed) and the two skipped
+  subtrees' counts and bytes. Exit 2: the path exists; it lies under
+  `out_root` or under a target; its folder does not exist; `--archive`
+  without `evaluation`; `--archive` with `--no-archive`. Exit 4 (refused):
+  a symbolic link or a non-regular file among the members' folders. With
+  `--confirm`, before the first deletion: written to `<path>.tmp` (gzip,
+  level 6), re-read and every member's name and size compared with the
+  listing, renamed to `<path>`, and `<path>.sha256` written (`<sha256>
+  <name>`); a failure prints `PURGE ARCHIVE FAILED: <why>; nothing
+  deleted`, removes the `.tmp` and exits 5.
+- The CODE: block 10's, with the archive's path and its members (name,
+  size, mtime in whole seconds) added to the canonical text when an
+  archive is asked; block 10's canonical text unchanged otherwise.
+- Refused (exit 4, nothing deleted), besides block 10's refusals: a job of
+  the evaluation's ledger (`<out_root>/jobs/ledger.json`) not finished per
+  the scheduler. A target that is a symbolic link or resolves outside its
+  root is refused as in block 10 (for `evaluation` the root is
+  `out_root`'s parent).
+- `--confirm <CODE>`: the record `<work_root>/purge/PURGE_<utc>.json`
+  (block 10's, with `archive`: its path, member count, bytes, result and
+  sha256); the archive; then each present target removed in the listing's
+  order (`shutil.rmtree` for a folder, `os.remove` for a file), one
+  `DELETED` line each; the pass line `PURGE DONE: <k> target(s) deleted,
+  <n> file(s), <x> GB; archive <path> (<m> file(s), sha256 <16 hex>)`, the
+  archive clause `no archive` when none was written, and `; the work root
+  keeps purge/ only: the next submission starts a new run` when `state`
+  was named (exit 0); `PURGE INCOMPLETE: ...` (exit 5) as in block 10.
+  Block 10's pass line, kinds and behaviour for other configurations are
+  unchanged.
+- Test oracles (`tests/test_smoke_purge.py`, checks T24a-T24e; a reduced
+  synthetic project from `test_smoke_synthetic._small` with two searches
+  and an evaluation configuration, under the fake PBS): the trees -- the
+  three banks with a record and its `.sha256`, each search's campaign
+  folder with a ledger and a set-aside folder, each search's best fit and
+  other-arm best fit, the evaluation (samples, calbank, metrics, figures,
+  data, jobs with a ledger of finished jobs), the work root (the state
+  file, its `.prev`, the log, a reports folder, an older purge record) --
+  and decoys (another data set's bank, a file beside the banks): T24a the
+  listing names the targets in the documented order with `find`'s counts,
+  the archive's members (none under `samples/` or `calbank/`) and the
+  skipped subtrees, prints a CODE and deletes nothing; the CODE equals the
+  formula computed here, is the same twice, and changes when a result
+  file changes; T24b with the CODE: the archive's members are the
+  listing's names and sizes with the listing's bytes, its `.sha256`
+  matches, every target is gone, `purge/` keeps the older record unchanged
+  and a new one `done`, the decoys are unchanged, the pass line; a second
+  listing finds every target absent and asks for no archive; T24c refused
+  with exit 2 and nothing written: `evaluation` without `--archive`; an
+  archive path that exists, under `out_root`, under a target, in a missing
+  folder; `--archive` without `evaluation`; `--archive` with
+  `--no-archive`; block 10's kinds on the synthetic configuration and the
+  synthetic kinds on block 10's; T24d refused with exit 4 and nothing
+  deleted: a live job in the evaluation's ledger, a wrong CODE, a symbolic
+  link among the archive's members; T24e an archive whose writing fails
+  half-way (the tar writer raising after one member, in-process): `PURGE
+  ARCHIVE FAILED`, exit 5, nothing deleted, no `.tmp` and no archive
+  left, the record `archive failed`. Mutations: `code` (a constant
+  CODE) and the new `evaljobs` (the ledger check off: T24d's live job does
+  not refuse) each make a check FAIL.
 
 ## 6. Pipeline entry points
 

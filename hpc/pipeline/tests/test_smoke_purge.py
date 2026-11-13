@@ -42,11 +42,46 @@ Checks
     MUTATION=chain      the chain scan off: test_edge_cases (a job naming
                         the chain does not refuse) must FAIL
 
+Block 24 (added 2026-11-13; D-132): a reduced synthetic project
+(test_smoke_synthetic._small, searches S-A1 and S-A2-R0 with the other
+arm's fit) and its evaluation configuration, with its three banks, two
+searches (one with a set-aside folder), three best fits, an evaluation
+(samples, calbank, metrics, figures, data, jobs) and a work root (the
+state file and its .prev, the log, a reports folder, an older purge
+record); decoys: another data set's bank, a file beside the banks.
+    test_t24a_listing   the targets in the documented order with `find`'s
+                        counts, the archive's members (none under samples/
+                        or calbank/) and the skipped subtrees, kept purge/;
+                        the CODE is the SPEC's formula computed here, the
+                        same twice, another once a result file changes;
+                        nothing deleted
+    test_t24b_confirm   --confirm through the command line: the archive
+                        holds the listing's members with the files' bytes,
+                        its .sha256 matches, every target gone, purge/ keeps
+                        the older record and a new one done, the decoys and
+                        the configurations unchanged, the pass line; a
+                        second listing: every target absent, no archive
+    test_t24c_arguments exit 2, nothing written: evaluation without
+                        --archive; an archive that exists, under out_root,
+                        under a target, in a missing folder; --archive
+                        without evaluation, with --no-archive; block 10's
+                        kinds here and these kinds on block 10's project
+    test_t24d_refusals  exit 4, nothing deleted: a live job of the
+                        evaluation's ledger, a wrong CODE, a symbolic link
+                        among the archive's members
+    test_t24e_archive_fails the tar writer raising after one member: exit 5,
+                        PURGE ARCHIVE FAILED, nothing deleted, no archive or
+                        .tmp left, the record "archive failed"
+    MUTATION=evaljobs   the evaluation's ledger check off: test_t24d (a live
+                        job does not refuse) must FAIL; MUTATION=code fails
+                        test_t24a and test_t24d as well
+
 Run
     python3 hpc/pipeline/tests/test_smoke_purge.py
     MUTATION=code python3 hpc/pipeline/tests/test_smoke_purge.py
     MUTATION=chain python3 hpc/pipeline/tests/test_smoke_purge.py
-        About 15 s each; stdlib, `find` and the fake PBS.
+    MUTATION=evaljobs python3 hpc/pipeline/tests/test_smoke_purge.py
+        About 20 s each; stdlib, `find` and the fake PBS.
 
 Pure ASCII, LF only; stdlib only.
 """
@@ -79,18 +114,22 @@ import pbs as PBS                   # noqa: E402
 import state as ST                  # noqa: E402
 import purge_outputs as PO          # noqa: E402
 import test_smoke_report as TR      # noqa: E402
+import test_smoke_synthetic as TS   # noqa: E402  (block 24: the reduced synthetic project)
 
 PYTHON = sys.executable
 TOOL = os.path.join(_TOOLS, "purge_outputs.py")
 WHAT = "search,best_fit,sim_bank"
 ASIDE = "S-A1_set_aside_2026-10-19T161735Z"
+SWHAT = "evaluation,best_fits,searches,banks,state"      # block 24
 
 if MUTATION == "code":
-    PO.code_of = lambda items: "deadbeef"
+    PO.code_of = lambda items, extra=None: "deadbeef"
 elif MUTATION == "chain":
     PO.names_chain = lambda raw, chain: False
+elif MUTATION == "evaljobs":
+    PO.eval_jobs_check = lambda ecfg, ev_submit, pbs_module=None: ([], "the ledger check off")
 elif MUTATION:
-    raise SystemExit("unknown MUTATION %r; known: code, chain" % MUTATION)
+    raise SystemExit("unknown MUTATION %r; known: code, chain, evaljobs" % MUTATION)
 
 
 # --------------------------------------------------------------- helpers ---
@@ -518,6 +557,356 @@ def test_edge_cases():
         assert rc == 2 and out.startswith("PURGE: the configuration "), out
         untouched("the argument errors")
     finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+# ------------------------------------------------- block 24: synthetic ---
+
+def _eval_json(root, out_root):
+    """A reduced evaluation configuration at the default path
+    <root>/synth_eval.json (test_smoke_evaluation._eval_config's values)."""
+    d = {"out_root": out_root, "seed": 4242, "n_post": 40, "batch_rows": 16,
+         "oracle_tol": 1e-4, "ppc_rows": 3, "ppc_draws": 4,
+         "cal_glob": os.path.join(out_root, "calbank", "shard_*.npz"), "cal_n": 20,
+         "cal_shards": 2, "cal_seed": 55, "lc2st_null": 5, "lc2st_eval_draws": 10,
+         "bootstrap_n": 200, "level": 0.95, "dpi": 60, "formats": ["png"], "ncpus": 2,
+         "jobs": {"queue": "test", "calbank": {"ncpus": 1, "mem": "1gb", "walltime": "00:10:00"},
+                  "sample": {"ncpus": 2, "mem": "2gb", "walltime": "00:20:00"},
+                  "report": {"ncpus": 2, "mem": "2gb", "walltime": "00:30:00"},
+                  "data": {"ncpus": 1, "mem": "1gb", "walltime": "00:10:00"}},
+         "data_view": {"sim_shards": 2, "examples_per_condition": 1, "sim_examples": 3,
+                       "zoom_s": 4.0, "bins": 12}}
+    path = os.path.join(root, "synth_eval.json")
+    _write(path, json.dumps(d, indent=1, sort_keys=True))
+    return path
+
+
+def _synth_fixture(root):
+    """Block 24's project (module docstring); returns (config path, eval
+    path, cfg, the targets in the documented order, out_root)."""
+    path, _d = TS._small(root, searches=[
+        {"name": "S-A1", "campaign": "S-A1", "real": "R0", "alt_best_fit": False},
+        {"name": "S-A2-R0", "campaign": "S-A2", "real": "R0", "alt_best_fit": True}])
+    cfg = C.load_config(path, synthetic_ok=True)
+    p = cfg.data["paths"]
+    ev = os.path.join(p["runs_root"], "evaluation")
+    epath = _eval_json(root, ev)
+    banks = []
+    for b in ("sim", "R0", "R3"):
+        bd = os.path.join(p["banks_root"], "synth_sim" if b == "sim" else "synth_real_" + b)
+        _write(os.path.join(bd, "shard_0000.npz"), os.urandom(700))
+        _write(os.path.join(bd, "shard_0000.json"), '{"rows": 8}')
+        _write(os.path.join(bd, "BANK_RECORD.json"), '{"bank": "%s"}' % b)
+        _sha_line(os.path.join(bd, "BANK_RECORD.json"))
+        banks.append(bd)
+    _write(os.path.join(p["banks_root"], "giulia_sim", "shard_0000.npz"), os.urandom(100))
+    _write(os.path.join(p["banks_root"], "notes.txt"), "kept: beside the banks\n")
+    for q, camp in (("S-A1", "S-A1"), ("S-A2-R0", "S-A2")):
+        c = os.path.join(p["tune_root"], q, camp)
+        _write(os.path.join(c, "trials", "t0.json"), '{"status": "ok"}')
+        _write(os.path.join(c, "trials", "t1.json"), '{"status": "failed"}')
+        _write(os.path.join(c, "runs", "r0", "ckpt.pt"), os.urandom(400))
+    _write(os.path.join(p["tune_root"], "S-A1", "S-A1_set_aside_2026-11-01T000000Z", "trials",
+                        "x.json"), '{"status": "ok"}')
+    _write(os.path.join(p["runs_root"], "S-A1", "synth_best", "member_seed1", "m.json"), '{"nll": 1}')
+    _write(os.path.join(p["runs_root"], "S-A2-R0", "synth_best", "member_seed1", "m.json"),
+           '{"nll": 2}')
+    _write(os.path.join(p["runs_root"], "S-A2-R0", "synth_best_alt", "member_seed1", "m.json"),
+           '{"nll": 3}')
+    _write(os.path.join(ev, "samples", "S-A1_A1_sim.npz"), os.urandom(900))
+    _write(os.path.join(ev, "samples", "S-A1_A1_sample.json"), '{"s": 1}')
+    _write(os.path.join(ev, "calbank", "shard_0000.npz"), os.urandom(800))
+    _write(os.path.join(ev, "metrics", "METRICS.json"), '{"ensembles": {}}')
+    _write(os.path.join(ev, "metrics", "paired_S-A2-R0_R0.json"), '{"Dbar": -0.1}')
+    _write(os.path.join(ev, "metrics", "paired_S-A2-R0_R0.npz"), os.urandom(300))
+    _write(os.path.join(ev, "figures", "FIGURES.md"), "# figures\n")
+    _write(os.path.join(ev, "figures", "across", "dbar.png"), os.urandom(250))
+    _write(os.path.join(ev, "data", "figures", "stats_pca.png"), os.urandom(150))
+    _write(os.path.join(ev, "data", "DATA_VIEW.json"), '{"n": 1}')
+    _write(os.path.join(ev, "REPORT_COMPLETE.json"), '{"done": true}')
+    _write(os.path.join(ev, "jobs", "logs", "report.log"), "EVAL REPORT OK\n")
+    _write(os.path.join(ev, "jobs", "ledger.json"),
+           json.dumps({"report": {"job_id": "999990.cluster"},
+                       "sample:S-A1:A1": {"job_id": "999991.cluster"}}))
+    wr = p["work_root"]
+    st = ST.State.new(wr, "synth", path, cfg.sha256)
+    st.save()
+    st.save()                                           # state.json and its .prev
+    _write(os.path.join(wr, "pipeline.log"), "2026-11-12 18:00:00 tick\n")
+    _write(os.path.join(wr, "reports", "bank_sim.txt"), "ok\n")
+    _write(os.path.join(wr, "purge", "PURGE_2026-11-02T100000Z.json"), '{"schema": "purge_outputs/1"}')
+    targets = ([ev]
+               + [os.path.join(p["runs_root"], q) for q in ("S-A1", "S-A2-R0")]
+               + [os.path.join(p["tune_root"], q) for q in ("S-A1", "S-A2-R0")]
+               + banks
+               + [os.path.join(wr, n) for n in ("pipeline.log", "reports", "state.json",
+                                                 "state.json.prev")])
+    return path, epath, cfg, targets, ev
+
+
+def _members_by_find(ev):
+    """[[arcname, size, mtime]] of the archive, by `find`: every regular
+    file under ev but its top-level samples/ and calbank/, sorted."""
+    proc = subprocess.run(["find", ev, "-type", "f", "-printf", "%P %s %T@\n"],
+                          stdout=subprocess.PIPE, universal_newlines=True, check=True)
+    out = []
+    base = os.path.basename(os.path.normpath(ev))
+    for ln in proc.stdout.splitlines():
+        rel, s, t = ln.rsplit(" ", 2)
+        if rel.split("/")[0] in ("samples", "calbank"):
+            continue
+        out.append([base + "/" + rel, int(s), int(float(t))])
+    return sorted(out)
+
+
+def _deleted_lines(out):
+    return [ln.split("] ", 1)[1].split(":")[0] for ln in out.splitlines()
+            if ln.startswith("  would DELETE [")]
+
+
+def test_t24a_listing():
+    root = tempfile.mkdtemp(prefix="purge_t24a_")
+    try:
+        path, _epath, cfg, targets, ev = _synth_fixture(root)
+        env = _env(root)
+        arch = os.path.join(root, "archive", "synth_eval.tar.gz")
+        os.makedirs(os.path.dirname(arch))
+        before = _digests(root, skip=[os.path.join(root, "spool")])
+        rc, out = _run(["--config", path, "--what", SWHAT, "--archive", arch], env)
+        assert rc == 0, out
+        assert _deleted_lines(out) == targets, (_deleted_lines(out), targets)
+        for t in targets:
+            n, b = (_find(t)[:2] if os.path.isdir(t) else (1, os.lstat(t).st_size))
+            assert ("would DELETE [" in out and "] %s: %d file(s), %.2f GB" % (t, n, b / 1e9) in out), (t, out)
+        members = _members_by_find(ev)
+        assert len(members) == 10, members
+        assert ("  would ARCHIVE %d file(s), %.2f GB uncompressed, into %s"
+                % (len(members), sum(m[1] for m in members) / 1e9, arch)) in out, out
+        assert "    not archived: samples/ (2 file(s)" in out and \
+            "    not archived: calbank/ (1 file(s)" in out, out
+        assert "  kept: %s" % os.path.join(cfg.data["paths"]["work_root"], "purge") in out, out
+        assert "the next submission starts a new run" in out, out
+        assert "  in all: 12 target(s)" in out, out
+        # the CODE by the SPEC's formula, here
+        items = []
+        for t in targets:
+            n, b, newest = (_find(t) if os.path.isdir(t)
+                            else (1, os.lstat(t).st_size, int(os.lstat(t).st_mtime)))
+            kind = ("evaluation" if t == ev else "best_fits" if os.sep + "runs_root" + os.sep in t
+                    else "searches" if os.sep + "tune_root" + os.sep in t
+                    else "banks" if os.sep + "banks_root" + os.sep in t else "state")
+            items.append({"kind": kind, "path": t, "present": True, "files": n, "bytes": b,
+                          "newest": newest})
+        canon = json.dumps({"targets": items, "extra": {"archive": arch, "members": members}},
+                           sort_keys=True)
+        want = hashlib.sha256(canon.encode("ascii")).hexdigest()[:8]
+        code = _code(out)
+        assert code == want, (code, want)
+        rc2, out2 = _run(["--config", path, "--what", SWHAT, "--archive", arch], env)
+        assert rc2 == 0 and _code(out2) == code, out2
+        assert _digests(root, skip=[os.path.join(root, "spool")]) == before, "the listing wrote"
+        time.sleep(1.1)
+        _write(os.path.join(ev, "metrics", "METRICS.json"), '{"ensembles": {"x": 1}}')
+        rc3, out3 = _run(["--config", path, "--what", SWHAT, "--archive", arch], env)
+        assert rc3 == 0 and _code(out3) != code, "a changed result file left the CODE as it was"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_t24b_confirm():
+    root = tempfile.mkdtemp(prefix="purge_t24b_")
+    try:
+        path, _epath, cfg, targets, ev = _synth_fixture(root)
+        env = _env(root)
+        wr = cfg.data["paths"]["work_root"]
+        arch = os.path.join(root, "archive", "synth_eval.tar.gz")
+        os.makedirs(os.path.dirname(arch))
+        members = _members_by_find(ev)
+        base = os.path.dirname(ev)
+        content = {}
+        for m in members:
+            with open(os.path.join(base, m[0]), "rb") as fh:
+                content[m[0]] = fh.read()
+        counts = [(_find(t)[:2] if os.path.isdir(t) else (1, os.lstat(t).st_size)) for t in targets]
+        tot_n, tot_b = sum(c[0] for c in counts), sum(c[1] for c in counts)
+        before = _digests(root, skip=[os.path.join(root, "spool")])
+        rc, out = _run_cli(["--config", path, "--what", SWHAT, "--archive", arch], env)
+        code = _code(out)
+        rc, out = _run_cli(["--config", path, "--what", SWHAT, "--archive", arch,
+                            "--confirm", code], env)
+        assert rc == 0, out
+        import tarfile
+        with tarfile.open(arch, "r:gz") as tf:
+            got = [(ti.name, ti.size) for ti in tf.getmembers()]
+            data = dict((ti.name, tf.extractfile(ti).read()) for ti in tf.getmembers())
+        assert got == [(m[0], m[1]) for m in members], (got, members)
+        assert data == content, "the archive's bytes are not the files'"
+        with open(arch, "rb") as fh:
+            sha = hashlib.sha256(fh.read()).hexdigest()
+        with open(arch + ".sha256") as fh:
+            assert fh.read() == "%s  %s\n" % (sha, os.path.basename(arch))
+        for t in targets:
+            assert not os.path.lexists(t), "still there: %s" % t
+        assert sorted(os.listdir(wr)) == ["purge"], os.listdir(wr)
+        recs = sorted(os.listdir(os.path.join(wr, "purge")))
+        assert len(recs) == 2 and recs[0] == "PURGE_2026-11-02T100000Z.json", recs
+        after = _digests(root, skip=[os.path.join(root, "spool")])
+        old = os.path.join("work_root", "purge", "PURGE_2026-11-02T100000Z.json")
+        assert after[old] == before[old], "the older record changed"
+        for k, v in before.items():
+            if k.startswith(("banks_root" + os.sep + "giulia_sim", "banks_root" + os.sep + "notes")) \
+                    or k in ("synth.json", "synth_eval.json"):
+                assert after.get(k) == v, "a decoy or a configuration changed: %s" % k
+        with open(os.path.join(wr, "purge", recs[1])) as fh:
+            rec = json.load(fh)
+        assert rec["status"] == "done" and rec["code"] == code, rec
+        assert rec["archive"]["result"] == "written" and rec["archive"]["sha256"] == sha, rec
+        assert rec["archive"]["members"] == len(members), rec
+        assert all(t["result"] == "deleted" for t in rec["targets"]), rec["targets"]
+        assert ("PURGE DONE: 12 target(s) deleted, %d file(s), %.2f GB; archive %s (%d file(s), "
+                "sha256 %s); the work root keeps purge/ only: the next submission starts a new run"
+                % (tot_n, tot_b / 1e9, arch, len(members), sha[:16])) in out, (tot_n, out)
+        assert "ARCHIVED %d file(s)" % len(members) in out, out
+        rc2, out2 = _run(["--config", path, "--what", SWHAT], env)
+        assert rc2 == 0 and "would DELETE" not in out2 and "would ARCHIVE" not in out2, out2
+        assert "  in all: 0 target(s), 0 file(s), 0.00 GB" in out2, out2
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_t24c_arguments():
+    root = tempfile.mkdtemp(prefix="purge_t24c_")
+    try:
+        path, _epath, cfg, _targets, ev = _synth_fixture(root)
+        env = _env(root)
+        p = cfg.data["paths"]
+        adir = os.path.join(root, "archive")
+        os.makedirs(adir)
+        exists = os.path.join(adir, "old.tar.gz")
+        _write(exists, "x")
+        before = _digests(root, skip=[os.path.join(root, "spool")])
+        cases = [
+            ("no --archive", ["--what", SWHAT], "needs --archive"),
+            ("exists", ["--what", SWHAT, "--archive", exists], "exists"),
+            ("under out_root", ["--what", SWHAT, "--archive", os.path.join(ev, "a.tar.gz")],
+             "lies under"),
+            ("under a target", ["--what", SWHAT, "--archive",
+                                os.path.join(p["runs_root"], "S-A1", "a.tar.gz")], "lies under"),
+            ("missing folder", ["--what", SWHAT, "--archive", os.path.join(adir, "no", "a.tar.gz")],
+             "does not exist"),
+            ("without evaluation", ["--what", "banks", "--archive",
+                                    os.path.join(adir, "a.tar.gz")], "needs --what evaluation"),
+            ("both", ["--what", SWHAT, "--archive", os.path.join(adir, "a.tar.gz"), "--no-archive"],
+             "exclude each other"),
+            ("block 10's kinds", ["--what", "search,best_fit"], "for a synthetic project"),
+        ]
+        for name, args, text in cases:
+            rc, out = _run(["--config", path] + args, env)
+            assert rc == 2 and text in out, (name, rc, out)
+        # these kinds, and --archive, on block 10's project
+        r10 = os.path.join(root, "p10")
+        os.makedirs(r10)
+        path10, _cfg10, _t10, _sha10 = _fixture(r10)
+        rc, out = _run(["--config", path10, "--what", "banks,state"], env)
+        assert rc == 2 and "for this project" in out, out
+        rc, out = _run(["--config", path10, "--what", WHAT, "--archive",
+                        os.path.join(adir, "a.tar.gz")], env)
+        assert rc == 2 and "are for a synthetic project" in out, out
+        after = _digests(root, skip=[os.path.join(root, "spool"), r10])
+        assert after == before, "an argument error wrote or deleted"
+        assert sorted(os.listdir(adir)) == ["old.tar.gz"], os.listdir(adir)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_t24d_refusals():
+    root = tempfile.mkdtemp(prefix="purge_t24d_")
+    try:
+        path, _epath, cfg, _targets, ev = _synth_fixture(root)
+        env = _env(root)
+        arch = os.path.join(root, "archive", "a.tar.gz")
+        os.makedirs(os.path.dirname(arch))
+        before = _digests(root, skip=[os.path.join(root, "spool")])
+
+        def untouched(what):
+            assert _digests(root, skip=[os.path.join(root, "spool")]) == before, \
+                "%s: something changed" % what
+            assert not os.path.lexists(arch), "%s: an archive was written" % what
+        # (a) a live job of the evaluation's ledger
+        led = os.path.join(ev, "jobs", "ledger.json")
+        with open(led) as fh:
+            ledger_text = fh.read()
+        jid = _qsub(env, root, "ev_s0a", 30)
+        _write(led, json.dumps({"report": {"job_id": "999990.cluster"},
+                                "sample:S-A1:A1": {"job_id": jid}}))
+        try:
+            rc, out = _run(["--config", path, "--what", SWHAT, "--archive", arch], env)
+            assert rc == 4 and ("the evaluation's job %s (sample:S-A1:A1)" % jid) in out and \
+                "PURGE REFUSED: the pipeline's jobs must have ended first" in out, out
+        finally:
+            subprocess.run(["qdel", jid], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            _write(led, ledger_text)
+        untouched("a live job of the ledger")
+        # (b) a wrong CODE
+        rc, out = _run(["--config", path, "--what", SWHAT, "--archive", arch,
+                        "--confirm", "deadbeef"], env)
+        assert rc == 4 and "PURGE REFUSED: the CODE deadbeef does not match" in out, out
+        untouched("a wrong CODE")
+        # (c) a symbolic link among the archive's members
+        link = os.path.join(ev, "figures", "link.png")
+        os.symlink(os.path.join(ev, "figures", "FIGURES.md"), link)
+        try:
+            rc, out = _run(["--config", path, "--what", SWHAT, "--archive", arch], env)
+            assert rc == 4 and "is a symbolic link" in out and "[archive]" in out, out
+        finally:
+            os.remove(link)
+        untouched("a link among the members")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_t24e_archive_fails():
+    import tarfile
+    root = tempfile.mkdtemp(prefix="purge_t24e_")
+    real_open = PO._TAR_OPEN
+    try:
+        path, _epath, cfg, targets, _ev = _synth_fixture(root)
+        env = _env(root)
+        wr = cfg.data["paths"]["work_root"]
+        arch = os.path.join(root, "archive", "a.tar.gz")
+        os.makedirs(os.path.dirname(arch))
+        rc, out = _run(["--config", path, "--what", SWHAT, "--archive", arch], env)
+        code = _code(out)
+        before = _digests(root, skip=[os.path.join(root, "spool"), os.path.join(wr, "purge")])
+
+        def failing_open(name, mode, **kw):
+            tf = tarfile.open(name, mode, **kw)
+            real_add, calls = tf.add, [0]
+
+            def add(*a, **k):
+                calls[0] += 1
+                if calls[0] > 1:
+                    raise OSError("No space left on device (the test)")
+                return real_add(*a, **k)
+            tf.add = add
+            return tf
+        PO._TAR_OPEN = failing_open
+        rc, out = _run(["--config", path, "--what", SWHAT, "--archive", arch,
+                        "--confirm", code], env)
+        assert rc == 5 and "PURGE ARCHIVE FAILED: No space left on device (the test); nothing " \
+            "deleted" in out, out
+        assert not os.path.lexists(arch) and not os.path.lexists(arch + ".tmp"), \
+            os.listdir(os.path.dirname(arch))
+        after = _digests(root, skip=[os.path.join(root, "spool"), os.path.join(wr, "purge")])
+        assert after == before, "a failed archive deleted something"
+        for t in targets:
+            assert os.path.lexists(t), "gone after a failed archive: %s" % t
+        recs = sorted(os.listdir(os.path.join(wr, "purge")))
+        with open(os.path.join(wr, "purge", recs[-1])) as fh:
+            rec = json.load(fh)
+        assert rec["status"] == "archive failed" and rec["archive"]["result"].startswith("failed"), rec
+    finally:
+        PO._TAR_OPEN = real_open
         shutil.rmtree(root, ignore_errors=True)
 
 
