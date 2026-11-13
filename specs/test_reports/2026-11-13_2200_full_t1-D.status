@@ -4,6 +4,6 @@ Commit under test: 8d5b16285140f1a4181c0901bf535c7da041ae39
 Mode: full
 Scope: Blocks 24-26 (tier 1, group D)
 Started (UTC): 2026-11-13 22:00
-Last update (UTC): 2026-11-13 22:12
-Phase: step 2: environment installed
+Last update (UTC): 2026-11-13 22:33
+Phase: step 5: spec-derived tests (steps 3-4 done but the slow regression suites)
 Note: -
