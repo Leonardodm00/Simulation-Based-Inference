@@ -57,6 +57,8 @@ Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
 import glob
+import json
+import numbers
 import os
 import re
 import time
@@ -69,6 +71,68 @@ COMPLETE_FILE = "SEARCH_COMPLETE.json"
 TERMINAL = ("ok", "failed", "killed")
 
 _PROBE_LINE = re.compile(r"^PROBE OK:")
+
+# The identity's fields that come from the configuration (block 7, amendment
+# (j)): K_cfg, in the order a refusal names them. The bank's fields
+# (split_hash, contract_digest, the counts, W, d_theta, latent_kind) are not
+# here: the start's check of pipeline_rounds.json covers them.
+K_CFG = ("split_fracs", "split_seed", "campaign", "shape_anchors", "space_overrides", "flow")
+
+
+def config_identity(cfg):
+    """{K_cfg field: the value the configuration gives} (a run view's
+    `search.campaign` on a synthetic data set)."""
+    d = cfg.data
+    s = d["search"]
+    return {"split_fracs": d["split"]["fractions"], "split_seed": s["train_seed"],
+            "campaign": s["campaign"], "shape_anchors": s["shape_anchors"],
+            "space_overrides": s["space_overrides"], "flow": s["flow"]}
+
+
+def _is_number(v):
+    return isinstance(v, numbers.Real) and not isinstance(v, bool)
+
+
+def same_value(a, b):
+    """Amendment (j)'s comparison: numbers as floats, lists element by
+    element in order, dicts key by key (a key on one side only differs);
+    anything else by ==."""
+    if _is_number(a) and _is_number(b):
+        return float(a) == float(b)
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(same_value(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return (set(a) == set(b)) and all(same_value(a[k], b[k]) for k in a)
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    return a == b
+
+
+def _show(v):
+    try:
+        return json.dumps(v, sort_keys=True)
+    except (TypeError, ValueError):
+        return repr(v)
+
+
+def identity_diffs(ident, cfg):
+    """[(key, value in the search's identity, value of the configuration)]
+    for every K_cfg field that differs, in K_CFG's order."""
+    now = config_identity(cfg)
+    return [(k, ident.get(k), now[k]) for k in K_CFG if not same_value(ident.get(k), now[k])]
+
+
+def identity_refusal(ident, cfg):
+    """The REFUSE text of amendment (j), or None when the configuration
+    still gives the identity's K_cfg values."""
+    diffs = identity_diffs(ident, cfg)
+    if not diffs:
+        return None
+    return ("REFUSE: the configuration no longer matches this search's identity (%s); a search "
+            "is not continued under another identity -- restore the value(s), or reset the "
+            "search first"
+            % "; ".join("%s: search %s, configuration %s" % (k, _show(old), _show(new))
+                        for k, old, new in diffs))
 
 
 class SearchStage(Stage):
@@ -827,7 +891,12 @@ class SearchStage(Stage):
     def start(self, cfg, st, pbs):
         sub = st["sub"]
         log_path = self._log_path(cfg)
-        self._identity(cfg, st, log_path)
+        ident = self._identity(cfg, st, log_path)
+        # amendment (j): the identity, read from the state or just computed,
+        # against the configuration, before anything is written or submitted
+        refusal = identity_refusal(ident, cfg)
+        if refusal:
+            raise RuntimeError(refusal)
         self._rounds_file(cfg, st, pbs.log)
         self._refresh_from_ledger(cfg, st, pbs.log)
         if sub.get("ended_by"):
@@ -846,6 +915,16 @@ class SearchStage(Stage):
         log = pbs.log
         log_path = self._log_path(cfg)
         s = cfg.data["search"]
+
+        # amendment (j): a configuration accepted while the search runs must
+        # still give its identity; else the stage fails with the refusal before
+        # anything is proposed or submitted in this call, pipeline_rounds.json
+        # is not rewritten, and the stage's jobs stay in its record
+        refusal = identity_refusal(sub["identity"], cfg) if sub.get("identity") else None
+        if refusal:
+            sub["phase"] = "failed"
+            sub["fail"] = refusal
+            return "finished"
 
         # the jobs' states, through the sequencer's records
         finished_now = []
@@ -976,6 +1055,8 @@ class SearchStage(Stage):
 
         n_total = int(s["n_initial_points"]) + int(s["gp_rounds"]) * int(s["trials_per_round"])
         sim, real = CM.shard_globs(cfg)
+        ident = (st or {}).get("sub", {}).get("identity")
+        refusal = identity_refusal(ident, cfg) if ident else None
         lines = ["identity: %s --sim-shards %s --split-fracs %s --split-seed %d (envs.train, login node)"
                  % (p["split_tool"], sim, " ".join(str(f) for f in d["split"]["fractions"]),
                     int(s["train_seed"])),
@@ -1023,4 +1104,6 @@ class SearchStage(Stage):
                  "clock: elapsed from round 0's first submission, cap %s h (D-090)"
                  % (s["max_total_walltime_h"],),
                  "end: finalists --top-k 1 -> %s; artefact %s" % (dirs["finalists"], dirs["complete"])]
+        if refusal:
+            lines.insert(0, refusal)          # amendment (j)
         return lines
