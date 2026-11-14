@@ -1,9 +1,9 @@
-Run status: running
+Run status: finished
 Repository: Leonardodm00/Simulation-Based-Inference
 Commit under test: 8d5b16285140f1a4181c0901bf535c7da041ae39
 Mode: full
 Scope: Blocks 1-10 (tier 2, chain C1: the real-data project)
 Started (UTC): 2026-11-14 00:30
-Last update (UTC): 2026-11-14 01:41
-Phase: steps 7-9: boundaries, audit and silent-failure hunt; retry case running
-Note: -
+Last update (UTC): 2026-11-14 01:48
+Phase: delivered
+Note: PASS WITH ISSUES -- 4 MAJOR (F401 identity change mid-search not refused, F402 num_bins ignored, F403 theta on the box boundary, F409 stale best fit after a search re-run), 2 MINOR (F404, F405), 3 NOTE (F406-F408); 4 problems in the spec (S401-S404)
