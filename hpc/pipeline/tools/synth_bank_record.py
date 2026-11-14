@@ -158,10 +158,14 @@ def check_shard(bank_dir, k, exp, problems):
                            int(exp["d_theta"])))
     # [block 11, amendment 2026-11-14, D-134 (3)] a stored theta strictly
     # inside the open unit box, on arm S and arm R alike (NaN fails both
-    # comparisons, so the test is written as "not inside").
-    theta = theta.reshape(theta.shape[0] if theta.ndim else 1, -1)
-    with np.errstate(invalid="ignore"):
+    # comparisons, so the test is written as "not inside"). An empty theta
+    # adds no problem here (a shard of 0 rows is refused by the row count
+    # above) and never raises [contract amendment 2].
+    if theta.size:
+        theta = theta.reshape(theta.shape[0] if theta.ndim else 1, -1)
         outside = ~((theta > 0) & (theta < 1))
+    else:
+        outside = np.zeros((0, 0), dtype=bool)
     if outside.size and bool(np.any(outside)):
         bad = np.flatnonzero(np.any(outside, axis=1))
         i, j = int(bad[0]), int(np.flatnonzero(outside[bad[0]])[0])

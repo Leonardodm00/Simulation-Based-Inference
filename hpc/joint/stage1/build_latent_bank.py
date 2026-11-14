@@ -380,7 +380,9 @@ def main(argv=None):
     # [block 11, amendment 2026-11-14, D-134 (3)] the theta this shard stores
     # (float32) strictly inside the open unit box: a defence, not reachable
     # through the samplers (clip_open_box); nothing is written otherwise.
-    out_box = (TH <= 0.0) | (TH >= 1.0)
+    # Not finite counts as outside [contract amendment 2]: NaN fails both
+    # comparisons, so the test is written as "not inside".
+    out_box = ~((TH > 0.0) & (TH < 1.0))
     if np.any(out_box):
         bad_rows = np.flatnonzero(np.any(out_box, axis=1))
         r0 = int(bad_rows[0])
