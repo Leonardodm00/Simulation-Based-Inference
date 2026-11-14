@@ -210,7 +210,8 @@ stage in dependency order:
    one case in which a done stage is re-checked. A downstream stage with a
    job still queued or running refuses the retry as s's own live jobs do
    (exit 2, nothing changed); a downstream stage that is `pending` or
-   `failed` is left as it is. One log line per stage returned. A stage
+   `failed`, or `running` with no job live (rule 3 verifies it at its next
+   tick), is left as it is. One log line per stage returned. A stage
    returned to `pending` has its record reset as `--retry` resets s's own
    (its finished jobs and its stage data are forgotten), and every check
    comes before any reset, so a refusal changes nothing.
@@ -2112,8 +2113,10 @@ fixture, not part of the pipeline.
     run stages' own `is_done` came first in the lookup and hid the
     predicate below from F_q and G_q [contract amendment 1, 2026-11-14,
     D-134 `[orchestrator]`]), `hpc/pipeline/tests/test_smoke_finalist.py`,
-    and `hpc/pipeline/tests/test_smoke_block7.py` (`test_edge_cases`' pre-made
-    best fit, below).
+    `hpc/pipeline/tests/test_smoke_block7.py` (`test_edge_cases`' pre-made
+    best fit, below), and the pre-made artefacts and the counts that follow
+    from them in `test_smoke_block2.py`, `test_smoke_block3.py` and
+    `test_smoke_block7b.py` [contract amendment 2].
   - Rule, the done predicate: done(S8) and done(F_q) hold when
     `BEST_FIT_COMPLETE.json` exists, `SEARCH_COMPLETE.json` exists, and the
     trial the artefact names as its finalist (`finalist.trial_id`) is
@@ -2121,7 +2124,14 @@ fixture, not part of the pipeline.
     artefact exists and the search's finalist it recorded (block 18's
     `search_finalist.trial_id`) is `SEARCH_COMPLETE.json`'s. The reason
     `is_done` returns names the condition that fails (the two trial ids, or
-    the missing file), so `--status` shows it.
+    the missing file), so `--status` shows it. done(G_q) does not rank the
+    other arm's trials again (that needs the tuner, which the done predicate
+    never runs): after a search that ran again and kept its finalist, a G_q
+    whose trial is no longer the other arm's best stays done. Its start does
+    compare (the rule below), so moving G_q's `BEST_FIT_COMPLETE.json` aside
+    and `--retry best_fit_alt_<q>` refits it. Known limit [contract amendment
+    2, 2026-11-14; the final check's F3]; no search of the committed
+    `synth.json` v4 has a G_q.
   - Rule, the start: before the stage writes or submits anything it reads
     its current finalist (S8, F_q: `SEARCH_COMPLETE.json`'s; G_q: the other
     arm's, block 18) and examines its root (`<runs_root>/<dataset>_best`,
@@ -2144,7 +2154,16 @@ fixture, not part of the pipeline.
     true}`) and expected `best_fit: skipped` now expects the root moved aside
     with that file unchanged, the M member jobs and `PIPELINE DONE`; the
     skipped case (an artefact naming the search's finalist) is
-    `test_smoke_finalist.py`'s.
+    `test_smoke_finalist.py`'s. [contract amendment 2, 2026-11-14, D-134
+    `[orchestrator]`; the final check's F1] The other suites that pre-make
+    S7's and S8's artefacts by hand follow the same rule:
+    `test_smoke_block2.py` and `test_smoke_block3.py`, which pre-make both
+    to end after the banks and the inputs, write a `SEARCH_COMPLETE.json`
+    and a `BEST_FIT_COMPLETE.json` that name one finalist (both stages
+    `skipped`, their checks and counts as before); `test_smoke_block7b.py`,
+    whose searches run and whose best fit was pre-made through
+    `test_smoke_block7.py`'s `pre_make_best`, expects the pre-made root
+    moved aside and the M member jobs in its counts.
   - Rule, the retry: sec. 2.2 rule 5. With it, `--retry search` (the next
     step `tools/search_reset.py` prints) makes the best fit follow: when the
     search that ran again has the same finalist the best fit is `skipped`
@@ -3413,7 +3432,10 @@ Claude; Confirmed: no]
     [1/2, 1); `clip_open_box(phi) -> ndarray`: phi any shape, float64, each
     value in [0, 1]; returns a new float64 array of that shape,
     clip(phi, BOX_DELTA, 1 - BOX_DELTA); the input is not changed; a
-    non-finite value raises `FloatingPointError`.
+    non-finite value, or a value below 0 or above 1 (no draw of the three
+    samplers is: it would be a fault upstream, not something to clip away),
+    raises `FloatingPointError` [the range: contract amendment 2,
+    2026-11-14, D-134 `[orchestrator]`; the final check's F5].
   - Rule: the three samplers return `clip_open_box` of their draw, in place
     of the clip at the float64 epsilon. `BOX_DELTA` and `1 - BOX_DELTA` are
     float32 numbers and rounding to nearest is monotone, so for every phi a
@@ -3424,13 +3446,17 @@ Claude; Confirmed: no]
     in [BOX_DELTA, 1 - BOX_DELTA] is unchanged bit for bit. The simulation
     is run at the float64 phi, as before.
   - The builder, after casting theta to float32 for the shard, refuses a
-    stored coordinate <= 0 or >= 1 (the count and the first row and axis;
-    nothing written): a defence, not reachable through the samplers.
+    stored coordinate <= 0, >= 1 or not finite (the count and the first row
+    and axis; nothing written): a defence, not reachable through the
+    samplers [not finite: contract amendment 2; the final check's F4].
   - The record tool (block 16) refuses, per shard, a stored theta with a
     coordinate <= 0, >= 1 or not finite: `REFUSE: shard <k>: <n> row(s) with
     a theta outside the open unit box (first: row <i>, axis <j>, value
     <v>)`, exit 4 and nothing written as its other refusals, on arm S and
-    arm R alike.
+    arm R alike. A shard with no row is refused by the tool's row count as
+    before (`REFUSE: shard <k>: 0 rows, the build's <n>`, exit 4): the theta
+    check adds no problem for an empty array and never raises [contract
+    amendment 2; the final check's F2].
   - `write_shard` creates the bank's folder with `exist_ok=True`: the K
     shard jobs of one bank (block 16) may reach that line together.
   - Unchanged: for the same arguments, a bank's `generator_sha256` and
@@ -3442,7 +3468,8 @@ Claude; Confirmed: no]
       1 - 2^-24, 1 - 2^-25, 1 - 1e-9, 1 - (float64 epsilon), 1: the float32
       of every result is > 0 and < 1, and the result equals the input where
       the input lies in [2^-24, 1 - 2^-24]; the old clip's case reproduced
-      (float32 of clip(1 - 1e-9, eps, 1 - eps) is 1.0);
+      (float32 of clip(1 - 1e-9, eps, 1 - eps) is 1.0); -0.2, 1.5, NaN and
+      inf each raise `FloatingPointError` [contract amendment 2];
     - reference: at fixed seeds the three samplers against the functions of
       `8d5b162` (`git show`), element by element: equal where the old value
       lies in [BOX_DELTA, 1 - BOX_DELTA], and the clipped old value
@@ -3455,7 +3482,10 @@ Claude; Confirmed: no]
       contract digest and `build` equal;
     - contract: the record tool on a bank whose stored theta was set to
       1.0, to 0.0 and to NaN in one coordinate: exit 4, the `REFUSE:` line,
-      nothing written; the clean bank recorded with its pass line;
+      nothing written; the clean bank recorded with its pass line; a shard
+      with 0 rows: exit 4 with the row count's `REFUSE:` line, as at
+      `8d5b162`, no traceback; the builder's cast given a NaN theta refuses
+      and writes nothing [both: contract amendment 2];
     - determinism: the same argv twice gives the same bytes;
     - edge cases: two shard builds started together into one new folder
       with `os.makedirs` slowed by 0.5 s (the audit's F206): both exit 0,
