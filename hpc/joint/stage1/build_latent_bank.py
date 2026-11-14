@@ -377,6 +377,20 @@ def main(argv=None):
         WIN[sl] = np.arange(J)
         CON[sl] = info["contaminated"]
 
+    # [block 11, amendment 2026-11-14, D-134 (3)] the theta this shard stores
+    # (float32) strictly inside the open unit box: a defence, not reachable
+    # through the samplers (clip_open_box); nothing is written otherwise.
+    out_box = (TH <= 0.0) | (TH >= 1.0)
+    if np.any(out_box):
+        bad_rows = np.flatnonzero(np.any(out_box, axis=1))
+        r0 = int(bad_rows[0])
+        a0 = int(np.flatnonzero(out_box[r0])[0])
+        raise SystemExit(
+            "refusing to write the shard: %d stored theta coordinate(s) in %d "
+            "row(s) outside the open unit box after the cast to float32 "
+            "(first: row %d, axis %d, value %r)"
+            % (int(out_box.sum()), bad_rows.size, r0, a0, float(TH[r0, a0])))
+
     arrays = {"x": X, "theta": TH, "cls": CL, "nu": NU, "realisation_id": RID,
               "donor": DON, "well": WEL, "batch": BAT, "subregion": SUB,
               "window_idx": WIN, "contaminated": CON}

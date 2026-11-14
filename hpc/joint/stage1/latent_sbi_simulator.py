@@ -188,8 +188,9 @@ def sample_prior(spec, n, rng):
         phi[:, ax] = rng.uniform(0.0, 1.0, size=n)
 
     # scipy's truncnorm can return exactly 0 or 1 at extreme tails in float64.
-    eps = np.finfo(np.float64).eps
-    phi = np.clip(phi, eps, 1.0 - eps)
+    # [block 11, amendment 2026-11-14, D-134 (3)] clipped to [BOX_DELTA,
+    # 1 - BOX_DELTA], so that the float32 theta a shard stores is inside too.
+    phi = clip_open_box(phi)
     if np.any(phi <= 0.0) or np.any(phi >= 1.0):
         raise FloatingPointError("phi escaped the open unit box")
     return c, phi
@@ -225,8 +226,8 @@ def sample_prior_given_classes(spec, c, rng):
                 phi[mask, ax] = d.rvs(size=k, random_state=rng)
     for ax in spec.free_idx:
         phi[:, ax] = rng.uniform(0.0, 1.0, size=n)
-    eps = np.finfo(np.float64).eps
-    phi = np.clip(phi, eps, 1.0 - eps)
+    # [block 11, amendment 2026-11-14, D-134 (3)] see `clip_open_box`.
+    phi = clip_open_box(phi)
     if np.any(phi <= 0.0) or np.any(phi >= 1.0):
         raise FloatingPointError("phi escaped the open unit box")
     return phi
@@ -286,7 +287,13 @@ def clip_open_box(phi):
     FloatingPointError
         if phi holds a value that is not finite.
     """
-    raise NotImplementedError("contract: wave W1, block 1c")
+    a = np.asarray(phi, dtype=np.float64)
+    if not np.all(np.isfinite(a)):
+        raise FloatingPointError("phi holds a value that is not finite")
+    # out= a new array, so that a 0-d input also returns an ndarray and the
+    # input is never written; np.clip leaves a value inside the interval
+    # bit for bit.
+    return np.clip(a, BOX_DELTA, 1.0 - BOX_DELTA, out=np.empty_like(a))
 
 
 
@@ -304,8 +311,8 @@ def sample_box_prior(spec, n, rng):
     """
     n = int(n)
     phi = rng.uniform(0.0, 1.0, size=(n, spec.n_latent))
-    eps = np.finfo(np.float64).eps
-    phi = np.clip(phi, eps, 1.0 - eps)
+    # [block 11, amendment 2026-11-14, D-134 (3)] see `clip_open_box`.
+    phi = clip_open_box(phi)
     if np.any(phi <= 0.0) or np.any(phi >= 1.0):
         raise FloatingPointError("phi escaped the open unit box")
     return np.full(n, BOX_CLASS, dtype=np.int64), phi

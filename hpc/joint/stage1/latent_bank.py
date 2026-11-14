@@ -153,7 +153,9 @@ def write_shard(path, arrays, sidecar):
 
     d = os.path.dirname(os.path.abspath(path))
     if d and not os.path.isdir(d):
-        os.makedirs(d)
+        # [block 11, amendment 2026-11-14, D-134 (3); F206] the K shard jobs
+        # of one bank may reach this line together: exist_ok.
+        os.makedirs(d, exist_ok=True)
     tmp_npz = path + ".tmp"
     np.savez_compressed(tmp_npz, **{k: np.asarray(v) for k, v in arrays.items()})
     # np.savez appends .npz if the name lacks it; handle both.
