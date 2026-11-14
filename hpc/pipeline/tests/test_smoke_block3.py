@@ -137,7 +137,8 @@ class Standin(object):
                       os.path.join(self.cfg["paths"]["runs_root"], tag + "_best", "BEST_FIT_COMPLETE.json")):
                 os.makedirs(os.path.dirname(p), exist_ok=True)
                 with open(p, "w") as fh:
-                    fh.write('{"pre_made": true}\n')
+                    # block 7 (i), contract amendment 2: both name one finalist, so both are done
+                    fh.write('{"finalist": {"trial_id": "pre_made"}, "pre_made": true}\n')
         self.spool = os.path.join(self.root, "spool")
 
     def env(self, delay="0.2", **extra):
