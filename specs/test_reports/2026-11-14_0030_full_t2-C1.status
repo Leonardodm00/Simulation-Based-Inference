@@ -4,6 +4,6 @@ Commit under test: 8d5b16285140f1a4181c0901bf535c7da041ae39
 Mode: full
 Scope: Blocks 1-10 (tier 2, chain C1: the real-data project)
 Started (UTC): 2026-11-14 00:30
-Last update (UTC): 2026-11-14 00:31
-Phase: setup
+Last update (UTC): 2026-11-14 00:33
+Phase: step 1: oracles derived from the spec
 Note: -
