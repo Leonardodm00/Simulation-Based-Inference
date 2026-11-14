@@ -530,7 +530,8 @@ def test_determinism():
 
 
 def test_edge_cases():
-    """The elapsed clock at a tiny cap: round 0 only; S8 pre-made is skipped."""
+    """The elapsed clock at a tiny cap: round 0 only; a pre-made S8 artefact naming no
+    finalist is moved aside with its root and S8 fitted (block 7 (i), amendment 1)."""
     root = _tmp()
     try:
         path, c = _synthetic_project(root, search={"max_total_walltime_h": 1e-6,
@@ -545,8 +546,16 @@ def test_edge_cases():
         sc = json.load(open(os.path.join(camp, "SEARCH_COMPLETE.json")))
         assert sc["ended_by"] == "budget" and sc["rounds_evaluated"] == 1 and sc["n_trials"]["ok"] == 2, sc
         assert sc["elapsed_h"] > 1e-6
-        assert "best_fit: skipped, artefact of record exists" in out, out
-        assert _n_submitted(spool) == 2 + 2, _n_submitted(spool)
+        # block 7 (i), contract amendment 1: an artefact naming no finalist is not done; the
+        # root is moved aside (the file byte for byte), the M members fitted
+        best = os.path.join(c["paths"]["runs_root"], "synth_best")
+        assert "best_fit: skipped" not in out, out
+        assert ("moved aside as %s.set_aside1" % best) in out, out
+        with open(os.path.join(best + ".set_aside1", "BEST_FIT_COMPLETE.json")) as fh:
+            assert fh.read() == '{"pre_made": true}\n'
+        m = len(c["best_fit"]["member_seeds"])
+        assert "best_fit: BEST FIT COMPLETE: M=%d members" % m in out, out
+        assert _n_submitted(spool) == 2 + 2 + m, _n_submitted(spool)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

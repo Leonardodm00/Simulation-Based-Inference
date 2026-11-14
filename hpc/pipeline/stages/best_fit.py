@@ -32,16 +32,37 @@ NLL (block 7; D-089; specs/SPEC.md sec. 2.3).
 (stages/synthetic.py, `RunAltBestFitStage`) is this class with its own
 folder suffix (`_best_alt`), job-name prefix (`ba`) and finalist.
 
+[block 7 (i), 2026-11-14, D-134 (2)] The best fit follows its search's
+finalist. done(s) holds when the artefact exists, SEARCH_COMPLETE.json
+exists and the artefact's finalist is the search's (the other arm's fit:
+the search finalist it recorded is the search's). At the start, before
+anything is written or submitted, the root is examined against the current
+finalist: a root that belongs to another finalist (a finalist_config.json
+or an artefact naming another trial, or member records with no readable
+finalist_config.json naming the current one) is moved aside whole
+(`<root>.set_aside<k>`, D-095) and the finalist is fitted again; a root of
+the current finalist is kept and its member records are reused.
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
+import copy
 import glob
 import os
+import shutil
+import tempfile
 
 from . import DEPS, Stage
 from . import common as CM
 
 COMPLETE_FILE = "BEST_FIT_COMPLETE.json"
+
+
+def _trial_of(fin):
+    """The `trial_id` of a finalist object, or None."""
+    if isinstance(fin, dict) and fin.get("trial_id"):
+        return fin["trial_id"]
+    return None
 
 
 class BestFitStage(Stage):
@@ -99,6 +120,159 @@ class BestFitStage(Stage):
                            "identity": sc["identity"], "config_file": dirs["finalist_config"]}
         sub.setdefault("members", {})
         return sub["finalist"]
+
+    # ------------------------------ the finalist followed (block 7 (i)) ---
+
+    def _fits_search_finalist(self):
+        """True when the stage fits the search's own finalist (S8, F_q);
+        False for a stage whose finalist is its own (block 18's G_q, which
+        overrides `_finalist`)."""
+        return type(self)._finalist is BestFitStage._finalist
+
+    def is_done(self, cfg):
+        """(done, reason): BEST_FIT_COMPLETE.json exists, SEARCH_COMPLETE.json
+        exists, and the trial the artefact names as its finalist is the
+        search's finalist (G_q: the search finalist the artefact recorded is
+        the search's). The reason names the condition that fails."""
+        dirs = self._dirs(cfg)
+        art, sc_path = dirs["complete"], dirs["search_complete"]
+        if not os.path.isfile(art):
+            return False, "%s absent" % art
+        if not os.path.isfile(sc_path):
+            return False, ("%s exists, but %s is absent: the search's finalist cannot be checked"
+                           % (art, sc_path))
+        obj, problem = CM.try_read_json(art)
+        if obj is None:
+            return False, "%s unreadable (%s)" % (art, problem)
+        sc, problem = CM.try_read_json(sc_path)
+        if sc is None:
+            return False, "%s exists, but %s is unreadable (%s)" % (art, sc_path, problem)
+        want = _trial_of(sc.get("finalist"))
+        if want is None:
+            return False, "%s exists, but %s names no finalist" % (art, sc_path)
+        fin = obj.get("finalist")
+        if self._fits_search_finalist():
+            got = _trial_of(fin)
+            if got != want:
+                return False, ("%s names the finalist %s, but the search's finalist is %s (%s)"
+                               % (art, got or "(none)", want, sc_path))
+        else:
+            got = _trial_of(fin.get("search_finalist") if isinstance(fin, dict) else None)
+            if got != want:
+                return False, ("%s was fitted for the search's finalist %s, but the search's "
+                               "finalist is %s (%s)" % (art, got or "(none)", want, sc_path))
+        return True, art
+
+    def _current_finalist_id(self, cfg):
+        """The trial this stage fits now, read without writing in its root:
+        SEARCH_COMPLETE.json's finalist (S8, F_q); for a stage with its own
+        `_finalist` (G_q), that method run on a copy of the configuration
+        whose runs_root is a scratch folder, removed afterwards (its files
+        are written again in the root by the start)."""
+        dirs = self._dirs(cfg)
+        if self._fits_search_finalist():
+            tid = _trial_of(CM.read_json(dirs["search_complete"]).get("finalist"))
+            if tid is None:
+                raise RuntimeError("%s names no finalist" % dirs["search_complete"])
+            return tid
+        scratch = tempfile.mkdtemp(prefix="best_fit_finalist_")
+        try:
+            probe = copy.copy(cfg)
+            probe.data = copy.deepcopy(cfg.data)
+            probe.data["paths"]["runs_root"] = scratch
+            fin = self._finalist(probe, {"sub": {}})
+            return fin["trial_id"]
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+    def _member_records_any(self, cfg):
+        """Every member record under the root, whatever its seed."""
+        return sorted(glob.glob(os.path.join(glob.escape(self._dirs(cfg)["root"]),
+                                             "member_seed*", "*_seed*.json")))
+
+    def _root_owner(self, cfg, current):
+        """None when the root is absent or is the current finalist's; else a
+        text saying what in it names another finalist (block 7 (i), the
+        start). An unreadable finalist_config.json or artefact, or an
+        artefact naming no trial, counts as another finalist's: kept aside
+        rather than overwritten."""
+        dirs = self._dirs(cfg)
+        if not os.path.lexists(dirs["root"]):
+            return None
+        names_current = False
+        if os.path.lexists(dirs["finalist_config"]):
+            obj, problem = CM.try_read_json(dirs["finalist_config"])
+            if obj is None:
+                return "its finalist_config.json is unreadable (%s)" % problem
+            tid = obj.get("trial_id")
+            if tid != current:
+                return "its finalist_config.json names trial %s" % (tid or "(none)")
+            names_current = True
+        if os.path.lexists(dirs["complete"]):
+            obj, problem = CM.try_read_json(dirs["complete"])
+            if obj is None:
+                return "its %s is unreadable (%s)" % (COMPLETE_FILE, problem)
+            tid = _trial_of(obj.get("finalist"))
+            if tid != current:
+                return "its %s names trial %s" % (COMPLETE_FILE, tid or "(none)")
+        if not names_current:
+            recs = self._member_records_any(cfg)
+            if recs:
+                return ("it holds %d member record(s) and no finalist_config.json naming the "
+                        "current finalist" % len(recs))
+        return None
+
+    def _follow_finalist(self, cfg, st, log):
+        """Block 7 (i), the start: the root of another finalist is moved
+        aside whole, and the state's finalist and members of another
+        finalist are forgotten, before anything is written or submitted."""
+        sub = st["sub"]
+        dirs = self._dirs(cfg)
+        if not os.path.lexists(dirs["root"]) and not sub.get("finalist"):
+            return                                   # a first run: nothing to examine
+        current = self._current_finalist_id(cfg)
+        cached = sub.get("finalist")
+        if cached and cached.get("trial_id") != current:
+            sub.pop("finalist", None)
+            sub.pop("members", None)
+        other = self._root_owner(cfg, current)
+        if other is None:
+            return
+        aside = CM.set_aside(dirs["root"], "set_aside")
+        sub.pop("finalist", None)
+        sub.pop("members", None)
+        log("best_fit: the root %s belongs to another finalist (%s; the current finalist is "
+            "trial %s): moved aside as %s (D-095); the finalist is fitted again (%d member "
+            "job(s))" % (dirs["root"], other, current, aside,
+                         len(cfg.data["best_fit"]["member_seeds"])))
+
+    def _dry_run_root_lines(self, cfg):
+        """The dry run's word on the root (block 7 (i)); reads only."""
+        dirs = self._dirs(cfg)
+        if not os.path.lexists(dirs["root"]):
+            return []
+        if not self._fits_search_finalist():
+            obj, _ = (CM.try_read_json(dirs["finalist_config"])
+                      if os.path.lexists(dirs["finalist_config"]) else (None, None))
+            held = _trial_of(obj) if obj else None
+            return ["root: %s exists%s; at the start the other arm's finalist is computed and the "
+                    "root is moved aside (kept, D-095) if it belongs to another finalist"
+                    % (dirs["root"], (" (it holds the fit of trial %s)" % held) if held else "")]
+        sc, _ = (CM.try_read_json(dirs["search_complete"])
+                 if os.path.isfile(dirs["search_complete"]) else (None, None))
+        current = _trial_of(sc.get("finalist")) if sc else None
+        if current is None:
+            return ["root: %s exists; it is examined against the search's finalist at the start"
+                    % dirs["root"]]
+        other = self._root_owner(cfg, current)
+        if other is None:
+            return ["root: %s is the current finalist's (trial %s): kept, its member records "
+                    "reused" % (dirs["root"], current)]
+        return ["root: %s belongs to another finalist (%s; the search's finalist is trial %s): "
+                "it would be moved aside as %s.set_aside<k> (D-095) and the finalist fitted again "
+                "(%d member job(s)); nothing is moved by the dry run"
+                % (dirs["root"], other, current, dirs["root"],
+                   len(cfg.data["best_fit"]["member_seeds"]))]
 
     # ---------------------------------------------------------- members ---
 
@@ -372,6 +546,8 @@ class BestFitStage(Stage):
         dirs = self._dirs(cfg)
         if not os.path.isfile(dirs["search_complete"]):
             raise RuntimeError("no %s: the search has not completed" % dirs["search_complete"])
+        # block 7 (i): before anything is written or submitted
+        self._follow_finalist(cfg, st, pbs.log)
         self._finalist(cfg, st)
         for seed in b["member_seeds"]:
             m = sub["members"].setdefault(str(seed), {"jobs": [], "resubmits": 0,
@@ -478,7 +654,7 @@ class BestFitStage(Stage):
                          os.path.join(dirs["jobs"], "member_seed<k>.<n>.argv"), p["stage4"],
                          avoid_file=CM.avoid_file(cfg))
         q[2] = "%s_%s_s<k>" % (self.job_prefix, d["dataset"][:6])
-        return ["cores (D-099): at most %s member(s) at once -- the cap leaves room for %s of %d "
+        return self._dry_run_root_lines(cfg) + ["cores (D-099): at most %s member(s) at once -- the cap leaves room for %s of %d "
                 "cores each" % (CM.cap_room(cfg, b["ncpus"], len(b["member_seeds"])),
                                 CM.cap_room(cfg, b["ncpus"]), int(b["ncpus"])),
                 "finalist: the lowest report-split nll of %s" % dirs["search_complete"],
