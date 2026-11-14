@@ -4,6 +4,6 @@ Commit under test: 8d5b16285140f1a4181c0901bf535c7da041ae39
 Mode: full
 Scope: Blocks 1, 4-7, 11-18 (tier 2, chain C2: the synthetic experiment)
 Started (UTC): 2026-11-14 00:30
-Last update (UTC): 2026-11-14 00:40
-Phase: step 3: environment installed; regression suites running
+Last update (UTC): 2026-11-14 01:01
+Phase: steps 5-7: chain runs (end to end done; determinism, resume, upstream running)
 Note: -
