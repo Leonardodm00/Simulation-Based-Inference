@@ -585,7 +585,11 @@ def test_determinism():
         assert len(recs) == 4 and all(r["status"] == "ok" for r in recs.values()), recs
         assert os.path.isfile(os.path.join(camp, "trials", t0 + ".json.nodefault1"))
         # no job twice: trial 0 twice by design, the other three once (the running one re-attached)
-        assert B7._n_submitted(spool) == 5, (n_mid, B7._n_submitted(spool))
+        # block 7 (i), contract amendment 2: the pre-made BEST_FIT_COMPLETE.json names no
+        # finalist, so its root is moved aside and the M members of the finalist are fitted
+        assert os.path.isdir(os.path.join(c["paths"]["runs_root"], "synth_best.set_aside1"))
+        m = len(c["best_fit"]["member_seeds"])
+        assert B7._n_submitted(spool) == 5 + m, (n_mid, B7._n_submitted(spool))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -610,7 +614,11 @@ def _test_checkpoint_guard():
         assert len(recs) == 4 and all(r["status"] == "ok" for r in recs.values()), recs
         # the stopped jobs ended without a record: the kill path resubmitted them with --resume
         assert "search: trial %s ended without a record" % t0[:12] in out
-        assert B7._n_submitted(spool) == 6, B7._n_submitted(spool)
+        # block 7 (i), contract amendment 2: the pre-made BEST_FIT_COMPLETE.json names no
+        # finalist, so its root is moved aside and the M members of the finalist are fitted
+        assert os.path.isdir(os.path.join(c["paths"]["runs_root"], "synth_best.set_aside1"))
+        m = len(c["best_fit"]["member_seeds"])
+        assert B7._n_submitted(spool) == 6 + m, B7._n_submitted(spool)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -657,7 +665,11 @@ def _test_stop_and_retry():
         rc, out = _run(root, path, ["--retry", "search"], env, timeout=1200)
         assert rc == 0 and "search reset to pending (--retry)" in out and "PIPELINE DONE" in out, \
             out[-4000:]
-        assert B7._n_submitted(spool) == 4, B7._n_submitted(spool)
+        # block 7 (i), contract amendment 2: the pre-made BEST_FIT_COMPLETE.json names no
+        # finalist, so its root is moved aside and the M members of the finalist are fitted
+        assert os.path.isdir(os.path.join(c["paths"]["runs_root"], "synth_best.set_aside1"))
+        m = len(c["best_fit"]["member_seeds"])
+        assert B7._n_submitted(spool) == 4 + m, B7._n_submitted(spool)
         # (e) stop with no sequencer running
         rc, out = _stop(path, env, wait=0)
         assert rc == 0 and "no sequencer is running" in out, out

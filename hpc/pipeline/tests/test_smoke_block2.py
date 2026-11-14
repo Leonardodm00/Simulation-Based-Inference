@@ -143,7 +143,8 @@ class Standin(object):
                                    "BEST_FIT_COMPLETE.json")):
                 os.makedirs(os.path.dirname(p), exist_ok=True)
                 with open(p, "w") as fh:
-                    fh.write('{"pre_made": true}\n')
+                    # block 7 (i), contract amendment 2: both name one finalist, so both are done
+                    fh.write('{"finalist": {"trial_id": "pre_made"}, "pre_made": true}\n')
         self.spool = os.path.join(self.root, "spool")
         self.bank = os.path.join(self.cfg["paths"]["banks_root"], "synth_sim")
         self.plan = os.path.join(self.sbix, "export_windows", "synth", "bank_plan.json")
