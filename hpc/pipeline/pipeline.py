@@ -36,7 +36,10 @@ amended 2026-10-29 (g)): a driver job that cannot start its environment
 submits a delayed replacement of itself (jobs/chain.sh, from the template
 `driver/chain.qsub` written here), and every stage job's end revives a
 chain that is gone without having ended on purpose (`driver/CHAIN_END`). `--retry <stage>` is refused while that stage's jobs are
-still queued or running, since the reset forgets them. A job about to be
+still queued or running, since the reset forgets them; it also returns
+to pending every stage downstream of it that is done or skipped, so that
+its artefact of record is read again (sec. 2.2 rule 5, block 7 (i),
+D-134), and is refused while such a stage has a job queued or running. A job about to be
 submitted whose name is already queued or running is adopted, not
 submitted twice. `retire` stops a sequencer started on a login node before
 2026-10-18 from any login node, through the shared file system only.
@@ -610,6 +613,24 @@ def print_table(rows, log):
         log("| %-*s | %-8s | %-4s | %s" % (w, name, status, done, detail))
 
 
+def downstream_of(graph, names):
+    """{stage: the retried stage it is downstream of} for every stage that
+    has one of `names` among its dependencies, directly or through other
+    stages (sec. 2.2 rule 5); a retried stage downstream of another is
+    listed too. The first name of `names` reaching a stage is the one given."""
+    deps = dict((s_.name, tuple(s_.deps)) for s_ in graph)
+    out = {}
+    for root in names:
+        frontier = [root]
+        while frontier:
+            cur = frontier.pop(0)
+            for n in [s_.name for s_ in graph]:
+                if cur in deps[n] and n not in out and n != root:
+                    out[n] = root
+                    frontier.append(n)
+    return out
+
+
 def _prepare_state(cfg, graph, work_root, retry, accept_config_change, pbs_module, log,
                    dry_run, verb="run"):
     """Load (or create) the state, apply an accepted configuration change and
@@ -633,29 +654,65 @@ def _prepare_state(cfg, graph, work_root, retry, accept_config_change, pbs_modul
         state.data["config_sha256"] = cfg.sha256
         state.data["config_path"] = cfg.path
 
+    names = [s_.name for s_ in graph]
     for name in retry:
-        if name not in [s.name for s in graph]:
+        if name not in names:
             log("REFUSE: --retry names no stage: %s" % name)
             return None, EXIT_CONFIG
+    # sec. 2.2 rule 5 (block 7 (i), D-134): the stages downstream of a retried
+    # stage that are done or skipped return to pending, so that their done(s)
+    # is read again; every check comes before any reset, so a refusal changes
+    # nothing
+    down = downstream_of(graph, retry)
+    for name in list(retry) + [n for n in names if n in down]:
         # the reset forgets the stage's jobs: refused while any still runs,
         # or their work would be submitted a second time (amended 2026-10-18)
         try:
-            live = _unfinished_jobs(state.stage(name), pbs_module)
+            # a downstream stage not yet in the state has no jobs (no record is created)
+            live = _unfinished_jobs(state.stage(name) if name in retry
+                                    else state.data["stages"].get(name, {}), pbs_module)
         except PBS.SchedulerError as exc:
-            log("REFUSE: --retry %s: cannot tell whether the stage's jobs still run (the "
-                "scheduler did not answer: %s); try again" % (name, exc))
+            if name in retry:
+                log("REFUSE: --retry %s: cannot tell whether the stage's jobs still run (the "
+                    "scheduler did not answer: %s); try again" % (name, exc))
+            else:
+                log("REFUSE: --retry %s: cannot tell whether the jobs of %s, downstream of it, "
+                    "still run (the scheduler did not answer: %s); try again"
+                    % (down[name], name, exc))
             return None, EXIT_CONFIG
-        if live:
+        if live and name in retry:
             log("REFUSE: --retry %s: the stage has %d job(s) still queued or running (%s%s); a "
                 "retry forgets them and would submit their work again -- let them end (or qdel "
                 "them) first" % (name, len(live), ", ".join(live[:6]),
                                  ", ..." if len(live) > 6 else ""))
             return None, EXIT_CONFIG
+        if live:
+            log("REFUSE: --retry %s: the stage %s, downstream of it, has %d job(s) still queued "
+                "or running (%s%s); a retry returns it to pending and would submit their work "
+                "again -- let them end (or qdel them) first"
+                % (down[name], name, len(live), ", ".join(live[:6]),
+                   ", ..." if len(live) > 6 else ""))
+            return None, EXIT_CONFIG
+    for name in retry:
         state.reset_stage(name)
         if verb == "submit":
             log("%s: --retry accepted; the first sequencer job resets it to pending" % name)
         else:
             log("%s reset to pending (--retry)" % name)
+    for name in names:
+        if name not in down or name in retry or name not in state.data["stages"]:
+            continue
+        status = state.data["stages"][name]["status"]
+        if status not in ("done", "skipped"):
+            continue                 # pending or failed: left as it is (rule 5)
+        state.reset_stage(name)
+        if verb == "submit":
+            log("%s: --retry %s accepted; the first sequencer job returns it, %s and downstream "
+                "of it, to pending, and its artefact of record is read again"
+                % (name, down[name], status))
+        else:
+            log("%s returned to pending (--retry %s: it was %s and is downstream of it; its "
+                "artefact of record is read again)" % (name, down[name], status))
     return state, None
 
 
