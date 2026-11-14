@@ -210,7 +210,10 @@ stage in dependency order:
    one case in which a done stage is re-checked. A downstream stage with a
    job still queued or running refuses the retry as s's own live jobs do
    (exit 2, nothing changed); a downstream stage that is `pending` or
-   `failed` is left as it is. One log line per stage returned.
+   `failed` is left as it is. One log line per stage returned. A stage
+   returned to `pending` has its record reset as `--retry` resets s's own
+   (its finished jobs and its stage data are forgotten), and every check
+   comes before any reset, so a refusal changes nothing.
 
 The sequencer loop: every `poll_seconds` it ticks each stage that is not
 done, skipped or failed, in dependency order; it exits 0 when every stage is
@@ -2105,7 +2108,12 @@ fixture, not part of the pipeline.
   - Modules: `hpc/pipeline/stages/best_fit.py` (the best-fit stage in its
     three uses: S8, F_q of a synthetic run view, G_q of block 18),
     `hpc/pipeline/pipeline.py` (`--retry`, sec. 2.2 rule 5),
-    `hpc/pipeline/tests/test_smoke_finalist.py`.
+    `hpc/pipeline/stages/synthetic.py` (`RunBestFitStage.is_done`: the
+    run stages' own `is_done` came first in the lookup and hid the
+    predicate below from F_q and G_q [contract amendment 1, 2026-11-14,
+    D-134 `[orchestrator]`]), `hpc/pipeline/tests/test_smoke_finalist.py`,
+    and `hpc/pipeline/tests/test_smoke_block7.py` (`test_edge_cases`' pre-made
+    best fit, below).
   - Rule, the done predicate: done(S8) and done(F_q) hold when
     `BEST_FIT_COMPLETE.json` exists, `SEARCH_COMPLETE.json` exists, and the
     trial the artefact names as its finalist (`finalist.trial_id`) is
@@ -2127,6 +2135,16 @@ fixture, not part of the pipeline.
     finalist is fitted again in a new root: M member jobs, as on a first
     run. A root of the current finalist is kept and its member records are
     reused as before. No member record of another finalist is ever reused.
+    An unreadable `finalist_config.json` or `BEST_FIT_COMPLETE.json`, or one
+    that names no trial, cannot be attributed and counts as another
+    finalist's, with or without member records: it is moved aside, never
+    overwritten [contract amendment 1, 2026-11-14, D-134 `[orchestrator]`].
+    So a hand-made `BEST_FIT_COMPLETE.json` that names no finalist is no
+    longer done: `test_smoke_block7.py`'s edge case that pre-made one (`{"pre_made":
+    true}`) and expected `best_fit: skipped` now expects the root moved aside
+    with that file unchanged, the M member jobs and `PIPELINE DONE`; the
+    skipped case (an artefact naming the search's finalist) is
+    `test_smoke_finalist.py`'s.
   - Rule, the retry: sec. 2.2 rule 5. With it, `--retry search` (the next
     step `tools/search_reset.py` prints) makes the best fit follow: when the
     search that ran again has the same finalist the best fit is `skipped`
