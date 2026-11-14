@@ -1,0 +1,9 @@
+Run status: running
+Repository: Leonardodm00/Simulation-Based-Inference
+Commit under test: 8d5b16285140f1a4181c0901bf535c7da041ae39
+Mode: full
+Scope: Blocks 7, 16-23 (tier 2, chain C3: the evaluation)
+Started (UTC): 2026-11-14 00:30
+Last update (UTC): 2026-11-14 00:30
+Phase: setup
+Note: -
