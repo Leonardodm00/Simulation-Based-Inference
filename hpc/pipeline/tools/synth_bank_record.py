@@ -24,6 +24,8 @@ The checks, every shard k < K of the build:
     arm S: every cls is -1; arm R: for c = 0, ..., n_classes - 1 exactly
     donors_per_class * wells_per_donor * n_windows rows of class c, no other
     class
+    every stored theta strictly inside the open unit box: no coordinate <= 0,
+    >= 1 or not finite (block 11's amendment of 2026-11-14)
 On success: <out> (schema synth_bank_record/1) then <out>.sha256, both
 written atomically, and the pass line
 
@@ -140,6 +142,7 @@ def check_shard(bank_dir, k, exp, problems):
     with np.load(npz) as z:
         x_shape = LB.npz_member_shape(z, "x")
         th_shape = LB.npz_member_shape(z, "theta")
+        theta = np.asarray(z["theta"])
         cls = np.asarray(z["cls"])
         donor = np.asarray(z["donor"])
         well = np.asarray(z["well"])
@@ -153,6 +156,18 @@ def check_shard(bank_dir, k, exp, problems):
         problems.append("shard %d: theta of shape %r: %s columns, search.shape_anchors.d_theta is %d"
                         % (k, th_shape, th_shape[1] if len(th_shape) == 2 else "?",
                            int(exp["d_theta"])))
+    # [block 11, amendment 2026-11-14, D-134 (3)] a stored theta strictly
+    # inside the open unit box, on arm S and arm R alike (NaN fails both
+    # comparisons, so the test is written as "not inside").
+    theta = theta.reshape(theta.shape[0] if theta.ndim else 1, -1)
+    with np.errstate(invalid="ignore"):
+        outside = ~((theta > 0) & (theta < 1))
+    if outside.size and bool(np.any(outside)):
+        bad = np.flatnonzero(np.any(outside, axis=1))
+        i, j = int(bad[0]), int(np.flatnonzero(outside[bad[0]])[0])
+        problems.append("shard %d: %d row(s) with a theta outside the open unit box "
+                        "(first: row %d, axis %d, value %r)"
+                        % (k, bad.size, i, j, float(theta[i, j])))
     wells = {}
     for d, w in set(zip(donor.tolist(), well.tolist())):
         wells[d] = wells.get(d, 0) + 1
