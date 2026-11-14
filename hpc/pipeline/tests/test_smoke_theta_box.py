@@ -15,7 +15,8 @@ Checks (the amendment's oracles)
                         1 - 2^-24, 1 - 2^-25, 1 - 1e-9, 1 - eps64, 1: float32
                         of every result in (0, 1), equal to the input in
                         [2^-24, 1 - 2^-24]; the old clip's case (float32 of
-                        clip(1 - 1e-9, eps, 1 - eps) is 1.0)
+                        clip(1 - 1e-9, eps, 1 - eps) is 1.0); -0.2, 1.5, NaN
+                        and inf each raise FloatingPointError
     test_reference      the three samplers at fixed seeds against 8d5b162's
                         (git show): equal to the old value clipped to
                         [BOX_DELTA, 1 - BOX_DELTA], element by element; a
@@ -31,7 +32,11 @@ Checks (the amendment's oracles)
     test_contract       the record tool on a bank whose stored theta was set
                         to 1.0, 0.0 and NaN in one coordinate (arm S; 1.0
                         also on arm R): exit 4, the REFUSE line, nothing
-                        written; the clean banks recorded with their pass line
+                        written; the clean banks recorded with their pass line;
+                        a shard of 0 rows: the row count's REFUSE line, exit 4,
+                        no traceback, as 8d5b162's tool; the builder's cast
+                        given a NaN theta refuses, nothing written
+                        [contract amendment 2]
     test_determinism    the same argv twice gives the same bytes (every array)
     test_edge_cases     clip_open_box: non-finite -> FloatingPointError, the
                         input unchanged, a 0-d and an empty input; the
@@ -152,6 +157,21 @@ def old_stage1():
     return os.path.join(old_tree(), "hpc", "joint", "stage1")
 
 
+def old_record_tool():
+    """8d5b162's tools/synth_bank_record.py, beside the old tree's stage1."""
+    path = os.path.join(old_tree(), "hpc", "pipeline", "tools", "synth_bank_record.py")
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path))
+        src = subprocess.run(["git", "-C", _REPO, "show",
+                              REF_COMMIT + ":hpc/pipeline/tools/synth_bank_record.py"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        if src.returncode != 0:
+            raise AssertionError("git show failed: %s" % src.stderr[-400:])
+        with open(path, "wb") as fh:
+            fh.write(src.stdout)
+    return path
+
+
 def old_simulator():
     """8d5b162's latent_sbi_simulator.py, imported under another name (its
     own imports resolve to this tree's modules, unchanged since then)."""
@@ -179,7 +199,9 @@ def build(out, args, stage1=_STAGE1, expect_ok=True):
 # are those of the real generator with chosen coordinates overwritten by
 # 1 - 1e-9 (the old clip let it through, float32 rounds it to 1.0).
 # MODE "clip": the sampler of the stage1 it runs in, as written;
-# MODE "raw": the draw returned unclipped (the builder's own defence).
+# MODE "raw": the draw returned unclipped (the builder's own defence);
+# MODE "nan_cast": the sampler as written, the simulation at its phi, and the
+# phi_eff the builder casts of well 0 given a NaN on axis 1.
 _FORCED_RUNNER = r'''
 import os, sys
 stage1, mode = sys.argv[1], sys.argv[2]
@@ -211,7 +233,20 @@ def forced_box(spec, n, rng):
     phi = Forced(rng).uniform(0.0, 1.0, size=(int(n), spec.n_latent))
     return np.full(int(n), L.BOX_CLASS, dtype=np.int64), phi
 
-B.sample_box_prior = forced_box
+real_sim = B.simulate_windows
+
+def nan_cast_sim(spec, phi, *a, **kw):
+    x, info = real_sim(spec, phi, *a, **kw)
+    if kw.get("well") == 0:
+        eff = np.array(info["phi_eff"], dtype=np.float64)
+        eff[1] = np.nan
+        info = dict(info, phi_eff=eff)
+    return x, info
+
+if mode == "nan_cast":
+    B.simulate_windows = nan_cast_sim
+else:
+    B.sample_box_prior = forced_box
 sys.argv = [B.__file__] + argv
 sys.exit(B.main(argv))
 '''
@@ -304,11 +339,11 @@ def expect_for(bank_dir, n_shards, wells_per_donor, n_windows, n_classes=3, dono
                       "n_shards": int(n_shards), "rows_per_shard": rows, "argv": argvs}}
 
 
-def record_tool(bank_dir, expect, out):
+def record_tool(bank_dir, expect, out, tool=RECORD_TOOL):
     exp_path = os.path.join(tmp_root(), "expect_%d.json" % (abs(hash(bank_dir)) % 10 ** 8))
     with open(exp_path, "w") as fh:
         json.dump(expect, fh)
-    r = subprocess.run([PYTHON, RECORD_TOOL, "--bank-dir", bank_dir, "--expect", exp_path,
+    r = subprocess.run([PYTHON, tool, "--bank-dir", bank_dir, "--expect", exp_path,
                         "--out", out], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        universal_newlines=True, timeout=300)
     return r.returncode, r.stdout
@@ -361,6 +396,13 @@ def test_known_answer():
     # its float32 is 1.0, on the boundary of the box
     old = np.clip(1.0 - 1e-9, EPS64, 1.0 - EPS64)
     assert old == 1.0 - 1e-9 and float(np.float32(old)) == 1.0, (old, np.float32(old))
+    # [contract amendment 2] below 0, above 1 and not finite: refused
+    for bad in (-0.2, 1.5, float("nan"), float("inf")):
+        try:
+            LSS.clip_open_box(np.array([0.5, bad]))
+            raise AssertionError("clip_open_box accepted %r" % bad)
+        except FloatingPointError:
+            pass
 
 
 def test_reference():
@@ -519,6 +561,43 @@ def test_contract():
                 fh.write(keep)
         rc, txt = record_tool(bank_dir, exp, out)
         assert rc == 0, txt
+
+    # [contract amendment 2] a shard with 0 rows: the row count's refusal,
+    # exit 4, no traceback, the same lines as 8d5b162's tool
+    bank_dir = box_bank()
+    exp = expect_for(bank_dir, 1, 2, 2)
+    out = os.path.join(bank_dir, "BANK_RECORD.json")
+    if os.path.exists(out):
+        os.remove(out)
+        os.remove(out + ".sha256")
+    npz = os.path.join(bank_dir, "shard_0000.npz")
+    keep = open(npz, "rb").read()
+    clean = load_arrays(npz)
+    try:
+        np.savez_compressed(npz[:-4], **dict((k, a[:0]) for k, a in clean.items()))
+        rc, txt = record_tool(bank_dir, exp, out)
+        want = "REFUSE: shard 0: 0 rows, the build's %d" % exp["build"]["rows_per_shard"][0]
+        assert rc == 4 and want in txt and "Traceback" not in txt, txt
+        assert not os.path.exists(out) and not os.path.exists(out + ".sha256")
+        rc_old, txt_old = record_tool(bank_dir, exp, out, tool=old_record_tool())
+        assert rc_old == 4 and "Traceback" not in txt_old, txt_old
+        refuse = [ln for ln in txt.splitlines() if ln.startswith("REFUSE")]
+        refuse_old = [ln for ln in txt_old.splitlines() if ln.startswith("REFUSE")]
+        assert refuse == refuse_old, (refuse, refuse_old)
+        assert not os.path.exists(out)
+    finally:
+        with open(npz, "wb") as fh:
+            fh.write(keep)
+
+    # [contract amendment 2] the builder's cast given a NaN theta: refused,
+    # nothing written
+    nan_dir = os.path.join(tmp_root(), "nan_cast")
+    rc, txt = forced_build(nan_dir, ["--arm", "S", "--prior", "box", "--n-traces", "8",
+                                     "--seed", "5"] + REF, mode="nan_cast")
+    assert rc != 0 and "outside the open unit box after the cast to float32" in txt and \
+        "(first: row 0, axis 1, value nan)" in txt, txt[-800:]
+    assert "Traceback" not in txt, txt[-800:]
+    assert not os.path.exists(nan_dir) or not os.listdir(nan_dir), os.listdir(nan_dir)
 
 
 def test_determinism():

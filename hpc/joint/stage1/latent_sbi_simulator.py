@@ -285,11 +285,16 @@ def clip_open_box(phi):
     Raises
     ------
     FloatingPointError
-        if phi holds a value that is not finite.
+        if phi holds a value that is not finite, or a value below 0 or
+        above 1 (no draw of the three samplers is: it would be a fault
+        upstream, not something to clip away) [contract amendment 2].
     """
     a = np.asarray(phi, dtype=np.float64)
     if not np.all(np.isfinite(a)):
         raise FloatingPointError("phi holds a value that is not finite")
+    if np.any(a < 0.0) or np.any(a > 1.0):
+        raise FloatingPointError("phi holds a value below 0 or above 1 "
+                                 "(min %r, max %r)" % (float(a.min()), float(a.max())))
     # out= a new array, so that a 0-d input also returns an ndarray and the
     # input is never written; np.clip leaves a value inside the interval
     # bit for bit.
