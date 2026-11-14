@@ -2205,7 +2205,14 @@ fixture, not part of the pipeline.
   - Confirmed: the choice yes 2026-11-14 (D-134 (2): set aside and refit);
     the done predicate and sec. 2.2's rule 5 are Claude's way to it, to
     confirm.
-  - Status: drafted.
+  - Status: smoke-tested 2026-11-14 `[SANDBOX]` (`test_smoke_finalist.py` 6
+    pass, 2 skip -- convergence, determinism; `test_smoke_block7.py` 7 of 8,
+    `test_smoke_block7b.py` 6 of 7, `test_smoke_block2.py` 13 of 15 (its
+    `test_env_faults` needs the Sbi-extractor checkout of D-113),
+    `test_smoke_block3.py` 8 of 9, each with its convergence skip, after
+    contract amendments 1 and 2); checked by an independent agent on
+    `e6e7af0` and `57e294d` (`specs/test_reports/2026-11-14_1558_incremental.md`,
+    `2026-11-14_1659_incremental.md`). Not run on davinci.
 - Amendment (j), 2026-11-14 (D-134 (1); wave W1, block 1b; the audit's
   F401, F503): the identity is re-checked whenever the configuration may
   have changed.
@@ -2267,7 +2274,11 @@ fixture, not part of the pipeline.
   - Confirmed: the refusal yes 2026-11-14 (D-134 (1), the plan's 1b; it
     applies the rule of the identity above); the place of the check
     (start and every poll) is Claude's, to confirm.
-  - Status: drafted.
+  - Status: smoke-tested 2026-11-14 `[SANDBOX]` (`test_smoke_identity.py` 5
+    of 7, 2 skip -- convergence, determinism; the poll's and the start's
+    checks each removed are caught); checked by an independent agent on
+    `e6e7af0` (`specs/test_reports/2026-11-14_1558_incremental.md`). Not run
+    on davinci.
 - Test oracles (`hpc/pipeline/tests/test_smoke_block7.py`, the fake PBS
   with `FAKE_PBS_ENFORCE_WALLTIME`, the blocks 4-6 bank fixture: 194 rows,
   8 shards, 44 donors; the trial jobs run the real tuner and runner):
@@ -3453,10 +3464,13 @@ Claude; Confirmed: no]
     coordinate <= 0, >= 1 or not finite: `REFUSE: shard <k>: <n> row(s) with
     a theta outside the open unit box (first: row <i>, axis <j>, value
     <v>)`, exit 4 and nothing written as its other refusals, on arm S and
-    arm R alike. A shard with no row is refused by the tool's row count as
-    before (`REFUSE: shard <k>: 0 rows, the build's <n>`, exit 4): the theta
-    check adds no problem for an empty array and never raises [contract
-    amendment 2; the final check's F2].
+    arm R alike. A shard whose x has no row is refused by the tool's row
+    count as before (`REFUSE: shard <k>: 0 rows, the build's <n>`, exit 4):
+    the theta check adds no problem for an empty array and never raises
+    [contract amendment 2; the final check's F2] [corrected 2026-11-14: "a
+    shard with no row" said more than the tool does -- its row count reads
+    x; see the Status]. -0.0 is not below 0 for `clip_open_box`: it is
+    clipped to BOX_DELTA.
   - `write_shard` creates the bank's folder with `exist_ok=True`: the K
     shard jobs of one bank (block 16) may reach that line together.
   - Unchanged: for the same arguments, a bank's `generator_sha256` and
@@ -3492,7 +3506,14 @@ Claude; Confirmed: no]
       both shards present; with `8d5b162`'s `latent_bank.py` one exits 1.
   - Confirmed: the clip yes 2026-11-14 (D-134 (3)); the builder's and the
     record tool's refusals are Claude's, to confirm.
-  - Status: drafted.
+  - Status: smoke-tested 2026-11-14 `[SANDBOX]` (`test_smoke_theta_box.py` 6
+    pass, 1 skip -- convergence; the stage 1 suites, blocks 11-14's and the
+    synthetic suite at their earlier counts); checked by an independent
+    agent on `e6e7af0` and `57e294d` (the two reports of 2026-11-14). Open,
+    for the hardening wave (the second report's F1, present at `8d5b162`
+    too): the record tool takes a shard's rows from x alone and does not
+    check that theta, cls, donor and well have as many (`latent_bank`'s
+    `check_arrays` does; the builder cannot write such a shard).
 - Confirmed: yes 2026-11-03 (D-118; D-120: arm S = 20,000 theta on the box,
   2 wells x 1 window).
 - Status: smoke-tested 2026-11-03 (9 pass, 1 skip; the stage 1, 2 and 3

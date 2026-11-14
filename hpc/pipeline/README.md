@@ -81,6 +81,18 @@ refused while that stage's jobs still run (`REFUSE: --retry <stage>: the
 stage has <n> job(s) still queued or running ...`): the reset forgets them
 and would submit their work again.
 
+Since 2026-11-14 (D-134; SPEC sec. 2.2 rule 5, block 7 (i) and (j)): `--retry <stage>`
+also returns to pending every stage downstream of it that is done or skipped, so that
+its artefact of record is read again (and is refused while such a stage has a job queued
+or running). A best fit is done only when its `BEST_FIT_COMPLETE.json` names the finalist
+of its search's `SEARCH_COMPLETE.json`; at its start a best-fit folder that belongs to
+another finalist is moved aside whole as `<folder>.set_aside<k>` (never deleted) and the
+finalist is fitted again -- so after `--retry search` the best fit follows the search.
+A search whose identity the configuration no longer gives (the split's fractions or
+seed, the campaign, the anchors, the overrides, the flow) stops with a `REFUSE:` line
+at its start or at its next poll, even under `--accept-config-change`: restore the
+value, or reset the search first.
+
 ## The core cap (D-099, 2026-10-19)
 
 The pipeline's jobs never ask for more than `resources.max_cores` cores at
