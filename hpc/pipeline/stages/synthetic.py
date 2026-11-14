@@ -191,6 +191,11 @@ class RunBestFitStage(_RunStage, BestFitStage):
     def on_killed(self, cfg, st, pbs):
         return BestFitStage.on_killed(self, self._view(cfg), st, self._rec(pbs))
 
+    def is_done(self, cfg):
+        # [block 7 (i), D-134] the best fit follows its search's finalist: S8's
+        # predicate on the view, not _RunStage's artefact-only one (G_q inherits it)
+        return BestFitStage.is_done(self, self._view(cfg))
+
     def dry_run(self, cfg, st):
         v = self._view(cfg)
         return (["run %s: the best fit of %s in %s"

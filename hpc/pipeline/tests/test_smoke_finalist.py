@@ -40,8 +40,10 @@ Checks (specs/SPEC.md block 7, amendment (i), "Test oracles")
                         or under the set-aside root); --retry <s> with a
                         downstream job live exits 2 and leaves the state
                         file byte for byte; a retry of a stage with nothing
-                        downstream behaves as before; the state file
-                        carries no field an older one lacks
+                        downstream behaves as before; `submit --retry
+                        search` (CLI, fake PBS) with a downstream job
+                        held exits 2, submits nothing, state unchanged;
+                        the state file carries no field an older one lacks
     test_contract       the reasons is_done gives name the failing
                         condition (both trial ids, or the missing file);
                         the log lines of the set-aside and of rule 5
@@ -634,6 +636,48 @@ def test_invariants():
         log = _Log()
         st2, rc = P._prepare_state(tcfg, graph, wr, ["a"], False, _FakePBSModule(), log, dry_run=False)
         assert rc is None and st2.stage("b")["status"] == "failed" and st2.stage("c")["status"] == "pending"
+        # (c2) the `submit` path (CLI, fake PBS): `submit --retry search` with a job of
+        # best_fit (downstream) live -- a held job -- exits 2, submits nothing and leaves
+        # the state file byte for byte
+        sroot = os.path.join(root, "submit")
+        os.makedirs(sroot)
+        rcfg = _recorded_cfg(sroot)
+        spool = os.path.join(sroot, "spool")
+        os.makedirs(spool)
+        env = dict(os.environ)
+        env.update({"PATH": os.path.join(_HERE, "fake_pbs") + os.pathsep + env.get("PATH", ""),
+                    "FAKE_PBS_SPOOL": spool, "FAKE_PBS_DELAY": "0.2", "PIPELINE_SKIP_CONDA": "1",
+                    "OMP_NUM_THREADS": "1"})
+        script = os.path.join(sroot, "noop.sh")
+        _write(script, "#!/bin/bash\ntrue\n")
+        r = subprocess.run(["qsub", "-h", "-N", "bf_held", "-o", os.path.join(sroot, "held.log"), script],
+                           env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True, timeout=60)
+        assert r.returncode == 0, r.stdout
+        held = r.stdout.strip().split()[-1]
+        rwr = rcfg.data["paths"]["work_root"]
+        rst = State.new(rwr, rcfg.tag, rcfg.path, rcfg.sha256)
+        for s_ in S.default_graph(rcfg):
+            rst.stage(s_.name)["status"] = "done"
+        rst.stage("best_fit")["jobs"] = [{"id": held, "role": "member seed 1", "finished": False,
+                                         "cmd": [], "log": None, "exit_status": None,
+                                         "walltime_s": None, "submitted_utc": "2026-11-14T00:00:00Z"}]
+        rst.save()
+        before = open(State.path_of(rwr), "rb").read()
+        n_before = len(glob.glob(os.path.join(spool, "*.json")))
+        try:
+            r = subprocess.run([PYTHON, os.path.join(_PIPE, "pipeline.py"), "submit", "--config", rcfg.path,
+                                "--retry", "search"], env=env, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, universal_newlines=True, timeout=120)
+            assert r.returncode == 2, (r.returncode, r.stdout)
+            assert ("REFUSE: --retry search: the stage best_fit, downstream of it, has 1 job(s) still "
+                    "queued or running (%s)" % held) in r.stdout, r.stdout
+            assert "SUBMITTED" not in r.stdout, r.stdout
+            assert len(glob.glob(os.path.join(spool, "*.json"))) == n_before, "submit submitted a job"
+            assert open(State.path_of(rwr), "rb").read() == before, "a refused submit changed the state"
+            print("    submit: " + [x for x in r.stdout.splitlines() if "REFUSE" in x][0][:200])
+        finally:
+            subprocess.run(["qdel", held], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     finally:
         shutil.rmtree(root, ignore_errors=True)
     # (d) no file is deleted by any case of the end-to-end sequence
