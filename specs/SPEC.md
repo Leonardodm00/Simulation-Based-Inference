@@ -203,6 +203,14 @@ stage in dependency order:
    "stop on a refusal"); a re-run after the user's repair starts that stage
    again from `pending` only if the user removed it from the state file or
    passed `--retry <stage>`; otherwise it stops again with the same report.
+5. [2026-11-14, D-134; block 7 (i)] `--retry <s>` also returns to `pending`
+   every stage downstream of s -- a stage that has s among its dependencies,
+   directly or through other stages -- whose status is `done` or `skipped`,
+   so that rule 2 reads its done(s) again when its turn comes: this is the
+   one case in which a done stage is re-checked. A downstream stage with a
+   job still queued or running refuses the retry as s's own live jobs do
+   (exit 2, nothing changed); a downstream stage that is `pending` or
+   `failed` is left as it is. One log line per stage returned.
 
 The sequencer loop: every `poll_seconds` it ticks each stage that is not
 done, skipped or failed, in dependency order; it exits 0 when every stage is
@@ -2092,6 +2100,137 @@ fixture, not part of the pipeline.
   the contract digest, n_train, the campaign, the anchors, the overrides
   and the flow settings; a results folder whose file disagrees with the
   configuration is refused before anything is submitted (proposal 2).
+- Amendment (i), 2026-11-14 (D-134 (2); wave W1, block 1a; the audit's
+  F409, F504, S502): the best fit follows its search's finalist.
+  - Modules: `hpc/pipeline/stages/best_fit.py` (the best-fit stage in its
+    three uses: S8, F_q of a synthetic run view, G_q of block 18),
+    `hpc/pipeline/pipeline.py` (`--retry`, sec. 2.2 rule 5),
+    `hpc/pipeline/tests/test_smoke_finalist.py`.
+  - Rule, the done predicate: done(S8) and done(F_q) hold when
+    `BEST_FIT_COMPLETE.json` exists, `SEARCH_COMPLETE.json` exists, and the
+    trial the artefact names as its finalist (`finalist.trial_id`) is
+    `SEARCH_COMPLETE.json`'s `finalist.trial_id`. done(G_q) holds when its
+    artefact exists and the search's finalist it recorded (block 18's
+    `search_finalist.trial_id`) is `SEARCH_COMPLETE.json`'s. The reason
+    `is_done` returns names the condition that fails (the two trial ids, or
+    the missing file), so `--status` shows it.
+  - Rule, the start: before the stage writes or submits anything it reads
+    its current finalist (S8, F_q: `SEARCH_COMPLETE.json`'s; G_q: the other
+    arm's, block 18) and examines its root (`<runs_root>/<dataset>_best`,
+    `_best_alt`). The root BELONGS TO ANOTHER FINALIST when it holds a
+    `finalist_config.json` or a `BEST_FIT_COMPLETE.json` that names another
+    trial, or holds any member record while no readable `finalist_config.json`
+    names the current finalist. Such a root is moved aside whole with
+    `stages.common.set_aside(root, "set_aside")` (`<root>.set_aside<k>`;
+    D-095: a move, never a deletion; an earlier one is never overwritten),
+    with one log line naming the two trial ids and the new path, and the
+    finalist is fitted again in a new root: M member jobs, as on a first
+    run. A root of the current finalist is kept and its member records are
+    reused as before. No member record of another finalist is ever reused.
+  - Rule, the retry: sec. 2.2 rule 5. With it, `--retry search` (the next
+    step `tools/search_reset.py` prints) makes the best fit follow: when the
+    search that ran again has the same finalist the best fit is `skipped`
+    on its artefact, and when it has another the old root is set aside and
+    the new finalist is fitted.
+  - The dry run prints, for a best fit whose root belongs to another
+    finalist, that the root would be moved aside (the two trial ids) and the
+    finalist fitted again; it moves and writes nothing.
+  - State: no field is added that an earlier state file lacks; a chain
+    started at `8d5b162` resumes under this code with no change of
+    behaviour unless a search runs again or `--retry` is passed.
+  - Test oracles (`test_smoke_finalist.py`; the fake PBS):
+    - known answer: `is_done`'s table -- no artefact; the artefact naming
+      the search's finalist; naming another trial; no `SEARCH_COMPLETE.json`
+      -- for S8 and for G_q; on a chain a -> b -> c with every stage done,
+      `--retry a` returns b and c to `pending`, `--retry b` returns c alone,
+      `--retry c` returns none;
+    - reference, end to end on a reduced project: a finished run; then the
+      search's finalist changed (the search reset and run again with another
+      `gp_seed`, or `SEARCH_COMPLETE.json` rewritten to name the second-best
+      trial of the ledger, as the audit's t2-C2 did) and `--retry search`
+      (recorded kind) or `--retry search_<q>` (synthetic kind): the best fit
+      returns to `pending`; the old root is found as `<root>.set_aside1`
+      with every file's sha256 unchanged; M member jobs are submitted;
+      `BEST_FIT_COMPLETE.json` names the search's finalist and every member
+      record carries its configuration; `PIPELINE DONE`. With the finalist
+      unchanged: the best fit `skipped`, no member job, the root untouched;
+    - the audit's F504 case: `BEST_FIT_COMPLETE.json` removed, the member
+      folders of another finalist kept, `--retry best_fit`: the root is set
+      aside and M member jobs run (0 before this amendment);
+    - invariants: no file is deleted by any case (every file present
+      before is present after, at its path or under the set-aside root);
+      `--retry <s>` with a downstream job live exits 2 and leaves the state
+      file byte for byte; a retry of a stage with nothing downstream behaves
+      as before;
+    - edge cases: an unreadable `finalist_config.json` beside member
+      records (the root is set aside); a second set-aside (`.set_aside2`);
+      the dry run after a changed finalist (the line, nothing moved).
+  - Confirmed: the choice yes 2026-11-14 (D-134 (2): set aside and refit);
+    the done predicate and sec. 2.2's rule 5 are Claude's way to it, to
+    confirm.
+  - Status: drafted.
+- Amendment (j), 2026-11-14 (D-134 (1); wave W1, block 1b; the audit's
+  F401, F503): the identity is re-checked whenever the configuration may
+  have changed.
+  - Modules: `hpc/pipeline/stages/search.py`,
+    `hpc/pipeline/tests/test_smoke_identity.py`.
+  - Rule: the identity's fields that come from the configuration are
+    K_cfg = {`split_fracs` <- `split.fractions`, `split_seed` <-
+    `search.train_seed`, `campaign` <- `search.campaign` (the run view's on
+    a synthetic data set), `shape_anchors`, `space_overrides`, `flow` <-
+    `search.shape_anchors`, `search.space_overrides`, `search.flow`}. At the
+    stage's start, once the identity is read from the state or computed, and
+    at the top of every poll, before anything is proposed or submitted in
+    that call, each field of K_cfg in the state's identity is compared with
+    the value the current configuration gives (numbers as floats, lists
+    element by element in order, dicts key by key). On any difference the
+    stage refuses with `REFUSE: the configuration no longer matches this
+    search's identity (<key>: search <old>, configuration <new>; ...); a
+    search is not continued under another identity -- restore the value(s),
+    or reset the search first`: the stage is `failed` with that text, the
+    run stops by sec. 2.2 rule 4 (the `STOP:` line, exit 3), nothing is
+    proposed or submitted in that call, `pipeline_rounds.json` is not
+    rewritten, and the jobs already queued or running are neither deleted
+    nor forgotten. After the values are restored, `--retry search` (once
+    those jobs have ended) continues the search by the rule of the retry.
+    The fields that come from the bank (`split_hash`, `contract_digest`,
+    the counts, `W`, `d_theta`, `latent_kind`) are not recomputed at a
+    poll: the start's check of `pipeline_rounds.json` covers them.
+  - A change of a key outside K_cfg accepted while the search runs (a
+    walltime, `poll_seconds`, `max_concurrent_trials`, `resources.*`)
+    continues the search as before.
+  - The dry run prints the `REFUSE:` line for a search whose identity the
+    configuration no longer matches.
+  - State: no field is added; an identity written at `8d5b162` from a
+    configuration compares equal to that configuration.
+  - Test oracles (`test_smoke_identity.py`; the fake PBS):
+    - known answer: the comparison on a table -- each field of K_cfg
+      changed alone (that key named, with both values), two changed (both
+      named), none changed (no refusal), `0.85` written `0.8500` (no
+      refusal), the fractions in another order (refused);
+    - contract: for each committed project file (`giulia.json`,
+      `linddup.json`, and every run view of `synth.json`) the K_cfg part of
+      the identity as `_identity` writes it from that file compares equal to
+      the file -- no refusal on the running chains;
+    - reference, end to end on a reduced search of at least two rounds at
+      one trial at a time: stopped while round 0 runs, `split.fractions`
+      changed, submitted again with `--accept-config-change`: the `STOP:`
+      line carries the `REFUSE:` text naming `split_fracs`, exit 3, no trial
+      job is submitted after the change (the fake PBS's count),
+      `pipeline_rounds.json` byte for byte; then the value restored and
+      `--retry search`: `PIPELINE DONE`, and every record of the ledger has
+      the identity's `split_hash`. The same refusal for
+      `search.flow.conditioner_hidden_layers`; a changed
+      `search.trial.walltime` continues to `PIPELINE DONE`;
+    - invariants: after every case, every ok record's `split_hash` is the
+      identity's;
+    - edge cases: the change accepted before the stage has started (the
+      start refuses a folder of another identity as before); the dry run's
+      line.
+  - Confirmed: the refusal yes 2026-11-14 (D-134 (1), the plan's 1b; it
+    applies the rule of the identity above); the place of the check
+    (start and every poll) is Claude's, to confirm.
+  - Status: drafted.
 - Test oracles (`hpc/pipeline/tests/test_smoke_block7.py`, the fake PBS
   with `FAKE_PBS_ENFORCE_WALLTIME`, the blocks 4-6 bank fixture: 194 rows,
   8 shards, 44 donors; the trial jobs run the real tuner and runner):
@@ -3240,6 +3379,72 @@ Claude; Confirmed: no]
   `box_unit_box` and L0 = 0.
 - Data flow: arm S's bank of a synthetic data set (the roadmap's step S4
   builds it as an array); consumed by the runner (blocks 4-7).
+- Amendment 2026-11-14 (D-134 (3); wave W1, block 1c; the audit's F202
+  and F206): theta strictly inside the open unit box in every bank.
+  [corrected 2026-11-14: this supersedes the Rule's "clipped to [eps, 1 -
+  eps] with eps the float64 machine epsilon": a draw u in (1 - 2^-25, 1)
+  passed that clip and was stored as the float32 1.0.]
+  - Modules: `hpc/joint/stage1/latent_sbi_simulator.py` (`BOX_DELTA`,
+    `clip_open_box`, and its use in `sample_prior`,
+    `sample_prior_given_classes`, `sample_box_prior`),
+    `hpc/joint/stage1/build_latent_bank.py` (the stored theta's check),
+    `hpc/joint/stage1/latent_bank.py` (`write_shard`'s folder),
+    `hpc/pipeline/tools/synth_bank_record.py` (the theta check),
+    `hpc/pipeline/tests/test_smoke_theta_box.py`.
+  - Public API: `BOX_DELTA = 2.0 ** -24`, the spacing of float32 in
+    [1/2, 1); `clip_open_box(phi) -> ndarray`: phi any shape, float64, each
+    value in [0, 1]; returns a new float64 array of that shape,
+    clip(phi, BOX_DELTA, 1 - BOX_DELTA); the input is not changed; a
+    non-finite value raises `FloatingPointError`.
+  - Rule: the three samplers return `clip_open_box` of their draw, in place
+    of the clip at the float64 epsilon. `BOX_DELTA` and `1 - BOX_DELTA` are
+    float32 numbers and rounding to nearest is monotone, so for every phi a
+    sampler returns float32(phi) lies in [BOX_DELTA, 1 - BOX_DELTA], inside
+    (0, 1): the theta a shard stores (float32, sec. 2 Notation) is strictly
+    inside the open box. A draw the new clip moves has probability
+    2 BOX_DELTA = 1.2e-7 per coordinate under the uniform prior; every draw
+    in [BOX_DELTA, 1 - BOX_DELTA] is unchanged bit for bit. The simulation
+    is run at the float64 phi, as before.
+  - The builder, after casting theta to float32 for the shard, refuses a
+    stored coordinate <= 0 or >= 1 (the count and the first row and axis;
+    nothing written): a defence, not reachable through the samplers.
+  - The record tool (block 16) refuses, per shard, a stored theta with a
+    coordinate <= 0, >= 1 or not finite: `REFUSE: shard <k>: <n> row(s) with
+    a theta outside the open unit box (first: row <i>, axis <j>, value
+    <v>)`, exit 4 and nothing written as its other refusals, on arm S and
+    arm R alike.
+  - `write_shard` creates the bank's folder with `exist_ok=True`: the K
+    shard jobs of one bank (block 16) may reach that line together.
+  - Unchanged: for the same arguments, a bank's `generator_sha256` and
+    contract digest, and its `build`, are those of the code at `8d5b162`,
+    so shards built before and after pool in one bank, and a calibration
+    bank built after is of the generator of a simulated bank built before.
+  - Test oracles (`test_smoke_theta_box.py`):
+    - known answer: `clip_open_box` on 0, 1e-300, 2^-25, 2^-24, 0.5,
+      1 - 2^-24, 1 - 2^-25, 1 - 1e-9, 1 - (float64 epsilon), 1: the float32
+      of every result is > 0 and < 1, and the result equals the input where
+      the input lies in [2^-24, 1 - 2^-24]; the old clip's case reproduced
+      (float32 of clip(1 - 1e-9, eps, 1 - eps) is 1.0);
+    - reference: at fixed seeds the three samplers against the functions of
+      `8d5b162` (`git show`), element by element: equal where the old value
+      lies in [BOX_DELTA, 1 - BOX_DELTA], and the clipped old value
+      elsewhere; with a generator returning chosen values (1 - 1e-9 among
+      them) the box sampler, the builder's cast and the record tool leave a
+      stored theta < 1;
+    - invariants: a default (mixture) bank, a box bank and a cohort with
+      regular centres, small, built by this code and by `8d5b162`'s
+      (`git archive`): every array byte for byte, `generator_sha256`,
+      contract digest and `build` equal;
+    - contract: the record tool on a bank whose stored theta was set to
+      1.0, to 0.0 and to NaN in one coordinate: exit 4, the `REFUSE:` line,
+      nothing written; the clean bank recorded with its pass line;
+    - determinism: the same argv twice gives the same bytes;
+    - edge cases: two shard builds started together into one new folder
+      with `os.makedirs` slowed by 0.5 s (the audit's F206): both exit 0,
+      both shards present; with `8d5b162`'s `latent_bank.py` one exits 1.
+  - Confirmed: the clip yes 2026-11-14 (D-134 (3)); the builder's and the
+    record tool's refusals are Claude's, to confirm.
+  - Status: drafted.
 - Confirmed: yes 2026-11-03 (D-118; D-120: arm S = 20,000 theta on the box,
   2 wells x 1 window).
 - Status: smoke-tested 2026-11-03 (9 pass, 1 skip; the stage 1, 2 and 3
@@ -3285,6 +3490,9 @@ Claude; Confirmed: no]
   built by the code before and after this block are equal in every array
   but shard 1's ids, which are the old ones + 10^6, and have one digest.
 - Data flow: arm R's banks R0 and R3 (step S4); consumed by the runner.
+- Amendment 2026-11-14 (D-134 (3)): `sample_prior_given_classes` clips with
+  `clip_open_box` (block 11's amendment of this date); the cohort's theta*
+  is stored strictly inside the open box.
 - Confirmed: yes 2026-11-03 (D-120: the regular simplex at 0.6 of the DSN
   spacing, 9 donors per condition; D-118's Implies for F-at).
 - Status: smoke-tested 2026-11-03.
@@ -3521,6 +3729,10 @@ Claude; Confirmed: no]
   written; the clean banks recorded with their builds.
 - Data flow: `synthetic.*` -> the banks -> S_q and F_q (block 15) -> the
   runner (blocks 4-7, 11-14).
+- Amendment 2026-11-14 (D-134 (3)): the record tool also refuses a shard
+  whose stored theta leaves the open unit box, and the shard jobs no longer
+  race to create the bank's folder (block 11's amendment of this date;
+  `test_smoke_theta_box.py`).
 - Confirmed: yes 2026-11-03 (D-120: arm S 20,000 theta x 2 wells x 1
   window, arm R 3 x 9 donors x 2 wells x 6 windows, W 18,000; D-121: two
   independent cohorts; D-123: the bank jobs' layout is Claude's, below).
@@ -4552,6 +4764,9 @@ pins proposed by Claude; Confirmed: no]
 | `python3 hpc/pipeline/tests/test_smoke_purge.py` | block 10's smoke test under the fake PBS | none (stdlib) | about 15 s |
 | `bash hpc/pipeline/run_pipeline.sh --project synth --dry-run` | blocks 15-17: the synthetic experiment's 13 stages and every kind of qsub line; submits nothing [2026-11-11, block 18: 17 stages with v3; on the running state with `--accept-config-change`] | the committed `synth.json`; davinci paths need not exist | seconds |
 | `python3 hpc/pipeline/tests/test_smoke_synthetic.py` | blocks 15-18's smoke test: T15, T16 and T18's config, graph and dry run under the fake PBS, T17 and T18 end to end | numpy and scipy (the bench generator); T17 and T18's end to end the training environment (torch, sbi, zuko, scikit-optimize) | about 30 s; about 2 min more for T17 and T18 |
+| `python3 hpc/pipeline/tests/test_smoke_finalist.py` | block 7 (i), 2026-11-14: the best fit follows its search's finalist; `--retry` and the downstream stages | the training environment for its end-to-end checks; the fake PBS | minutes |
+| `python3 hpc/pipeline/tests/test_smoke_identity.py` | block 7 (j), 2026-11-14: the search's identity re-checked after an accepted configuration change | the training environment for its end-to-end checks; the fake PBS | minutes |
+| `python3 hpc/pipeline/tests/test_smoke_theta_box.py` | block 11's amendment of 2026-11-14: theta inside the open box (the samplers, the builder, the record tool), the shard folder's race | numpy, scipy; the builder's environment | about a minute |
 | `python3 hpc/joint/stage4/smoke_test_joint_tune.py -k J37` | block 18's tuner check: `finalists --arm/--out` | numpy, scikit-optimize | seconds |
 | `bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what data [--dry-run]` | block 23: the data overview's job (`ev_dataview.py`): the windows, the eight statistics, theta and the PCA of the synthetic data set, nine figures | davinci (the tests: the reduced project under the fake PBS) | about a minute on 4,000 + 648 windows |
 
@@ -4567,7 +4782,10 @@ run on davinci is `--dry-run`, then the plain command; the pass lines are
 stated in the README.
 
 Blocks 11-14 (2026-11-03): the sandbox installs torch 2.10.0, sbi 0.27.0,
-zuko 1.6.0 and pytorch-metric-learning 1.6.3 (CPU) and runs the arms at
+zuko 1.6.0 and pytorch-metric-learning 1.6.3 (CPU) [corrected 2026-11-14: the
+audit's sandboxes ran 2.9.0; 3.0.3 has no `utils.loss_and_miner_utils`, which
+`hpc/dsn/dsn_joint_loss.py` imports, so `hpc/requirements.txt` and
+`hpc/environment.yml` now ask `>=2.3,<3` (the audit's F207, F306, F708)] and runs the arms at
 2 epochs of 3 steps; the searches and the full banks run on davinci (the
 roadmap's step S5). `hpc/joint/stage1/smoke_test_bench_burst.py` stops at
 its check B4 in the sandbox -- scipy 1.18.1's `kstest(x, "norm",

@@ -258,6 +258,37 @@ def regular_centres(lbg, n_classes, n_label_axes, scale):
 # [block 11] The class label of a row drawn from the box prior: no class.
 BOX_CLASS = -1
 
+# [block 11, amendment 2026-11-14, D-134 (3)] The spacing of float32 in
+# [1/2, 1): a float64 phi in [BOX_DELTA, 1 - BOX_DELTA] is stored by a shard
+# (theta, float32) strictly inside the open unit box.
+BOX_DELTA = 2.0 ** -24
+
+
+def clip_open_box(phi):
+    """[block 11, amendment 2026-11-14, D-134 (3)] Clip a draw to
+    [BOX_DELTA, 1 - BOX_DELTA], so that its float32 copy in a shard is
+    strictly inside (0, 1).
+
+    Parameters
+    ----------
+    phi : array_like, any shape, float64, each value in [0, 1]
+        Unit-box coordinates (dimensionless), e.g. (n, n_latent).
+
+    Returns
+    -------
+    ndarray, the shape of phi, float64
+        clip(phi, BOX_DELTA, 1 - BOX_DELTA) in a new array; phi itself is
+        not changed. A value already in the interval is returned bit for
+        bit.
+
+    Raises
+    ------
+    FloatingPointError
+        if phi holds a value that is not finite.
+    """
+    raise NotImplementedError("contract: wave W1, block 1c")
+
+
 
 def sample_box_prior(spec, n, rng):
     """[block 11, D-118] Draw (c, phi) from the unit box, the prior of the
