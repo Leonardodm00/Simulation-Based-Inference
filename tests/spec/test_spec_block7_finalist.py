@@ -385,3 +385,97 @@ def test_dry_run_moves_nothing(root):
     lines = stg.dry_run(cfg, {"sub": {}, "jobs": []})
     assert any("moved aside" in ln and "OLD" in ln and "CUR" in ln for ln in lines), lines
     assert sha_tree(dirs["root"]) == before and not os.path.lexists(dirs["root"] + ".set_aside1")
+
+
+# ======================================================================
+# Contract amendment 2 (2026-11-14), oracles from SPEC.md written before the
+# code was read again:
+# - sec. 2.2 rule 5: a downstream stage `running` with no job live is left
+#   as it is by `--retry` (status, jobs, sub unchanged; no "returned" line;
+#   no refusal).
+# - block 7 (i), the start, F1: a SEARCH_COMPLETE.json and a
+#   BEST_FIT_COMPLETE.json that name one finalist (the suites' new fixture
+#   text) make S8 done, and the start keeps such a root (nothing moved).
+# - block 7 (i), the done predicate, F3 (known limit): done(G_q) reads only
+#   the recorded search finalist; G_q's start compares the root with the
+#   other arm's current finalist and moves a root of another trial aside.
+# ======================================================================
+
+def test_amend2_retry_leaves_running_without_live_job(root):
+    cfg = ToyCfg(root)
+    g = diamond()
+    statuses = dict((n.name, "done") for n in g)
+    statuses["d"] = "running"                      # its job d.1 finished: not live
+    make_state(cfg, g, statuses)
+    wr = cfg.data["paths"]["work_root"]
+    before = json.load(open(State.path_of(wr)))["stages"]["d"]
+    log = Log()
+    st, rc = P._prepare_state(cfg, g, wr, ["a"], False, FakePBS(), log, dry_run=False)
+    assert rc is None, log.lines
+    d = st.data["stages"]["d"]
+    assert d["status"] == "running" and d["jobs"] == before["jobs"] and d["sub"] == before["sub"], d
+    assert not any(ln.startswith("d returned") for ln in log.lines), log.lines
+    # e, downstream of d and done, still returns (d's state does not block it)
+    assert st.data["stages"]["e"]["status"] == "pending"
+
+
+def test_amend2_retry_refused_by_live_job_in_running_downstream(root):
+    cfg = ToyCfg(root)
+    g = diamond()
+    statuses = dict((n.name, "done") for n in g)
+    statuses["d"] = "running"
+    make_state(cfg, g, statuses, live=("d.1",))
+    wr = cfg.data["paths"]["work_root"]
+    before = open(State.path_of(wr), "rb").read()
+    rc = P.run(cfg, graph=g, retry=["a"], pbs_module=FakePBS(live=["d.1"]), poll_seconds=0.01,
+               max_ticks=2, log=Log())
+    assert rc == 2
+    assert open(State.path_of(wr), "rb").read() == before
+
+
+SUITE_FIXTURE = '{"finalist": {"trial_id": "pre_made"}, "pre_made": true}\n'   # the suites' text
+
+
+def test_amend2_suite_fixture_is_done_and_kept(root):
+    cfg = rec_cfg(root)
+    stg = BestFitStage()
+    dirs = stg._dirs(cfg)
+    _write(dirs["search_complete"], SUITE_FIXTURE)
+    _write(dirs["complete"], SUITE_FIXTURE)
+    done, why = stg.is_done(cfg)
+    assert done is True, why
+    # S7: done(s) is SEARCH_COMPLETE.json's existence (sec. 2.1)
+    by = dict((s_.name, s_) for s_ in S.default_graph(cfg))
+    assert by["search"].is_done(cfg)[0] is True
+    # the start keeps a root whose artefact names the current finalist
+    before = sha_tree(dirs["root"])
+    log = Log()
+    stg._follow_finalist(cfg, {"sub": {}, "jobs": []}, log)
+    assert sha_tree(dirs["root"]) == before and not os.path.lexists(dirs["root"] + ".set_aside1")
+    assert log.lines == [], log.lines
+
+
+@pytest.mark.parametrize("files,moved", [
+    ({"finalist_config.json": {"trial_id": "STALE"}, MEM: {"L": 1.0}}, True),
+    ({"finalist_config.json": {"trial_id": "NEWBEST"}, MEM: {"L": 1.0}}, False),
+])
+def test_amend2_gq_start_compares_other_arm_finalist(root, monkeypatch, files, moved):
+    """F3's documented way out: with G_q's BEST_FIT_COMPLETE.json moved aside,
+    the start compares the root with the other arm's current finalist (here
+    NEWBEST, the tuner's answer stubbed) and moves a root of STALE aside."""
+    cfg = synth_cfg(root)
+    gq = dict((s_.name, s_) for s_ in S.default_graph(cfg))["best_fit_alt_S-A2-R0"]
+    v = gq._view(cfg)
+    monkeypatch.setattr(type(gq), "_current_finalist_id", lambda self, c: "NEWBEST")
+    dirs = gq._dirs(v)
+    for rel, obj in files.items():
+        _write(os.path.join(dirs["root"], rel), obj)
+    before = sha_tree(dirs["root"])
+    log = Log()
+    gq._follow_finalist(v, {"sub": {}, "jobs": []}, log)
+    aside = dirs["root"] + ".set_aside1"
+    if moved:
+        assert os.path.isdir(aside) and sha_tree(aside) == before, log.lines
+        assert len(log.lines) == 1 and "NEWBEST" in log.lines[0] and "STALE" in log.lines[0], log.lines
+    else:
+        assert not os.path.lexists(aside) and sha_tree(dirs["root"]) == before, log.lines

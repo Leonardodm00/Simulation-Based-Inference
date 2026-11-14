@@ -443,3 +443,148 @@ def test_record_empty_shard_refused_not_crash(banks, tmp):
     assert "Traceback" not in text, text[-1500:]
     assert rc == 4 and "REFUSE:" in text, text[-1500:]
     assert not os.path.exists(out)
+
+
+# ======================================================================
+# Contract amendment 2 (2026-11-14; the final check's F2, F4, F5), oracles
+# written from SPEC.md block 11's amendment before the code was read:
+# - clip_open_box: a value below 0 or above 1 raises FloatingPointError
+#   (as a non-finite one does); 0, 1 and -0.0 (not below 0) are accepted;
+#   the input is unchanged when it raises.
+# - the builder refuses a stored theta coordinate that is not finite (as
+#   <= 0 or >= 1): the count, the first row and axis, nothing written.
+# - the record tool refuses a 0-row shard by its row count's line
+#   `REFUSE: shard <k>: 0 rows, the build's <n>`, exit 4, no traceback,
+#   nothing written, on arm S and arm R, with the same REFUSE lines as the
+#   tool at 8d5b162.
+# ======================================================================
+
+TINY = np.nextafter(0.0, 1.0)            # 5e-324, the smallest positive subnormal
+
+
+@pytest.mark.parametrize("bad", [-0.2, 1.5, -TINY, np.nextafter(1.0, 2.0), -1.0, 2.0, -np.inf])
+def test_amend2_clip_out_of_range_raises(bad):
+    phi = np.array([[0.5, 0.25], [bad, 0.75]])
+    before = phi.copy()
+    with pytest.raises(FloatingPointError):
+        L.clip_open_box(phi)
+    npt.assert_array_equal(phi, before)                  # input unchanged when it raises
+    with pytest.raises(FloatingPointError):              # 0-d input too
+        L.clip_open_box(np.float64(bad))
+
+
+def test_amend2_clip_range_ends_accepted():
+    # 0 and 1 are in [0, 1]; -0.0 is not below 0 (IEEE: -0.0 == 0.0)
+    out = L.clip_open_box(np.array([0.0, -0.0, 1.0, TINY, np.nextafter(1.0, 0.0)]))
+    npt.assert_array_equal(out, [D, D, 1 - D, D, 1 - D])  # by hand: min(max(phi, D), 1 - D)
+    assert not np.signbit(out[1])                           # -0.0 clipped to +2^-24
+    assert L.clip_open_box(np.zeros((0, 3))).shape == (0, 3)   # empty: nothing to refuse
+
+
+def test_amend2_clip_raises_for_one_bad_value_among_many():
+    """A single out-of-range value in a large array is not lost (no
+    reduction that could skip it)."""
+    phi = np.random.default_rng(1).uniform(0, 1, (500, 10))
+    phi[417, 6] = 1.0 + 1e-12
+    with pytest.raises(FloatingPointError):
+        L.clip_open_box(phi)
+    phi[417, 6] = -1e-300
+    with pytest.raises(FloatingPointError):
+        L.clip_open_box(phi)
+
+
+# the builder: a non-finite stored theta. The sampler and the clip are left
+# as written; the theta the builder stores (the simulation's phi_eff, cast
+# to float32) is overwritten after the simulation of one well, so only the
+# builder's own defence stands between the value and the shard.
+_PHI_EFF_PATCH = (
+    "real_sim = B.simulate_windows\n"
+    "def _sim(spec, phi, *a, **kw):\n"
+    "    x, info = real_sim(spec, phi, *a, **kw)\n"
+    "    if kw.get('well') == %d:\n"
+    "        eff = np.array(info['phi_eff'], dtype=np.float64)\n"
+    "        eff[%d] = %s\n"
+    "        info = dict(info, phi_eff=eff)\n"
+    "    return x, info\n"
+    "B.simulate_windows = _sim\n")
+
+_BUILDER_LINE = re.compile(
+    r"refusing to write the shard: (\d+) stored theta coordinate\(s\) in (\d+) row\(s\) outside "
+    r"the open unit box after the cast to float32 \(first: row (\d+), axis (\d+), value (\S+)\)")
+
+
+@pytest.mark.parametrize("well,axis,value,label", [
+    (0, 1, "float('nan')", "nan"),
+    (1, 0, "float('inf')", "inf"),
+    (1, 3, "float('-inf')", "neginf"),
+])
+def test_amend2_builder_refuses_non_finite(tmp, well, axis, value, label):
+    out = os.path.join(tmp, "amend2_builder_" + label)
+    n_windows = 2                                         # REF's --n-windows
+    r = _run_builder_patched(out, ["--arm", "S", "--prior", "box", "--n-traces", "4", "--seed", "3"] + REF,
+                             _PHI_EFF_PATCH % (well, axis, value))
+    assert r.returncode != 0, r.stdout[-1500:]
+    assert "Traceback" not in r.stdout, r.stdout[-1500:]
+    m = _BUILDER_LINE.search(r.stdout)
+    assert m, r.stdout[-1500:]
+    # by hand: well i stores rows i*J .. (i+1)*J - 1, every one carrying the
+    # patched coordinate: J coordinates in J rows, the first row i*J
+    assert (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))) == \
+        (n_windows, n_windows, well * n_windows, axis), m.group(0)
+    assert m.group(5) in ("nan", "inf", "-inf") and m.group(5) == {"nan": "nan", "inf": "inf",
+                                                                    "neginf": "-inf"}[label]
+    written = os.listdir(out) if os.path.isdir(out) else []
+    assert not any(f.endswith((".npz", ".json", ".tmp")) for f in written), written
+
+
+@pytest.mark.parametrize("arm", ["S", "R"])
+def test_amend2_record_zero_rows_exact_line_and_base_parity(banks, tmp, old_tree, arm):
+    bank, exp = banks[arm]
+    dst = os.path.join(tmp, "amend2_empty_" + arm)
+    shutil.copytree(bank, dst)
+    p = os.path.join(dst, "shard_0000.npz")
+    with np.load(p) as z:
+        arrs = dict((k, np.array(z[k])[:0]) for k in z.files)
+    np.savez_compressed(p, **arrs)
+    rc, text, out = _record(dst, dict(exp, dir=dst), tmp)
+    want = "REFUSE: shard 0: 0 rows, the build's %d" % exp["build"]["rows_per_shard"][0]
+    assert rc == 4, text[-1500:]
+    assert "Traceback" not in text, text[-1500:]
+    assert want in text.splitlines(), text[-1500:]
+    assert not os.path.exists(out) and not os.path.exists(out + ".sha256")
+    assert not LINE.search(text)                          # the theta check adds no problem
+    # the base commit's tool on the same bank: the same REFUSE lines
+    old_tool = os.path.join(old_tree, "hpc", "pipeline", "tools", "synth_bank_record.py")
+    ep = os.path.join(tmp, "amend2_exp_%s.json" % arm)
+    json.dump(dict(exp, dir=dst), open(ep, "w"))
+    ro = subprocess.run([PY, old_tool, "--bank-dir", dst, "--expect", ep, "--out", out],
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True,
+                        timeout=300)
+    assert ro.returncode == 4, ro.stdout[-1500:]
+    new_lines = [ln for ln in text.splitlines() if ln.startswith("REFUSE")]
+    old_lines = [ln for ln in ro.stdout.splitlines() if ln.startswith("REFUSE")]
+    assert new_lines == old_lines, (new_lines, old_lines)
+
+
+@pytest.mark.parametrize("shape_label", [
+    pytest.param("theta_rows0", marks=pytest.mark.xfail(strict=True, reason="finding F2 of the 2026-11-14_1659 report: "
+                 "the record tool never compares theta's rows with x's; same at 8d5b162")),
+    pytest.param("theta_rows3", marks=pytest.mark.xfail(strict=True, reason="finding F2 of the 2026-11-14_1659 report")),
+    "theta_cols0", "theta_1d"])
+def test_amend2_record_odd_theta_shapes_refuse_not_crash(banks, tmp, shape_label):
+    """Probe (silent-failure hunt): a theta array whose shape disagrees with
+    x's -- 0 rows while x has rows, 0 columns, or 1-D -- must be refused
+    through the tool's other checks (rows, width), exit 4, never a crash."""
+    bank, exp = banks["S"]
+    dst = os.path.join(tmp, "amend2_odd_" + shape_label)
+    shutil.copytree(bank, dst)
+    p = os.path.join(dst, "shard_0000.npz")
+    with np.load(p) as z:
+        arrs = dict((k, np.array(z[k])) for k in z.files)
+    th = arrs["theta"]
+    arrs["theta"] = {"theta_rows0": th[:0], "theta_rows3": th[:3], "theta_cols0": th[:, :0], "theta_1d": th[:, 0].copy()}[shape_label]
+    np.savez_compressed(p, **arrs)
+    rc, text, out = _record(dst, dict(exp, dir=dst), tmp)
+    assert "Traceback" not in text, text[-1500:]
+    assert rc == 4 and "REFUSE:" in text, text[-1500:]
+    assert not os.path.exists(out)
