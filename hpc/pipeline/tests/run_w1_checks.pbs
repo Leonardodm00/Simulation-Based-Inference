@@ -45,6 +45,7 @@
 #
 # Variables (qsub -v): W1_REPO, the checkout to test (default $HOME/SBI_w1);
 # W1_ENV, the conda environment (default sbi_env, the projects' envs.train);
+# W1_SUITES, the suites to run, space-separated (default: the six above);
 # W1_OUT, the folder of the per-suite logs (default $HOME/w1_checks). A
 # relative W1_REPO or W1_OUT is read from $HOME, wherever the job starts.
 # A REFUSE line (exit 2) means nothing was run: it names the cause.
@@ -60,7 +61,7 @@ OUT="${W1_OUT:-$HOME/w1_checks}"
 # is read from $HOME, never from wherever this script happens to be started
 case "$REPO" in /*) ;; *) REPO="$HOME/$REPO" ;; esac
 case "$OUT" in /*) ;; *) OUT="$HOME/$OUT" ;; esac
-SUITES="test_smoke_theta_box.py test_smoke_identity.py test_smoke_finalist.py test_smoke_pipeline.py test_smoke_block7.py test_smoke_synthetic.py"
+SUITES="${W1_SUITES:-test_smoke_theta_box.py test_smoke_identity.py test_smoke_finalist.py test_smoke_pipeline.py test_smoke_block7.py test_smoke_synthetic.py}"
 REF_COMMIT="8d5b16285140f1a4181c0901bf535c7da041ae39"   # test_smoke_theta_box.py's reference tree
 
 echo "W1CHECK: host $(hostname), job ${PBS_JOBID:-<none>}, $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -76,23 +77,17 @@ fi
 # both are off across them, -u is armed only after them (hpc-git-delivery),
 # and a failure is said on a W1CHECK line instead of ending the job unlogged.
 if [ "${W1_SKIP_CONDA:-0}" != "1" ]; then
-    set +eu
-    if ! command -v conda >/dev/null 2>&1; then
-        echo "W1CHECK: REFUSE: no conda on PATH on $(hostname); nothing was run"
+    # The pipeline's own activation (jobs/activate_env.sh, D-111): conda, and
+    # where a node has no working conda the environment's own folder. It
+    # relaxes -u across the third-party activation scripts itself.
+    set +e
+    . "$REPO/hpc/pipeline/jobs/activate_env.sh"
+    pipeline_activate "$ENV_NAME"
+    ACT_RC=$?
+    if [ "$ACT_RC" != "0" ]; then
+        echo "W1CHECK: REFUSE: the environment $ENV_NAME cannot start on $(hostname) (the pipeline's activation, status $ACT_RC; see the RUN_ARGV ENV FAULT line above); nothing was run"
         exit 2
     fi
-    HOOK="$(conda shell.bash hook)"
-    if [ $? -ne 0 ] || [ -z "$HOOK" ]; then
-        echo "W1CHECK: REFUSE: conda shell.bash hook failed on $(hostname); nothing was run"
-        exit 2
-    fi
-    eval "$HOOK"
-    conda activate "$ENV_NAME"
-    if [ $? -ne 0 ] || [ "${CONDA_DEFAULT_ENV:-}" != "$ENV_NAME" ]; then
-        echo "W1CHECK: REFUSE: conda activate $ENV_NAME failed (CONDA_DEFAULT_ENV=${CONDA_DEFAULT_ENV:-<unset>}); nothing was run"
-        exit 2
-    fi
-    unset HOOK
     set -e
 fi
 set -u
