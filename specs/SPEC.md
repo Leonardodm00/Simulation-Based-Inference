@@ -69,7 +69,9 @@ Paths this spec covers (files, directories ending in `/`, or globs):
 - the synthetic experiment's relaunch (D-132; blocks 24-27; added
   2026-11-13): the purge of a synthetic project with its archive (block
   24, `hpc/pipeline/tools/purge_outputs.py`), and the changes blocks 25-27
-  make, listed per block in sec. 5 as they are written
+  make, listed per block in sec. 5 as they are written [2026-11-16, D-136:
+  blocks 24-28; 27 and 28, the comparisons and their figures, are wave W2,
+  with the new `hpc/pipeline/tests/test_smoke_comparisons.py`]
 
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
@@ -438,6 +440,43 @@ the same members' settings, so that every such q has one ensemble per arm,
 E_{q,A1} and E_{q,A(q)}. S-A1 has one arm and one ensemble, E_{S-A1,A1};
 its members train on arm S only, and it is scored on R0 and on R3 (D-122).
 
+[amended 2026-11-16, D-132 (5) and D-136; blocks 27 and 28] **The
+comparisons.** The relaunch (D-132, `synth.json` v4) adds the campaigns
+S-A2-only and S-A5-only (block 26): the term always on, no A1 trial, so
+such a search has one ensemble, E_{q,A(q)}, and no E_{q,A1}. A comparison
+kappa is an ordered pair (E_kappa, E'_kappa) of ensembles, read
+donor-paired as E3 below with E = E_kappa and E' = E'_kappa. For each
+search q whose campaign has a term -- S-A2 and S-A5, which nest A1, and
+S-A2-only and S-A5-only, which do not -- A(q) is its term arm (A2 for S-A2
+and S-A2-only, A5 for S-A5 and S-A5-only), and:
+
+- (a) against A1, kappa named q: E_kappa = E_{q,A(q)} and E'_kappa = q's
+  A1 reference -- E_{q,A1} when q's campaign nests A1 (the finalist's or
+  block 18's ensemble, D-126, as before), and E_{s,A1} when it does not, s
+  the configuration's one search of campaign S-A1 (no such search, or two
+  or more, is a refusal: the reference would be missing or ambiguous);
+- (b) A2 against A5 (D-136), kappa named `<q>_vs_<q'>`: for every pair of
+  searches (q, q') with A(q) = A2, A(q') = A5 and q.real = q'.real
+  (whichever comes first in the configuration), E_kappa = E_{q,A2} and
+  E'_kappa = E_{q',A5}, so that Dbar < 0 favours A2.
+
+A search of campaign S-A1 enters only as a reference; one of campaign
+S-A25 takes part in no comparison (its arms are not defined against A1
+here) and is named as such. The comparisons are listed (a) first, in the
+configuration's order of q, then (b), in the order of q and then of q'.
+Under `synth.json` v4 they are S-A2-R0, S-A5-R0, S-A2-R3 and S-A5-R3, each
+against S-A1:A1, then S-A2-R0_vs_S-A5-R0 and S-A2-R3_vs_S-A5-R3. A
+comparison is made on every data set D both of its ensembles are sampled on
+(block 19: D_sim for every ensemble -- one report split for every member,
+arm and search, sec. 2.3 -- and every cohort each is scored on, with R3's
+theta-dagger set), with the two samples' rows, theta^ref and donors equal on
+D (otherwise a refusal); its paired draws share their seeds as within one
+search (block 19's common random numbers). sigma_seed and G.2's verdict are
+read per comparison and data set, with no adjustment for the number of
+comparisons (D-136). A comparison that cannot be made -- an ensemble not
+complete, not sampled with the current values, or not requested -- is
+named, never dropped silently (the audit's F705).
+
 **The ensembles.** E_{q,a} has M = 5 members m = 1, ..., M. Member m is
 trained with train seed m on the donor split of split seed 1 (sec. 2.3: the
 same split for every member, every arm and every search), 40 passes in 40
@@ -479,6 +518,13 @@ window x_i with a reference parameter theta^ref_i:
   pseudo-true for mode (a) alone. For a donor with theta*_{d,k} >= 1 -
   delta for some k in K_F, theta^dag_d lies outside the open box or on its
   boundary, where every member's density is 0 (sec. 8, Q-E3).
+  [amended 2026-11-16, D-132 (3), block 25: K_L and K_F are the bank's own
+  split, as its sidecar records it (`free_idx`); the formulas above are
+  `synth.json` v3's (K_L = {0, ..., 6}, K_F = {7, 8, 9}). Under v4 K_L =
+  {0, ..., 7} and K_F = {8, 9}: theta^dag_{d,k} = theta*_{d,k} + delta for
+  k in {8, 9} and theta*_{d,k} elsewhere, and axis 7's cap at 1 applies only
+  where 7 is in K_F; a donor leaves the box with probability 1 - (1 -
+  delta)^2 = 0.20 under the uniform free axes.]
 
 **Quantities.** For an ensemble E (or a single member, read with M = 1) and
 a data set D, with n_post draws theta^(s)_i ~ q_E(theta | x_i), s = 1, ...,
@@ -531,7 +577,11 @@ n_post, per row i:
   arms' across-seed SDs of their members' L_pseudo_real, and the interval
   excluding 0; one copy of each donor enters the bootstrap (the ensembles'
   donor means, so G.2's pooling of five seeds' copies, finding F-bn, does
-  not arise); within a search q, E = E_{q,A(q)} and E' = E_{q,A1};
+  not arise); within a search q, E = E_{q,A(q)} and E' = E_{q,A1}
+  [amended 2026-11-16, D-136: E and E' are the two ensembles of a
+  comparison kappa, "The comparisons" above, of which the within-search
+  pair is case (a) for a campaign that nests A1; on D_sim the donors are
+  the report split's];
 - each member's embeddings z = h_{psi_m}(x) on D_sim and on a cohort, and
   their squared MMD with a Gaussian kernel at the median bandwidth
   (`hpc/npe_diagnostics.py`, `mmd2_biased`).
@@ -552,7 +602,7 @@ L-C2ST settings are blocks 19 and 20's, open in sec. 8 (Q-E1..Q-E6).
 | l_{m,i}, L_bar | member m's NLL on report row i; the ensemble's mean NLL | float64 | nats per row |
 | L_sel(e), e_best | selection-split NLL after epoch e; the best epoch | float; int | nats per row; epochs |
 | theta_k, a_k, [L_k, U_k] | sec. 2.4: bench coordinate k, its physical value, its range | float in (0, 1); per axis | -- ; the axis's units |
-| K_L, K_F | the bench's class-bearing and free axes | index sets {0..6}, {7, 8, 9} | -- |
+| K_L, K_F | the bench's class-bearing and free axes | index sets {0..6}, {7, 8, 9} [amended 2026-11-16: the bank's own, from its sidecar (block 25); `synth.json` v4: {0..7}, {8, 9}] | -- |
 | c, c_d, C, n_c | a condition; donor d's condition; the number of conditions; donors per condition | int | -- |
 | mu_c, m_c, s, tau | condition c's centre; the DSN's regular centre; the spacing factor; tau_ov | (7,), (7,), float, float | -- (unit box) |
 | N_S, N_R, J_S, J_R | arm S's and arm R's donors; windows per well in each arm | int | donors; windows |
@@ -571,6 +621,7 @@ L-C2ST settings are blocks 19 and 20's, open in sec. 8 (Q-E1..Q-E6).
 | mhat_{i,k}, sigma_{i,k}, sigma_0^2 | posterior mean and SD on axis k; the box prior's variance 1/12 | float | -- (unit box) |
 | Delta_d(E, E'), Dbar(E, E') | donor d's paired difference of the two ensembles' donor NLLs (E3); its mean over the donors | float64 | nats per window |
 | sigma_seed | the larger of two arms' across-seed SDs of their members' L_pseudo_real (G.2) | float64 | nats per window |
+| kappa; E_kappa, E'_kappa | [2026-11-16, D-136] a comparison (sec. 2.5, "The comparisons"); its ensemble and its reference, E and E' of E3 | name `<q>` or `<q>_vs_<q'>`; ensembles `<q>:<arm>` | -- |
 
 ## 3. Data contracts
 
@@ -4163,7 +4214,9 @@ Claude; Confirmed: no]
   - recovery: mhat, sigma, the 5 % and 95 % quantiles per row and axis, the
     90 % interval's coverage per axis, zeta, the contraction 1 -
     mean_i sigma_{i,k}^2 / (1/12);
-  - paired (E3): for each search q with a term and each data set D it
+  - paired (E3) [amended 2026-11-16, block 27, D-136: the pairs are sec.
+    2.5's comparisons, E_kappa and E'_kappa in place of E_{q,A(q)} and
+    E_{q,A1}; the rest of this rule stands]: for each search q with a term and each data set D it
     shares, d_i = l_i(E_{q,A(q)}) - l_i(E_{q,A1}) on the in-box rows,
     `bootstrap_paired.paired_bootstrap(d, groups=donor, within="all")` (the
     primary scheme; one copy of each donor), sigma_seed the larger over the
@@ -4253,6 +4306,9 @@ Claude; Confirmed: no]
   under the search's A1 ensemble, Q-E6), the PPC per statistic and its
   ranks, L-C2ST per window and per donor; embeddings: the first two
   principal components of D_sim and the cohort by condition, with MMD^2;
+  [amended 2026-11-16, block 28, D-136: the two ensembles of each of sec.
+  2.5's comparisons, under `comparisons/<name>/`, in place of the per-search
+  `arms_*`; `across/dbar` over the comparisons, one panel per kind]
   per search -- the two arms' coverage, NLL, PPC and L-C2ST overlaid, the
   donor-paired forest plot (E3) with 2 sigma_seed; across searches -- Dbar
   with its interval and 2 sigma_seed for every search and data set, the
@@ -4350,7 +4406,8 @@ Claude; Confirmed: no]
   - `report`, one: submitted when a sampling job is submitted now or live,
     or when `REPORT_COMPLETE.json` records other inputs than
     `ev_plan.report_inputs` (the samples' provenance digests and
-    `ev_config.REPORT_PARAMS`); after the sampling jobs; a live report is
+    `ev_config.REPORT_PARAMS`; [amended 2026-11-16, block 27] and the
+    comparisons); after the sampling jobs; a live report is
     not submitted twice (the launcher says the sampling submitted now is not
     in it);
   - every job is `eval_run.pbs` in `envs.train` with its command in
@@ -4815,6 +4872,245 @@ pins proposed by Claude; Confirmed: no]
   run exits 0 with the five searches on S-A1, S-A2-only (R0, R3) and
   S-A5-only (R0, R3), five best fits and no other arm's fit `[SANDBOX
   2026-11-13]`. Not run on davinci.
+
+### Block 27: the comparisons across searches (added 2026-11-16; D-132 (5), D-136; roadmap synth, step S6; wave W2)
+
+- Modules: `hpc/pipeline/evaluation/ev_plan.py` (`Comparison`,
+  `comparisons`, `report_inputs`), `hpc/pipeline/evaluation/ev_metrics.py`
+  (`paired_all`, `compute`'s index and log lines),
+  `hpc/pipeline/evaluation/ev_submit.py` (the comparisons in the launcher's
+  plan), `hpc/pipeline/tests/test_smoke_comparisons.py` (new; checks E27*).
+  Amends block 19 (`report_inputs`), block 20 (E3's pairs: from "each
+  search q with a term", within the search, to the comparisons of sec. 2.5)
+  and block 22 (the launcher's lines and refusal).
+- Public API:
+  - `ev_plan.Comparison`, a namedtuple with the fields `name` (`<q>` or
+    `<q>_vs_<q'>`), `kind` (`"vs_A1"` or `"A2_vs_A5"`), `E`, `E_ref` (the
+    two ensembles' names, `<search>:<arm>`), `search`, `search_ref` (their
+    searches' names), `arm`, `arm_ref` (their arms);
+  - `ev_plan.comparisons(cfg, with_uncompared=False)` -> `[Comparison]`, or
+    with `with_uncompared=True` -> `([Comparison], [(q, why)])`, `q` the
+    name of a search that has a term and takes part in no comparison (S-A25)
+    and `why` one line; standard library only, reads no file (the
+    ensembles' names follow from the configuration: the arm of a
+    nesting campaign's A1 reference is A1, a term search's term arm is
+    A(q)); raises `RefuseError` when a search of a term-only campaign has no
+    A1 reference (no search of campaign S-A1, or two or more), naming the
+    search and the S-A1 searches found;
+  - `ev_plan.report_inputs(cfg, ecfg)` -> block 19's dict plus the key
+    `"comparisons"`: `[[name, E, E_ref], ...]` in `comparisons`' order, so
+    that a report made before this block is stale (block 22's rule);
+  - `ev_metrics.paired_all(cfg, ecfg, reported, mdir, log)` -> `(files,
+    made, left_out)`: `files` the paired files written (absolute paths,
+    `.json` and `.npz`), `made` and `left_out` as METRICS.json's
+    "comparisons" and "comparisons_left_out" below;
+  - `ev_metrics.compute(cfg_path, ecfg_path, names=None, ncpus=None,
+    log=print)` and the CLI: block 20's, unchanged in signature.
+- Rule:
+  - `comparisons`: sec. 2.5's "The comparisons": (a) for each search q, in
+    the configuration's order, of campaign S-A2, S-A5, S-A2-only or
+    S-A5-only (A(q) = A2 for S-A2 and S-A2-only, A5 for S-A5 and
+    S-A5-only): `Comparison(name=q, kind="vs_A1", E="<q>:<A(q)>",
+    E_ref=...)`, `E_ref` `"<q>:A1"` for S-A2 and S-A5 and `"<s>:A1"` for
+    S-A2-only and S-A5-only, s the one search of campaign S-A1; then (b) for
+    each search q of term arm A2 and each search q' of term arm A5 with
+    `q.real == q'.real`, in the order of q and then of q':
+    `Comparison(name="<q>_vs_<q'>", kind="A2_vs_A5", E="<q>:A2",
+    E_ref="<q'>:A5")`. A search of campaign S-A1 yields no comparison of its
+    own; one of S-A25 is returned among the uncompared with the why
+    "campaign S-A25: its arms are not defined against A1 (D-136)".
+  - `paired_all`, for each comparison in `comparisons` order:
+    - made when E and E_ref are both in `reported` (block 20's ensembles
+      with a current sample, among `names` when `--ensemble` restricts),
+      on each data set D of E's sample provenance (`datasets_of`, its order)
+      that E_ref's provenance has too; none shared: left out;
+    - on each D, the two samples' `rows`, `theta_ref` and `donor` are equal,
+      or `RefuseError("<E> and <E_ref> do not share the rows of <D>")`;
+      ok = E's `in_box` and both `logq_ref` finite; d_i = l_i(E) -
+      l_i(E_ref) on the ok rows; sigma_seed = max(`member_sd` of E on D,
+      of E_ref on D); `paired_block` with the seed `ev_plan.seed_of(ecfg.seed,
+      "paired", name, D)` (for a comparison named q: block 20's seed, so a
+      project of v3's design keeps its numbers);
+    - written to `<mdir>/paired_<name>_<D>.json` and `.npz` (the contract
+      below) and logged by block 20's line, `  paired <name> on <D>: Dbar
+      <+.4f> [<+.4f>, <+.4f>], 2 sigma_seed <.4f> -> resolved|not resolved`;
+    - not made: one entry of `left_out` and the log line `  comparison
+      <name> left out: <why>`, why one of `"<ensemble> is not reported
+      (<reason>)"` (the reason METRICS.json's "left_out" gives for it, or
+      `"not complete"` when it is not among the ensembles found),
+      `"<ensemble> was not requested (--ensemble)"`, `"no data set is
+      sampled for both"`.
+  - The paired files (block 28 reads them; block 20's E20c reads the
+    legacy keys):
+    - JSON: block 20's keys `schema` (unchanged, "eval_metrics/1"),
+      `dataset`, `n_rows`, `n_donors`, `Dbar`, `ci`, `se`, `level`,
+      `n_boot`, `scheme`, `sigma_seed`, `two_sigma_seed`,
+      `beyond_2_sigma_seed`, `ci_excludes_0`, `resolved`; for every
+      comparison also `comparison`, `kind`, `E`, `E_ref`, `search`,
+      `search_ref`, `arm`, `arm_ref`, `sd_members_E`, `sd_members_ref`
+      (the two members' SDs entering sigma_seed), `lower_nll_ensemble` (the
+      name of the ensemble with the lower donor-mean NLL when `resolved`,
+      else null) and `bootstrap_seed`; for kind "vs_A1" also block 20's
+      legacy keys with their meaning unchanged: `term_arm` (= `arm`),
+      `ensembles` (`{"term": E, "A1": E_ref}`), `sd_members` (`{arm:
+      sd_members_E, "A1": sd_members_ref}`), `lower_nll` (`"term arm"`,
+      `"A1"` or null); kind "A2_vs_A5" has none of the four;
+    - `.npz`: `donor_ids` (n_donors,) int64, `delta_d` (n_donors,) float64
+      (the donor's mean of d_i over its ok rows), `se_d` (n_donors,) float64,
+      as block 20's.
+  - `compute`: METRICS.json gains `"comparisons"`, the comparisons made, in
+    `comparisons` order, each `{"name", "kind", "E", "E_ref", "search",
+    "search_ref", "arm", "arm_ref", "datasets": [D, ...] (the paired data
+    sets, in order), "paired": {D: <absolute path of paired_<name>_<D>.json>}}`;
+    `"comparisons_left_out"`, `[{"comparison", "E", "E_ref", "why"}]`; and
+    `"uncompared"`, `[{"search", "why"}]`. Before the pass line, the log
+    line `comparisons: <k> made, <m> left out, <u> search(es) in none`; the
+    pass line keeps block 20's format and stays the last line (E20c reads
+    it): its "paired comparison(s)" counts the (comparison, data set) pairs
+    written, as before.
+  - `ev_submit`: when `report` is in `--what`, the plan calls
+    `ev_plan.comparisons(cfg, with_uncompared=True)`; the run logs, after
+    the report's unit, one line per comparison, `EVAL SUBMIT: comparison
+    <name>: <E> against <E_ref> (<kind>)`, and one per uncompared search,
+    `EVAL SUBMIT: no comparison for <q>: <why>`, in a dry run as in a
+    submission; its `RefuseError` is the launcher's refusal (`REFUSE: ...`,
+    exit 3, nothing written or submitted). Without `report` in `--what` the
+    comparisons are never consulted: the calibration bank, the samplings and
+    the data overview neither list nor refuse on them (`run`'s count of the
+    samples present must not call `comparisons`).
+  - A project of v3's design (S-A2 or S-A5 searches with `alt_best_fit`
+    true): its comparisons are block 20's pairs, under the same names and
+    seeds, with the same numbers; `test_smoke_evaluation.py`'s checks pass
+    unchanged.
+- Custom code: none (the bootstrap is `bootstrap_paired.paired_bootstrap`,
+  as in block 20).
+- Test oracles (`test_smoke_comparisons.py`, pure ASCII; it may import the
+  helpers of `test_smoke_evaluation.py` and `test_smoke_synthetic.py`
+  without changing them; checks needing the training environment skip
+  without it, as block 19's):
+  - E27a, `comparisons` on configurations alone (no training environment):
+    the committed `synth.json` v4 gives exactly the six comparisons of sec.
+    2.5, in order, with their names, kinds, E and E_ref; the evaluation
+    fixture's v3-like configuration (S-A1, and S-A2-R0 of campaign S-A2)
+    gives S-A2-R0 against `S-A2-R0:A1` and no A2_vs_A5; term-only searches
+    without an S-A1 search, and with two, refused naming the search; an
+    S-A25 search among the uncompared; an A2 and an A5 search on different
+    cohorts give no A2_vs_A5;
+  - E27b, a reduced v4-like project -- S-A1 on R0, S-A2-only and S-A5-only
+    on R3, two members each, run to PIPELINE DONE under the fake PBS as the
+    evaluation's fixture, its calibration bank and samplings made in the
+    test's process -- through `ev_metrics.compute`: the paired files of the
+    three comparisons (S-A2-R3 and S-A5-R3 against S-A1:A1,
+    S-A2-R3_vs_S-A5-R3) on sim, R3 and R3dag, nine of each extension; each
+    JSON's keys as the contract says, per kind; Dbar and sigma_seed
+    recomputed in the test from the two samples (`logq_ref`,
+    `logq_ref_members`, the ok rows) within 1e-12; the interval equal to
+    `paired_bootstrap` called in the test with `seed_of(seed, "paired",
+    name, D)`; METRICS.json's "comparisons" (order, data sets, paths),
+    "comparisons_left_out" (empty) and "uncompared"; the log lines and the
+    pass line last; S-A1's sample provenance removed: the two comparisons
+    against A1 left out and named, the A2_vs_A5 one made; one sample's
+    `rows` altered: a refusal naming both ensembles and the data set;
+  - E27c: `report_inputs` carries the comparisons; a `REPORT_COMPLETE.json`
+    recording inputs without them makes `ev_submit.plan`'s report unit
+    stale; the launcher's dry run with `report` lists the three comparisons'
+    lines; a configuration with term-only searches and no S-A1 search: the
+    dry run with `--what report` exits 3 with nothing written, and with
+    `--what calbank,sample` it does not refuse;
+  - the mutations to try, each failing a check: a term-only search's
+    reference taken from its own search; the bootstrap seed of an A2_vs_A5
+    comparison taken from E's search; a comparison left out with no entry
+    and no line; the rows check dropped;
+  - regression: `test_smoke_evaluation.py` passes unchanged (its fixture is
+    v3's design).
+- Data flow: consumes block 19's samples (their provenance and `.npz`) and
+  the configuration; runs inside block 20's `compute`, after the
+  per-ensemble quantities; feeds block 28 (METRICS.json's "comparisons" and
+  "comparisons_left_out", the paired files) and block 22's report staleness
+  (`report_inputs`).
+- Confirmed: yes 2026-11-16 (D-136: the comparisons, A2 against A5, the
+  names left out, the build); the kind names, the S-A25 rule and the
+  launcher's lines are Claude's proposal within it.
+- Status: drafted (wave W2's contract).
+
+### Block 28: the comparisons' figures (added 2026-11-16; D-132 (5), D-136; roadmap synth, step S6; wave W2)
+
+- Modules: `hpc/pipeline/evaluation/ev_figures.py`; the checks E21a
+  (restated), E21b and E28* of `hpc/pipeline/tests/test_smoke_evaluation.py`.
+  Amends block 21 (its per-search `arms_*` figures and `across/dbar`).
+- Public API: block 21's, unchanged: `python3
+  hpc/pipeline/evaluation/ev_figures.py --config ... --eval-config ...`,
+  `ev_figures.make_all(cfg_path, ecfg_path, log=print)` -> the index
+  `[(family, rel, caption)]`, the pass line `EVAL FIGURES OK: <n>
+  figure(s) in <dir> (<t> s)`, exit 3 without metrics.
+- Rule (from METRICS.json's "comparisons" and "comparisons_left_out", the
+  paired files as block 27's contract gives them, block 20's per-ensemble
+  files and `search_<q>.json`; it computes nothing, as block 21):
+  - `ensembles/<stem>/`: block 21's figures, names, rules and captions,
+    unchanged;
+  - `comparisons/<name>/`, for each comparison in METRICS.json's
+    "comparisons" (none when the key is absent), with E and E_ref the
+    entries of METRICS.json's "ensembles" named by the comparison:
+    `cmp_coverage` (one panel per paired data set, in the comparison's
+    order: both ensembles' C(beta) with their bands, as block 21's
+    `arms_coverage`); `cmp_nll_<D>` for each paired D other than sim (both
+    ensembles' lbar_d per donor, each donor's pair joined, ordered by
+    E_ref's, as `arms_nll`); `cmp_ppc_<D>` for each paired cohort D (not sim
+    and not ending in "dag") where both ensembles' metrics have "ppc", and
+    `cmp_lc2st_<D>` where both have "lc2st" (as `arms_ppc` and
+    `arms_lc2st`); `cmp_forest_<D>` for each paired D, from
+    `paired_<name>_<D>` (as block 21's forest plot, the x label `Delta_d =
+    lbar_d(E) - lbar_d(E_ref) (nats)` with the two ensembles named, the
+    verdict "resolved, <lower_nll_ensemble> lower" or "not resolved");
+  - `searches/<q>/`: `search_trials`, `search_nll_vs_lpr` and
+    `search_learning` for every search with its `search_<q>.json`, as block
+    21's; no `arms_*` figure is drawn any more;
+  - `across/dbar`, when "comparisons" is not empty: one row per comparison
+    and paired data set, labelled `<name>, <D>`, in the comparisons' order
+    and each comparison's data-set order; one panel per kind present, left
+    "against A1" (x: Dbar = term arm - A1) and right "A2 against A5" (x:
+    Dbar = A2 - A5), each row with its interval and its +-2 sigma_seed bar
+    as block 21's `fig_dbar_all`, the marker in E's arm's hue; `across/lpr`
+    unchanged;
+  - colours: each ensemble in its arm's hue (A1 #2a78d6, A2 #eb6834, A5
+    #1baf7a; a comparison's two ensembles never share an arm); legends name
+    the arm and the search ("A2 (S-A2-R3)");
+  - captions: one sentence each, at least 30 characters and ending with a
+    full stop, naming both ensembles with their searches and the data set;
+  - FIGURES.md: the families in the order calibration, accuracy, posterior,
+    embeddings, comparisons, searches, across; its header line names the
+    ensembles left out (block 21's) and then "Comparisons left out: <name>
+    (<why>); ..." or "Comparisons left out: none", and the uncompared
+    searches the same way.
+- Custom code: none (matplotlib, as block 21).
+- Test oracles (`test_smoke_evaluation.py`):
+  - E21a restated: `_expected_figures` derives the comparisons' figures from
+    METRICS.json's "comparisons" by the rules above (none when the key is
+    absent, as a metrics tree of block 20 alone has it) and expects no
+    `arms_*` figure; the rest as before;
+  - E21b unchanged (no statistics library imported; no mean, SD, quantile
+    or median called; the validated colours; a figure to PDF; no metrics
+    refused);
+  - E28a, on a metrics tree holding comparisons of both kinds, one of them
+    against another search's A1 ensemble, built in the test by copying the
+    fixture's real metrics (block 20's files of S-A1:A1, S-A2-R0:A1 and
+    S-A2-R0:A2) into a directory of its own, relabelling one copy as an A5
+    ensemble of another search, and writing METRICS.json's "comparisons",
+    "comparisons_left_out" (one entry) and the paired files as block 27's
+    contract gives them: the figure set equals the rules', each listed in
+    FIGURES.md under "comparisons" with a caption naming both ensembles,
+    the left-out comparison named in the header, `across/dbar` with two
+    panels and one row per (comparison, data set);
+  - the mutations to try, each failing a check: the reference ensemble
+    taken from the term search's own entries; a comparison figure drawn for
+    a data set that is not paired; the two kinds in one panel of
+    `across/dbar`.
+- Data flow: consumes block 27's METRICS.json and paired files and block
+  20's per-ensemble files; feeds the report (block 22's `ev_report.py`) and
+  FIGURES.md.
+- Confirmed: yes 2026-11-16 (D-136); the families, names, panels and
+  captions are Claude's proposal within it.
+- Status: drafted (wave W2's contract).
 
 ## 6. Pipeline entry points
 

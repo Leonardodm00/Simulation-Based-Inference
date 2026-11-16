@@ -30,6 +30,12 @@ from stages.synthetic import RunView, _builder_options, bank_dir
 
 Ensemble = namedtuple("Ensemble", "name stem search arm folder kind seeds records cohorts")
 
+# [block 27, D-136] a comparison of sec. 2.5 ("The comparisons"): `name` "<q>"
+# (kind "vs_A1") or "<q>_vs_<q'>" (kind "A2_vs_A5"); `E` and `E_ref` the two
+# ensembles' names "<search>:<arm>", read donor-paired as E3 with E = E and
+# E' = E_ref; `search`, `search_ref` their searches; `arm`, `arm_ref` their arms
+Comparison = namedtuple("Comparison", "name kind E E_ref search search_ref arm arm_ref")
+
 
 class RefuseError(RuntimeError):
     """The evaluation cannot go on for a stated reason (exit 3)."""
@@ -107,6 +113,32 @@ def ensembles(cfg, with_missing=False):
     if dup:
         raise RefuseError("two best fits of one search share an arm: %s" % ", ".join(dup))
     return (out, missing) if with_missing else out
+
+
+def comparisons(cfg, with_uncompared=False):
+    """[block 27, D-136] The comparisons of specs/SPEC.md sec. 2.5, from the
+    configuration alone (no file is read; standard library only).
+
+    (a) For each search q, in the configuration's order, of campaign S-A2,
+    S-A5, S-A2-only or S-A5-only -- A(q) = A2 for S-A2 and S-A2-only, A5 for
+    S-A5 and S-A5-only --
+        Comparison(name=q, kind="vs_A1", E="<q>:<A(q)>", E_ref=<q's A1 reference>,
+                   search=q, search_ref=..., arm=A(q), arm_ref="A1"),
+    the reference "<q>:A1" for S-A2 and S-A5 (they nest A1) and "<s>:A1" for
+    S-A2-only and S-A5-only, s the configuration's one search of campaign
+    S-A1; then (b) for each search q of term arm A2 and each search q' of term
+    arm A5 with q.real == q'.real, in the order of q and then of q',
+        Comparison(name="<q>_vs_<q'>", kind="A2_vs_A5", E="<q>:A2",
+                   E_ref="<q'>:A5", search=q, search_ref=q', arm="A2", arm_ref="A5").
+    A search of campaign S-A1 yields no comparison of its own; one of S-A25
+    is uncompared, with the why "campaign S-A25: its arms are not defined
+    against A1 (D-136)".
+
+    Returns [Comparison], or with `with_uncompared` ([Comparison], [(q, why)]).
+    Raises RefuseError when a search of a term-only campaign has no A1
+    reference -- no search of campaign S-A1, or two or more -- naming the
+    search and the S-A1 searches found."""
+    raise NotImplementedError("block 27: ev_plan.comparisons")
 
 
 def find(cfg, name):
