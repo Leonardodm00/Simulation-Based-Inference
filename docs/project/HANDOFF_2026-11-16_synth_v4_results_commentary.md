@@ -3,6 +3,7 @@
 | Date | Change |
 |---|---|
 | 2026-11-16 | v1. Written by the LindDUP chat (the pipeline chat that built SBI blocks 24-28) for a new chat that comments on the results of the relaunch's evaluation (D-132, D-136). State at writing: the five samplings running on davinci's `intel` queue, no report yet (sec. 2). |
+| 2026-11-16 | v2. By the results-commentary chat, on the user's uploads of 14:45 Europe/Rome: the samplings and the report ran complete (`EVAL REPORT OK`, finished 13:31; every check of sec. 7 holds), so the "running", "not run" and "not recorded" of secs. 2 and 11 are marked corrected; the numbers and the reading are in D-136's Status (log v1.138). The rest is unchanged. |
 
 Tags: `[LOG D-nnn]` the decision log on `main`; `[SPEC ...]` `specs/SPEC.md` on SBI `sci/pipeline` at `2e9577b`; `[CODE SBI@2e9577b file:lines]` read in the code; `[SANDBOX 2026-11-16]` run in the author's sandbox; `[CLUSTER, the user's paste]`; `[KB]` project knowledge (frozen copies); `[reasoning]` the author's inference, not checked.
 
@@ -17,10 +18,10 @@ Tags: `[LOG D-nnn]` the decision log on `main`; `[SPEC ...]` `specs/SPEC.md` on 
 
 | What | State | Basis |
 |---|---|---|
-| Banks, the five searches and their best fits (`synth.json` v4) | finished. Their numbers (trials ok or failed, finalists, L, L_pseudo_real) were not pasted to any chat, so none are recorded; read them first (sec. 5, "Per search") | [user] 09:39: "The synthetic optimization and training has finished"; [LOG D-136] |
+| Banks, the five searches and their best fits (`synth.json` v4) | finished. Their numbers (trials ok or failed, finalists, L, L_pseudo_real) were not pasted to any chat, so none are recorded; read them first (sec. 5, "Per search") [corrected 2026-11-16: recorded in D-136's Status, log v1.138] | [user] 09:39: "The synthetic optimization and training has finished"; [LOG D-136] |
 | Calibration bank of L-C2ST | done (5 shards) | [CLUSTER, the user's paste of 11:57] |
-| Samplings `ev_s0b`..`ev_s4b`, jobs `2097359`..`2097363` | running on `intel` (8 cores, 64gb, walltime 24 h) at 12:29, after a `qmove` from `cpu` | [CLUSTER, the user's paste of 12:29]; [LOG D-137] |
-| The report (metrics, then figures) | not run. At 12:29 the user was given the commands to pull to `2e9577b` and to submit the report now, held by PBS with `afterok` on the five samplings. Whether they ran is not known | this chat |
+| Samplings `ev_s0b`..`ev_s4b`, jobs `2097359`..`2097363` | running on `intel` (8 cores, 64gb, walltime 24 h) at 12:29, after a `qmove` from `cpu` [corrected 2026-11-16: finished, `EVAL SAMPLE OK` and `EVAL JOB EXIT: 0` for all five -- changelog v2] | [CLUSTER, the user's paste of 12:29]; [LOG D-137] |
+| The report (metrics, then figures) | not run. [corrected 2026-11-16: it ran, `EVAL REPORT OK` at 13:31 -- changelog v2] At 12:29 the user was given the commands to pull to `2e9577b` and to submit the report now, held by PBS with `afterok` on the five samplings. Whether they ran is not known | this chat |
 
 Check first, on davinci (read-only):
 
@@ -191,8 +192,8 @@ cd ~/runs/synth/evaluation/metrics && eval "$(conda shell.bash hook)" && conda a
 
 ## 11. Open at handoff
 
-- The report: not run (sec. 2).
-- The relaunch's search and best-fit numbers: not recorded anywhere; read first.
+- The report: not run (sec. 2). [corrected 2026-11-16: it ran -- changelog v2]
+- The relaunch's search and best-fit numbers: not recorded anywhere; read first. [corrected 2026-11-16: recorded in D-136's Status, log v1.138]
 - A multiplicity correction across the 15 verdicts: open (D-126, D-136).
 - Dbar's estimator for donors of unequal rows (F1): open; does not arise on synth.
 - T6.2's revise flag (D-136).
