@@ -13,15 +13,20 @@ Reads <out_root>/samples/ and writes under <out_root>/metrics/:
                             and on a cohort the members' embeddings against
                             D_sim's (MMD^2, PCA); the .npz holds the per-row
                             arrays and curves the figures draw
-    paired_<q>_<D>.json, .npz  a search with both arms' ensembles on a data set
-                            they share: E3, the donor-paired difference, its
-                            donor-cluster bootstrap and G.2's verdict
+    paired_<name>_<D>.json, .npz  [block 27, D-136] a comparison of sec. 2.5
+                            (ev_plan.comparisons: a search's term arm against
+                            its A1 reference, named <q>, or A2 against A5 on
+                            one cohort, named <q>_vs_<q'>) on a data set both
+                            ensembles are sampled on: E3, the donor-paired
+                            difference, its donor-cluster bootstrap and G.2's
+                            verdict
     search_<q>.json         the search: its trials in proposal order with their
                             arm, nll and L_pseudo_real and the running minimum
                             of nll per arm; every member's learning curve; the
                             corner plots' example donors per cohort (Q-E6)
     METRICS.json            the index: the files, the ensembles reported, the
-                            ones left out and why
+                            ones left out and why; [block 27] the comparisons
+                            made, those left out and why, the searches in none
 Pass line: EVAL METRICS OK: ...; exit 2 on the arguments, 3 on a refusal.
 
 The estimators are sec. 2.5's; the library calls are hpc/npe_diagnostics.py
@@ -30,7 +35,9 @@ overlap), hpc/bootstrap_paired.py (the paired bootstrap), sbi 0.27's LC2ST,
 scikit-learn's PCA and scipy's binomial and Kolmogorov distributions. The
 ensembles are independent, so each one's quantities are computed in a
 worker process (`--ncpus`), one thread each; the paired comparisons and the
-searches after them.
+searches after them. A configuration whose comparisons cannot be listed (a
+search of a term-only campaign without exactly one S-A1 search) is refused
+before anything is computed.
 
 Pure ASCII, LF only.
 """
@@ -511,47 +518,126 @@ def member_sd(z):
     return float(np.std(m, ddof=1)) if m.size > 1 else 0.0
 
 
+def _read_json(path):
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def sample_left_out(ecfg, e):
+    """Why complete ensemble e is not reported although asked for -- block
+    20's reasons in METRICS.json's "left_out": not sampled, or sampled with
+    other values than ev_config.SAMPLE_PARAMS -- or None when its sample is
+    current."""
+    pj = ev_plan.sample_json(ecfg, e.stem)
+    if not os.path.isfile(pj):
+        return "not sampled (%s absent)" % pj
+    prov = _read_json(pj)
+    if prov.get("sample_params") != ecfg.sample_params():
+        return "sampled with other values: %s" % prov.get("sample_params")
+    return None
+
+
+# the arrays of a data set's sample that a comparison reads (block 19's .npz)
+_PAIRED_ARRAYS = ("rows", "theta_ref", "donor", "in_box", "logq_ref", "logq_ref_members")
+# what must be equal in the two samples of a comparison on one data set
+_SHARED_ROWS = ("rows", "theta_ref", "donor")
+
+
+def _paired_arrays(ecfg, e, D):
+    """The arrays a comparison reads of ensemble e's sample on data set D
+    (block 19's <stem>_<D>.npz, beside its provenance), each read once."""
+    path = os.path.join(os.path.dirname(ev_plan.sample_json(ecfg, e.stem)),
+                        "%s_%s.npz" % (e.stem, D))
+    with np.load(path) as z:
+        return dict((k, z[k]) for k in _PAIRED_ARRAYS)
+
+
 def paired_all(cfg, ecfg, reported, mdir, log):
-    """E3 for every search with both arms' ensembles reported, on each data
-    set the two share."""
-    files = []
-    by = {}
-    for e in reported:
-        by.setdefault(e.search["name"], []).append(e)
-    for q in cfg.data["synthetic"]["searches"]:
-        ens = by.get(q["name"], [])
-        arms = dict((e.arm, e) for e in ens)
-        if len(arms) < 2 or "A1" not in arms:
+    """[block 27, D-136] E3 for every comparison of sec. 2.5
+    (ev_plan.comparisons), in its order. `reported`: the ensembles with a
+    current sample (compute's, among --ensemble's when it restricts).
+
+    A comparison (E, E_ref) is made when both are reported, on each data set
+    D of E's sample (its order) that E_ref's has too: the two samples' rows,
+    theta^ref and donors equal on D (else RefuseError), d_i = l_i(E) -
+    l_i(E_ref) on the rows where E's theta^ref is in the box and both log
+    densities are finite, sigma_seed the larger of the two ensembles' SDs
+    over members, the donor-cluster bootstrap seeded by seed_of(seed,
+    "paired", name, D) -- block 20's seed for a comparison named after its
+    search. Written to <mdir>/paired_<name>_<D>.json and .npz. Otherwise it
+    is left out with one line, `comparison <name> left out: <why>`.
+
+    Returns (files, made, left_out): the paired files written (absolute),
+    and METRICS.json's "comparisons" and "comparisons_left_out"."""
+    by = dict((e.name, e) for e in reported)
+    mdir = os.path.abspath(mdir)
+    complete = []                       # [ev_plan.ensembles(cfg) by name], read once when needed
+
+    def not_reported(name):
+        """Why ensemble `name` is not in `reported`: not complete, its sample
+        not current (block 20's reason), or else not asked for (--ensemble)."""
+        if not complete:
+            complete.append(dict((e.name, e) for e in ev_plan.ensembles(cfg)))
+        e = complete[0].get(name)
+        if e is None:
+            return "%s is not reported (not complete)" % name
+        why = sample_left_out(ecfg, e)
+        if why is not None:
+            return "%s is not reported (%s)" % (name, why)
+        return "%s was not requested (--ensemble)" % name
+
+    files, made, left_out = [], [], []
+    for c in ev_plan.comparisons(cfg):
+        why, shared = None, []
+        for name in (c.E, c.E_ref):
+            if name not in by:
+                why = not_reported(name)
+                break
+        if why is None:
+            dsE = datasets_of(_read_json(ev_plan.sample_json(ecfg, by[c.E].stem)))
+            dsR = datasets_of(_read_json(ev_plan.sample_json(ecfg, by[c.E_ref].stem)))
+            shared = [D for D in dsE if D in dsR]
+            if not shared:
+                why = "no data set is sampled for both"
+        if why is not None:
+            left_out.append({"comparison": c.name, "E": c.E, "E_ref": c.E_ref, "why": why})
+            log("  comparison %s left out: %s" % (c.name, why))
             continue
-        term = [a for a in arms if a != "A1"][0]
-        eT, eA = arms[term], arms["A1"]
-        sd = ev_plan.sample_json
-        dsT = datasets_of(json.load(open(sd(ecfg, eT.stem))))
-        dsA = datasets_of(json.load(open(sd(ecfg, eA.stem))))
-        sdir = os.path.dirname(sd(ecfg, eT.stem))
-        for D in [d for d in dsT if d in dsA]:
-            zT = np.load(os.path.join(sdir, "%s_%s.npz" % (eT.stem, D)))
-            zA = np.load(os.path.join(sdir, "%s_%s.npz" % (eA.stem, D)))
-            if not (np.array_equal(zT["rows"], zA["rows"])
-                    and np.array_equal(zT["theta_ref"], zA["theta_ref"])):
+        paired = {}
+        for D in shared:
+            zE = _paired_arrays(ecfg, by[c.E], D)
+            zR = _paired_arrays(ecfg, by[c.E_ref], D)
+            if not all(np.array_equal(zE[k], zR[k]) for k in _SHARED_ROWS):
                 raise ev_plan.RefuseError("%s and %s do not share the rows of %s"
-                                          % (eT.name, eA.name, D))
-            ok = zT["in_box"] & np.isfinite(zT["logq_ref"]) & np.isfinite(zA["logq_ref"])
-            sT, sA = member_sd(zT), member_sd(zA)
-            s, a = paired_block(-zT["logq_ref"], -zA["logq_ref"], zT["donor"], ok, sT, sA,
-                                ecfg.bootstrap_n, ecfg.level,
-                                ev_plan.seed_of(ecfg.seed, "paired", q["name"], D))
-            s.update({"schema": SCHEMA, "search": q["name"], "dataset": D, "term_arm": term,
-                      "ensembles": {"term": eT.name, "A1": eA.name},
-                      "sd_members": {term: sT, "A1": sA}})
-            base = os.path.join(mdir, "paired_%s_%s" % (q["name"], D))
+                                          % (c.E, c.E_ref, D))
+            ok = zE["in_box"] & np.isfinite(zE["logq_ref"]) & np.isfinite(zR["logq_ref"])
+            sE, sR = member_sd(zE), member_sd(zR)
+            seed = ev_plan.seed_of(ecfg.seed, "paired", c.name, D)
+            s, a = paired_block(-zE["logq_ref"], -zR["logq_ref"], zE["donor"], ok, sE, sR,
+                                ecfg.bootstrap_n, ecfg.level, seed)
+            lower = s.pop("lower_nll")              # block 20's "term arm" / "A1" / None
+            s.update({"schema": SCHEMA, "dataset": D, "comparison": c.name, "kind": c.kind,
+                      "E": c.E, "E_ref": c.E_ref, "search": c.search,
+                      "search_ref": c.search_ref, "arm": c.arm, "arm_ref": c.arm_ref,
+                      "sd_members_E": sE, "sd_members_ref": sR,
+                      "lower_nll_ensemble": ((c.E if s["Dbar"] < 0 else c.E_ref)
+                                             if s["resolved"] else None),
+                      "bootstrap_seed": seed})
+            if c.kind == "vs_A1":                   # block 20's keys, their meaning unchanged
+                s.update({"term_arm": c.arm, "ensembles": {"term": c.E, "A1": c.E_ref},
+                          "sd_members": {c.arm: sE, "A1": sR}, "lower_nll": lower})
+            base = os.path.join(mdir, "paired_%s_%s" % (c.name, D))
             write_json(base + ".json", s)
             write_npz(base + ".npz", a)
             files += [base + ".json", base + ".npz"]
+            paired[D] = base + ".json"
             log("  paired %s on %s: Dbar %+.4f [%+.4f, %+.4f], 2 sigma_seed %.4f -> %s"
-                % (q["name"], D, s["Dbar"], s["ci"][0], s["ci"][1], s["two_sigma_seed"],
+                % (c.name, D, s["Dbar"], s["ci"][0], s["ci"][1], s["two_sigma_seed"],
                    "resolved" if s["resolved"] else "not resolved"))
-    return files
+        made.append({"name": c.name, "kind": c.kind, "E": c.E, "E_ref": c.E_ref,
+                     "search": c.search, "search_ref": c.search_ref, "arm": c.arm,
+                     "arm_ref": c.arm_ref, "datasets": list(shared), "paired": paired})
+    return files, made, left_out
 
 
 def examples_of_search(cfg, q, reported, mdir):
@@ -622,10 +708,12 @@ def search_summary(cfg, q, reported):
 
 def compute(cfg_path, ecfg_path, names=None, ncpus=None, log=print):
     """Every quantity of every sampled ensemble (or of `names`), then the
-    paired comparisons and the searches; returns the index."""
+    comparisons (block 27) and the searches; returns the index."""
     t0 = time.time()
     cfg = ev_plan.load_project(cfg_path)
     ecfg = ev_config.load(ecfg_path)
+    # [block 27] the comparisons from the configuration: its RefuseError before any work
+    _comps, uncompared = ev_plan.comparisons(cfg, with_uncompared=True)
     mdir = ecfg.sub("metrics")
     os.makedirs(mdir, exist_ok=True)
     found, missing = ev_plan.ensembles(cfg, with_missing=True)
@@ -634,14 +722,9 @@ def compute(cfg_path, ecfg_path, names=None, ncpus=None, log=print):
     for e in found:
         if names and e.name not in names:
             continue
-        pj = ev_plan.sample_json(ecfg, e.stem)
-        if not os.path.isfile(pj):
-            left_out.append({"ensemble": e.name, "why": "not sampled (%s absent)" % pj})
-            continue
-        prov = json.load(open(pj))
-        if prov.get("sample_params") != ecfg.sample_params():
-            left_out.append({"ensemble": e.name, "why": "sampled with other values: %s"
-                             % prov.get("sample_params")})
+        why = sample_left_out(ecfg, e)
+        if why is not None:
+            left_out.append({"ensemble": e.name, "why": why})
             continue
         todo.append(e)
     if names:
@@ -672,7 +755,8 @@ def compute(cfg_path, ecfg_path, names=None, ncpus=None, log=print):
         for D in ds:
             files += [os.path.join(mdir, "%s_%s.json" % (stem, D)),
                       os.path.join(mdir, "%s_%s.npz" % (stem, D))]
-    files += paired_all(cfg, ecfg, todo, mdir, log)
+    paired_files, made, cmp_left = paired_all(cfg, ecfg, todo, mdir, log)
+    files += paired_files
     searches = []
     for q in cfg.data["synthetic"]["searches"]:
         if not any(e.search["name"] == q["name"] for e in todo):
@@ -688,10 +772,14 @@ def compute(cfg_path, ecfg_path, names=None, ncpus=None, log=print):
                                          "search": e.search["name"], "datasets": per[e.stem]})
                                for e in todo),
              "left_out": left_out, "searches": searches, "files": files,
+             "comparisons": made, "comparisons_left_out": cmp_left,
+             "uncompared": [{"search": q, "why": w} for q, w in uncompared],
              "report_inputs": ev_plan.report_inputs(cfg, ecfg),
              "seconds": round(time.time() - t0, 1)}
     write_json(os.path.join(mdir, "METRICS.json"), index)
-    n_pair = sum(1 for f in files if os.path.basename(f).startswith("paired_")) // 2
+    n_pair = sum(1 for f in paired_files if f.endswith(".json"))    # (comparison, data set) pairs
+    log("comparisons: %d made, %d left out, %d search(es) in none"
+        % (len(made), len(cmp_left), len(uncompared)))
     log("EVAL METRICS OK: %d ensemble(s), %d data-set file(s), %d paired comparison(s), "
         "%d search(es), %d left out (%.0f s)"
         % (len(todo), sum(len(v) for v in per.values()), n_pair, len(searches), len(left_out),

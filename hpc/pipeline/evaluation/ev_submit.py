@@ -23,9 +23,14 @@ unit is done, live (its recorded job queued, held or running), or submitted:
                       jobs (afterok)
     report            ev_report.py over every sampled ensemble: submitted when a
                       sampling job is, or when REPORT_COMPLETE.json records
-                      other inputs (ev_plan.report_inputs); after the sampling
-                      jobs (afterok); not while no ensemble is sampled or
-                      being sampled
+                      other inputs (ev_plan.report_inputs: the samples, the
+                      report's values and [block 27] the comparisons); after
+                      the sampling jobs (afterok); not while no ensemble is
+                      sampled or being sampled. [block 27] With report in
+                      --what the comparisons are listed after its unit, one
+                      line each (ev_plan.comparisons), and a configuration
+                      whose comparisons cannot be listed is refused; without
+                      it they are never consulted
     data              block 23: ev_dataview.py, the data overview: done when
                       <out_root>/data/DATA_VIEW.json records the current
                       ev_plan.data_inputs (its values and the sidecars of the
@@ -179,7 +184,13 @@ def report_state(cfg, ecfg):
     obj, problem = CM.try_read_json(rc)
     if obj is None:
         return "stale", "%s cannot be read (%s)" % (rc, problem)
-    if obj.get("inputs") != ev_plan.report_inputs(cfg, ecfg):
+    now, then = ev_plan.report_inputs(cfg, ecfg), obj.get("inputs")
+    if then != now:
+        if (isinstance(then, dict) and then.get("samples") == now["samples"]
+                and then.get("params") == now["params"]
+                and then.get("comparisons") != now["comparisons"]):
+            # [block 27] a report made before the comparisons, or of others
+            return "stale", "its comparisons changed since %s" % obj.get("finished", "?")
         return "stale", "its samples or its values changed since %s" % obj.get("finished", "?")
     return "done", rc
 
@@ -229,10 +240,20 @@ def qsub_line(cfg, ecfg, kind, name, log, argv_file, depend):
 
 # ---------------------------------------------------------------- the plan
 
+def comparison_lines(unit):
+    """[block 27] The lines the run logs after the report's unit: one per
+    comparison, one per search with a term that takes part in none."""
+    return (["EVAL SUBMIT: comparison %s: %s against %s (%s)" % (c.name, c.E, c.E_ref, c.kind)
+             for c in unit.get("comparisons") or []]
+            + ["EVAL SUBMIT: no comparison for %s: %s" % (q, why)
+               for q, why in unit.get("uncompared") or []])
+
+
 def plan(cfg_path, ecfg_path, what=DEFAULT_WHAT, resample=(), log=print):
     """(cfg, ecfg, units): every unit as dict(unit, kind, name, state, why,
-    argv, live) -- nothing submitted, nothing written. Refuse when the
-    launcher cannot go on."""
+    argv, live) -- nothing submitted, nothing written; the report's unit
+    also carries its comparisons and the searches in none (block 27).
+    Refuse (or ev_plan.RefuseError) when the launcher cannot go on."""
     cfg = ev_plan.load_project(cfg_path)
     ecfg = ev_config.load(ecfg_path)
     py = CM.E.python_in_env()
@@ -275,13 +296,16 @@ def plan(cfg_path, ecfg_path, what=DEFAULT_WHAT, resample=(), log=print):
             log("EVAL SUBMIT: not complete: %s (%s: %s); run this again once it is"
                 % (q, folder, why))
     if "report" in what:
+        # [block 27] the comparisons the report makes; their RefuseError is the launcher's
+        comps, uncompared = ev_plan.comparisons(cfg, with_uncompared=True)
         if not os.path.isfile(p["report"]):
             raise Refuse("the report's program %s is not in this checkout (git pull)" % p["report"])
         state, why = report_state(cfg, ecfg)
         argv = [py, p["report"], "--config", cfg.path, "--eval-config", ecfg.path,
                 "--ncpus", str(int(ecfg.jobs["report"]["ncpus"]))]
         units.append({"unit": "report", "kind": "report", "state": state, "why": why,
-                      "name": CM.job_name("ev_report"), "argv": argv, "live": live("report")})
+                      "name": CM.job_name("ev_report"), "argv": argv, "live": live("report"),
+                      "comparisons": comps, "uncompared": uncompared})
     if "data" in what:
         state, why = data_state(cfg, ecfg)
         argv = [py, p["dataview"], "--config", cfg.path, "--eval-config", ecfg.path,
@@ -314,8 +338,15 @@ def run(cfg_path, ecfg_path, what=DEFAULT_WHAT, resample=(), dry_run=False, log=
     live_ids = {"calbank": [], "sample": []}
     n_sub, n_done, n_live = 0, 0, 0
     sampling_now = False                         # a sampling job submitted now, or live
-    has_samples = bool(ev_plan.report_inputs(cfg, ecfg)["samples"])
+    # a sample provenance of a complete ensemble present (report_inputs' "samples" not
+    # empty), read without the comparisons, which only a report consults (block 27)
+    has_samples = any(os.path.isfile(ev_plan.sample_json(ecfg, e.stem))
+                      for e in ev_plan.ensembles(cfg))
+    after_report = []                            # [block 27] logged once the report's unit is
     for u in units:
+        for text in after_report:
+            log(text)
+        after_report = comparison_lines(u) if u["kind"] == "report" else []
         kind = u["kind"]
         if kind == "report" and not (has_samples or sampling_now or u["live"]):
             log("EVAL SUBMIT: report: nothing to report yet (no ensemble sampled or being sampled)")
@@ -373,6 +404,8 @@ def run(cfg_path, ecfg_path, what=DEFAULT_WHAT, resample=(), dry_run=False, log=
         n_sub += 1
         log("EVAL SUBMIT: %s submitted %s%s%s, log %s"
             % (u["unit"], job, why, (" after " + ", ".join(depend)) if depend else "", log_path))
+    for text in after_report:
+        log(text)
     if dry_run:
         log("EVAL DRY RUN: %d job(s) would be submitted, %d done, %d live; nothing written"
             % (n_sub, n_done, n_live))
