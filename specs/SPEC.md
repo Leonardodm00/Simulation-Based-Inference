@@ -4939,7 +4939,19 @@ pins proposed by Claude; Confirmed: no]
       (<reason>)"` (the reason METRICS.json's "left_out" gives for it, or
       `"not complete"` when it is not among the ensembles found),
       `"<ensemble> was not requested (--ensemble)"`, `"no data set is
-      sampled for both"`.
+      sampled for both"`. [contract amendment 1, 2026-11-16, wave W2: the
+      two first overlapped for a complete ensemble that `--ensemble` did
+      not name and that has no current sample -- block 20's `compute` skips
+      such an ensemble before reading its sample, so "left_out" gives it no
+      reason, and `paired_all` does not receive the names. The why is now,
+      for E first and then E_ref: `"<ensemble> is not reported (not
+      complete)"` when it is not among the ensembles found; `"<ensemble> is
+      not reported (<reason>)"`, block 20's reason ("not sampled (<path>
+      absent)" or "sampled with other values: ..."), when its sample is
+      absent or not current, whether or not `--ensemble` named it; `"<ensemble>
+      was not requested (--ensemble)"` only for an ensemble with a current
+      sample that `--ensemble` left out. Blocks affected: 27 (block 28 shows
+      the why as text).]
   - The paired files (block 28 reads them; block 20's E20c reads the
     legacy keys):
     - JSON: block 20's keys `schema` (unchanged, "eval_metrics/1"),
