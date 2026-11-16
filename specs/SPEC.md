@@ -2253,13 +2253,18 @@ fixture, not part of the pipeline.
     - edge cases: an unreadable `finalist_config.json` beside member
       records (the root is set aside); a second set-aside (`.set_aside2`);
       the dry run after a changed finalist (the line, nothing moved).
-  - Confirmed: the choice yes 2026-11-14 (D-134 (2): set aside and refit);
-    the done predicate and sec. 2.2's rule 5 are Claude's way to it, to
-    confirm.
+  - Confirmed: yes. The choice 2026-11-14 (D-134 (2): set aside and
+    refit); the done predicate and sec. 2.2's rule 5 2026-11-16 (D-135).
   - Status: smoke-tested 2026-11-14 `[SANDBOX]` (`test_smoke_finalist.py` 6
     pass, 2 skip -- convergence, determinism; `test_smoke_block7.py` 7 of 8,
     `test_smoke_block7b.py` 6 of 7, `test_smoke_block2.py` 13 of 15 (its
-    `test_env_faults` needs the Sbi-extractor checkout of D-113),
+    `test_env_faults` needs the Sbi-extractor checkout of D-113)
+    [2026-11-16: 14 of 15 with that checkout, pushed that day (D-133;
+    Sbi-extractor `4955e8d`, tree `9d8ea296`), and `test_smoke_inputs_check.py`
+    7 of 8, each with its convergence skip `[SANDBOX]`. `test_env_faults`
+    and `test_smoke_block7c.py`'s three checks use the tests' fake conda
+    and fail when the caller exports `PIPELINE_SKIP_CONDA=1`, as the two
+    checking runs of 2026-11-14 did: run plain, block 7c is 6 of 7],
     `test_smoke_block3.py` 8 of 9, each with its convergence skip, after
     contract amendments 1 and 2); checked by an independent agent on
     `e6e7af0` and `57e294d` (`specs/test_reports/2026-11-14_1558_incremental.md`,
@@ -2322,9 +2327,9 @@ fixture, not part of the pipeline.
     - edge cases: the change accepted before the stage has started (the
       start refuses a folder of another identity as before); the dry run's
       line.
-  - Confirmed: the refusal yes 2026-11-14 (D-134 (1), the plan's 1b; it
-    applies the rule of the identity above); the place of the check
-    (start and every poll) is Claude's, to confirm.
+  - Confirmed: yes. The refusal 2026-11-14 (D-134 (1), the plan's 1b; it
+    applies the rule of the identity above); the place of the check, the
+    start and every poll, 2026-11-16 (D-135).
   - Status: smoke-tested 2026-11-14 `[SANDBOX]` (`test_smoke_identity.py` 5
     of 7, 2 skip -- convergence, determinism; the poll's and the start's
     checks each removed are caught); checked by an independent agent on
@@ -3555,8 +3560,8 @@ Claude; Confirmed: no]
     - edge cases: two shard builds started together into one new folder
       with `os.makedirs` slowed by 0.5 s (the audit's F206): both exit 0,
       both shards present; with `8d5b162`'s `latent_bank.py` one exits 1.
-  - Confirmed: the clip yes 2026-11-14 (D-134 (3)); the builder's and the
-    record tool's refusals are Claude's, to confirm.
+  - Confirmed: yes. The clip 2026-11-14 (D-134 (3)); the builder's and
+    the record tool's refusals 2026-11-16 (D-135).
   - Status: smoke-tested 2026-11-14 `[SANDBOX]` (`test_smoke_theta_box.py` 6
     pass, 1 skip -- convergence; the stage 1 suites, blocks 11-14's and the
     synthetic suite at their earlier counts); checked by an independent
@@ -5144,6 +5149,7 @@ pins proposed by Claude; Confirmed: no]
 | `python3 hpc/pipeline/tests/test_smoke_finalist.py` | block 7 (i), 2026-11-14: the best fit follows its search's finalist; `--retry` and the downstream stages | the training environment for its end-to-end checks; the fake PBS | minutes |
 | `python3 hpc/pipeline/tests/test_smoke_identity.py` | block 7 (j), 2026-11-14: the search's identity re-checked after an accepted configuration change | the training environment for its end-to-end checks; the fake PBS | minutes |
 | `python3 hpc/pipeline/tests/test_smoke_theta_box.py` | block 11's amendment of 2026-11-14: theta inside the open box (the samplers, the builder, the record tool), the shard folder's race | numpy, scipy; the builder's environment | about a minute |
+| `qsub -q cpu -o $HOME/w1_checks.log -v W1_REPO=<checkout> <checkout>/hpc/pipeline/tests/run_w1_checks.pbs` | the cluster-side check of the wave W1 (2026-11-16): the three suites above and `test_smoke_pipeline.py`, `test_smoke_block7.py`, `test_smoke_synthetic.py` in one job on a compute node, from a checkout other than the running chain's; pass line `W1CHECK: ALL 6 SUITES PASSED` | davinci: the training environment (`W1_ENV`, default `sbi_env`); here: `W1_SKIP_CONDA=1 bash <script>` | about 15 minutes |
 | `python3 hpc/joint/stage4/smoke_test_joint_tune.py -k J37` | block 18's tuner check: `finalists --arm/--out` | numpy, scikit-optimize | seconds |
 | `bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what data [--dry-run]` | block 23: the data overview's job (`ev_dataview.py`): the windows, the eight statistics, theta and the PCA of the synthetic data set, nine figures | davinci (the tests: the reduced project under the fake PBS) | about a minute on 4,000 + 648 windows |
 
@@ -5159,10 +5165,15 @@ run on davinci is `--dry-run`, then the plain command; the pass lines are
 stated in the README.
 
 Blocks 11-14 (2026-11-03): the sandbox installs torch 2.10.0, sbi 0.27.0,
-zuko 1.6.0 and pytorch-metric-learning 1.6.3 (CPU) [corrected 2026-11-14: the
-audit's sandboxes ran 2.9.0; 3.0.3 has no `utils.loss_and_miner_utils`, which
-`hpc/dsn/dsn_joint_loss.py` imports, so `hpc/requirements.txt` and
-`hpc/environment.yml` now ask `>=2.3,<3` (the audit's F207, F306, F708)] and runs the arms at
+zuko 1.6.0 and pytorch-metric-learning 1.6.3 (CPU) [2026-11-14: the audit's
+sandboxes ran 2.9.0; 3.0.3 has no `utils.loss_and_miner_utils`, which
+`hpc/dsn/dsn_joint_loss.py` imports (the audit's F207, F306, F708).
+Corrected 2026-11-16: davinci's `sbi_env` holds 1.6.3 on python 3.11.15 and
+imports that module `[CLUSTER 2026-11-16, the user's paste]`, so the bound
+`>=2.3` the files carried never described the environment that runs:
+`hpc/requirements.txt` and `hpc/environment.yml` now ask `>=1.6.3,<3`, the
+range actually run -- 1.6.3 on davinci and here on 2026-11-03, 2.9.0 in the
+audit's sandboxes] and runs the arms at
 2 epochs of 3 steps; the searches and the full banks run on davinci (the
 roadmap's step S5). `hpc/joint/stage1/smoke_test_bench_burst.py` stops at
 its check B4 in the sandbox -- scipy 1.18.1's `kstest(x, "norm",
