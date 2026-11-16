@@ -55,9 +55,9 @@
   "_ncpus": "Worker processes of the simulations and of the report's per-ensemble work when a command is run by hand; a job passes its own cores (jobs below). [Claude's]",
   "ncpus": 8,
 
-  "_jobs": "Block 22: the PBS queue and each kind of job's resources -- calbank (one job per shard of the calibration bank), sample (one per ensemble: block 19's ev_sample.py), report (one: metrics, then figures). Sized for W 18,000 windows: a bench window simulates in 0.05 s, the members' densities at 1,000 draws dominate the sampling. Block 23 added data (one: the data overview, ev_dataview.py; 4,000 + 648 windows' statistics and nine figures, a few minutes and under 2 GB in the sandbox). [Claude's]",
+  "_jobs": "Block 22: the PBS queue and each kind of job's resources -- calbank (one job per shard of the calibration bank), sample (one per ensemble: block 19's ev_sample.py), report (one: metrics, then figures). Sized for W 18,000 windows: a bench window simulates in 0.05 s, the members' densities at 1,000 draws dominate the sampling. Block 23 added data (one: the data overview, ev_dataview.py; 4,000 + 648 windows' statistics and nine figures, a few minutes and under 2 GB in the sandbox). [Claude's] [2026-11-16, D-137: the queue intel, was cpu -- the user's call; the resources unchanged]",
   "jobs": {
-    "queue": "cpu",
+    "queue": "intel",
     "calbank": {"ncpus": 1, "mem": "16gb", "walltime": "04:00:00"},
     "sample": {"ncpus": 8, "mem": "64gb", "walltime": "24:00:00"},
     "report": {"ncpus": 8, "mem": "64gb", "walltime": "24:00:00"},
