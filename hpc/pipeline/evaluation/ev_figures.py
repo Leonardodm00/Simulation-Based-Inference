@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Block 21: the evaluation's figures, from block 20's metrics and block 19's
-samples (specs/SPEC.md block 21; D-126, D-127, Q-E6).
+"""Blocks 21 and 28: the evaluation's figures, from block 20's metrics, block
+27's comparisons and block 19's samples (specs/SPEC.md blocks 21 and 28,
+sec. 2.5 "The comparisons"; D-126, D-127, D-136, Q-E6).
 
     python3 hpc/pipeline/evaluation/ev_figures.py --config hpc/pipeline/projects/synth/synth.json \\
         --eval-config hpc/pipeline/projects/synth/synth_eval.json
@@ -18,20 +19,29 @@ configuration) and FIGURES.md, one line of caption per figure:
                               L-C2ST per window
     ensembles/<stem>/emb_*    the members' embeddings: the first two principal
                               components of D_sim and of the cohort, with MMD^2
-    searches/<q>/arms_*       a search's two arms: coverage, NLL per donor, PPC,
-                              L-C2ST, and the donor-paired forest plot (E3)
+    comparisons/<name>/cmp_*  a comparison of METRICS.json's "comparisons" (block
+                              27): its ensemble E against its reference E_ref --
+                              a term arm against its A1 reference, or A2 against
+                              A5 -- on the data sets it is paired on: coverage,
+                              NLL per donor, PPC, L-C2ST, and the donor-paired
+                              forest plot (E3)
     searches/<q>/search_*     the search: L in proposal order with its running
                               minimum per arm, L against L_pseudo_real, the
                               members' learning curves
-    across/*                  every search: Dbar with its interval and 2
-                              sigma_seed; every ensemble's NLL on R0 and R3
+    across/*                  every comparison: Dbar with its interval and 2
+                              sigma_seed, one panel per kind; every ensemble's
+                              NLL on R0 and R3
 Pass line: EVAL FIGURES OK: <n> figure(s); exit 3 when there are no metrics.
 
-It draws and computes nothing scientific: every quantity is block 20's, read
-from its files; the corner plots read block 19's draws. Colours follow the
+It draws and computes nothing scientific: every quantity is block 20's or
+block 27's, read from their files; the corner plots read block 19's draws. A
+comparison's two ensembles are the ones METRICS.json names for it, whatever
+their searches, and its figures are drawn on the data sets it lists as
+paired, never on others its ensembles happen to share. Colours follow the
 entity in every figure: an arm keeps its hue (A1 blue, A2 orange, A5 aqua),
-a condition its hue and marker; text stays in the ink colours; one y-axis
-per panel.
+a condition its hue and marker; a legend names an ensemble by its arm and
+its search ("A2 (S-A2-R3)"); text stays in the ink colours; one y-axis per
+panel.
 
 Pure ASCII, LF only.
 """
@@ -40,6 +50,7 @@ import argparse
 import json
 import os
 import sys
+import textwrap
 import time
 
 import _evalpath  # noqa: F401
@@ -67,12 +78,30 @@ SEQ = LinearSegmentedColormap.from_list("seq_blue", ["#cde2fb", "#86b6ef", "#398
                                                      "#184f95", "#0d366b"])
 LW, LW_THIN, LW_REF = 1.6, 0.8, 0.8
 WASH = 0.15
+TITLE_CHARS_PER_IN = 14        # a title's line at 9 pt: DejaVu Sans fits 15.4 per inch (block 28)
 DATASET_TITLE = {"sim": "D_sim (arm S, report split)", "R0": "R0 (pi = 0)", "R3": "R3 (pi = 0.3)",
                  "R3dag": "R3 against theta-dagger"}
+# FIGURES.md's sections, in this order (block 28)
+FAMILIES = ("calibration", "accuracy", "posterior", "embeddings", "comparisons", "searches",
+            "across")
+# across/dbar's panels, left to right, by the comparison's kind (block 27's
+# kinds): its title and what Dbar is in it (block 28)
+DBAR_KINDS = (("vs_A1", "against A1", "Dbar = term arm - A1"),
+              ("A2_vs_A5", "A2 against A5", "Dbar = A2 - A5"))
 
 
 def arm_color(arm):
     return ARM_COLOR.get(arm, OTHER_ARM)
+
+
+def ens_label(e):
+    """An ensemble in a legend: its arm and its search, "A2 (S-A2-R3)"."""
+    return "%s (%s)" % (e["arm"], e["search"])
+
+
+def num(values):
+    """A JSON list of numbers with null (NaN written by block 20) as NaN."""
+    return [np.nan if v is None else v for v in values]
 
 
 def ds_title(D):
@@ -115,9 +144,10 @@ def note(ax, text, loc="upper left"):
 def finish(fig, title=None, legend_from=None, ncol=4):
     """The figure's title on top, its legend (the handles of the axes
     `legend_from`) in a row below the panels, where it covers no data;
-    margins in inches, whatever the figure's height."""
+    margins in inches, whatever the figure's height; a title of several
+    lines (block 28's, `fitted`) gets the room of each."""
     hs, ls = (legend_from.get_legend_handles_labels() if legend_from is not None else ([], []))
-    t_in = 0.24 if title else 0.0
+    t_in = (0.24 + 0.15 * title.count("\n")) if title else 0.0
     b_in = 0.28 if hs else 0.0
     h = fig.get_figheight() + t_in + b_in       # the panels keep their size
     fig.set_figheight(h)
@@ -131,6 +161,14 @@ def finish(fig, title=None, legend_from=None, ncol=4):
 
 def fmt(x, nd=3):
     return "-" if x is None else ("%." + str(nd) + "f") % x
+
+
+def fitted(fig, text):
+    """`text` broken at its spaces into lines that fit the figure's width at
+    the title's 9 pt (block 28's titles name two ensembles: at 15.4
+    characters per inch in DejaVu Sans, matplotlib's default font, one line
+    of them can be wider than a figure of one or two panels)."""
+    return textwrap.fill(text, width=max(24, int(fig.get_figwidth() * TITLE_CHARS_PER_IN)))
 
 
 # ---------------------------------------------------------------- the files
@@ -488,100 +526,160 @@ def fig_embedding(st, e, D):
                  "D_sim and its permutation p-value" % D)
 
 
-# ---------------------------------------------------------------- per search
+# ---------------------------------------------------------------- per comparison (block 28)
+# A comparison c is an entry of METRICS.json's "comparisons" (block 27): its
+# name, kind, E and E_ref (the two ensembles' names), their searches and arms,
+# and "datasets", the data sets it is paired on. eE and eR are the entries of
+# METRICS.json's "ensembles" that c names, each with its name.
 
-def fig_arms_coverage(st, q, eT, eA, dss):
+def comparison_ensembles(index, c):
+    """(eE, eR): the entries of METRICS.json's "ensembles" named by
+    comparison c -- c["E"] and c["E_ref"], whatever their searches -- each
+    with its name; a name the index does not report is a refusal."""
+    ens = index.get("ensembles") or {}
+    for n in (c["E"], c["E_ref"]):
+        if n not in ens:
+            raise ev_plan.RefuseError("comparison %s names the ensemble %s, which %s does not "
+                                      "report" % (c["name"], n, "METRICS.json"))
+    return dict(ens[c["E"]], name=c["E"]), dict(ens[c["E_ref"]], name=c["E_ref"])
+
+
+def paired_datasets(c, eE, eR):
+    """The data sets comparison c's figures are drawn on: those it is paired
+    on, METRICS.json's "datasets", in their order -- never every data set its
+    two ensembles happen to share. None, or one that eE or eR has no metrics
+    on, is a refusal."""
+    dss = list(c.get("datasets") or [])
+    if not dss:
+        raise ev_plan.RefuseError("comparison %s lists no paired data set" % c["name"])
+    for e in (eE, eR):
+        miss = [D for D in dss if D not in e["datasets"]]
+        if miss:
+            raise ev_plan.RefuseError("comparison %s is paired on %s, where %s has no metrics"
+                                      % (c["name"], ", ".join(miss), e["name"]))
+    return dss
+
+
+def paired_of(st, c, D):
+    """Comparison c's paired files on D, `paired_<name>_<D>` (block 27): the
+    JSON and the arrays; either absent is a refusal."""
+    base = "paired_%s_%s" % (c["name"], D)
+    j, a = st.js(base), st.arr(base)
+    if j is None or a is None:
+        raise ev_plan.RefuseError("comparison %s on %s: %s.json or %s.npz is absent from %s"
+                                  % (c["name"], D, base, base, st.mdir))
+    return j, a
+
+
+def fig_cmp_coverage(st, c, eE, eR, dss):
     fig, axs = panels(len(dss), min(4, len(dss)), w=2.7, h=2.6)
     for ax, D in zip(axs, dss):
-        for e in (eA, eT):
+        for e in (eR, eE):
             a = st.arr("%s_%s" % (e["stem"], D))
             col = arm_color(e["arm"])
             ax.fill_between(a["betas"], a["coverage_lo"], a["coverage_hi"], color=col,
                             alpha=WASH * 0.8, lw=0)
-            ax.plot(a["betas"], a["coverage"], color=col, lw=LW, label=e["arm"])
+            ax.plot(a["betas"], a["coverage"], color=col, lw=LW, label=ens_label(e))
         diag(ax)
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         ax.set_title(ds_title(D))
         ax.set_xlabel("credibility level beta")
     axs[0].set_ylabel("expected coverage C(beta)")
-    finish(fig, "%s: the two arms' HPD expected coverage" % q, axs[0])
-    return fig, ("HPD expected coverage of the two arms of %s on each data set they share, with "
-                 "their bands" % q)
+    finish(fig, fitted(fig, "%s: HPD expected coverage, %s against %s"
+                       % (c["name"], eE["name"], eR["name"])), axs[0])
+    return fig, ("HPD expected coverage C(beta) of %s against %s on %s, each with its band "
+                 "(binomial on D_sim, a donor bootstrap of the curve on a cohort); below the "
+                 "diagonal is overconfident" % (eE["name"], eR["name"], ", ".join(dss)))
 
 
-def fig_arms_nll(st, q, eT, eA, D):
-    aT, aA = st.arr("%s_%s" % (eT["stem"], D)), st.arr("%s_%s" % (eA["stem"], D))
-    ids = aA["donor_ids"]
-    lA, lT = aA["donor_nll"], aT["donor_nll"]
-    order = np.argsort(np.where(np.isfinite(lA), lA, np.inf))
+def fig_cmp_nll(st, c, eE, eR, D):
+    aE = st.arr("%s_%s" % (eE["stem"], D))
+    by_e = dict(zip(aE["donor_ids"].tolist(), aE["donor_nll"].tolist()))
+    aR = st.arr("%s_%s" % (eR["stem"], D))
+    ids, lR = aR["donor_ids"], aR["donor_nll"]
+    lE = np.array([by_e.get(int(d), np.nan) for d in ids], dtype=np.float64)   # by donor id
+    order = np.argsort(np.where(np.isfinite(lR), lR, np.inf))
     fig, ax = plt.subplots(figsize=(6.0, 2.8))
     xs = np.arange(ids.size)
     for x, i in zip(xs, order):
-        ax.plot([x, x], [lA[i], lT[i]], color=AXIS, lw=LW_THIN, zorder=1)
-    for e, l in ((eA, lA), (eT, lT)):
+        ax.plot([x, x], [lR[i], lE[i]], color=AXIS, lw=LW_THIN, zorder=1)
+    for e, l in ((eR, lR), (eE, lE)):
         ax.scatter(xs, l[order], s=20, color=arm_color(e["arm"]), edgecolors=SURFACE,
-                   linewidths=0.8, label=e["arm"], zorder=3)
+                   linewidths=0.8, label=ens_label(e), zorder=3)
     ax.set_xticks(xs)
     ax.set_xticklabels([str(int(d)) for d in ids[order]], rotation=90, fontsize=5)
-    ax.set_xlabel("donor (ordered by A1's mean NLL)")
+    ax.set_xlabel("donor (ordered by its mean NLL under %s)" % ens_label(eR))
     ax.set_ylabel("donor mean NLL (nats)")
-    finish(fig, "%s on %s: donor mean NLL of the two arms" % (q, ds_title(D)), ax)
-    return fig, ("Donor mean NLL lbar_d of the two arms of %s on %s, each donor's pair joined; "
-                 "below the A1 dot the term arm does better on that donor" % (q, D))
+    finish(fig, fitted(fig, "%s on %s: donor mean NLL, %s against %s"
+                       % (c["name"], ds_title(D), eE["name"], eR["name"])), ax)
+    return fig, ("Donor mean NLL lbar_d of %s against %s on %s, each donor's pair joined and the "
+                 "donors ordered by %s's; below the %s dot, %s does better on that donor"
+                 % (eE["name"], eR["name"], D, eR["name"], eR["name"], eE["name"]))
 
 
-def fig_arms_ppc(st, q, eT, eA, D):
-    fig, ax = plt.subplots(figsize=(6.0, 2.8))
-    jT, jA = st.js("%s_%s" % (eT["stem"], D)), st.js("%s_%s" % (eA["stem"], D))
-    stats = jA["ppc"]["stats"]
+def fig_cmp_ppc(st, c, eE, eR, D):
+    fig, ax = plt.subplots(figsize=(6.4, 2.9))
+    jE, jR = st.js("%s_%s" % (eE["stem"], D)), st.js("%s_%s" % (eR["stem"], D))
+    stats = jR["ppc"]["stats"]
     x = np.arange(len(stats))
-    for off, e, j in ((-0.15, eA, jA), (0.15, eT, jT)):
-        ref = st.js("%s_sim" % e["stem"])["ppc"]["frac_outside_90"]
+    for off, e, j in ((-0.15, eR, jR), (0.15, eE, jE)):
         col = arm_color(e["arm"])
-        for xi, a_, r_ in zip(x + off, j["ppc"]["frac_outside_90"], ref):
-            ax.plot([xi, xi], [r_, a_], color=col, lw=LW_THIN, alpha=0.6, zorder=1)
-        ax.scatter(x + off, j["ppc"]["frac_outside_90"], s=26, color=col, edgecolors=SURFACE,
-                   linewidths=0.8, zorder=3, label="%s on %s" % (e["arm"], D))
-        ax.scatter(x + off, ref, s=22, facecolors=SURFACE, edgecolors=col, linewidths=1.0,
-                   zorder=3, label="%s on D_sim" % e["arm"])
+        on_d = num(j["ppc"]["frac_outside_90"])
+        ref = ((st.js("%s_sim" % e["stem"]) or {}).get("ppc") or {}).get("frac_outside_90")
+        if ref is not None:
+            ref = num(ref)
+            for xi, a_, r_ in zip(x + off, on_d, ref):
+                ax.plot([xi, xi], [r_, a_], color=col, lw=LW_THIN, alpha=0.6, zorder=1)
+        ax.scatter(x + off, on_d, s=26, color=col, edgecolors=SURFACE, linewidths=0.8, zorder=3,
+                   label="%s on %s" % (ens_label(e), D))
+        if ref is not None:
+            ax.scatter(x + off, ref, s=22, facecolors=SURFACE, edgecolors=col, linewidths=1.0,
+                       zorder=3, label="%s on D_sim" % ens_label(e))
     ax.set_xticks(x)
     ax.set_xticklabels(stats)
     ax.set_ylim(bottom=0.0)
     ax.set_ylabel("fraction outside the 90 % range")
-    finish(fig, "%s on %s: posterior-predictive misses per statistic" % (q, ds_title(D)), ax)
-    return fig, ("Fraction of %s's windows whose statistic falls outside the 5-95 %% range of "
-                 "the windows simulated at the posterior draws, both arms of %s (filled), and the "
-                 "same on D_sim (rings), the reference; about 0.1 when the model fits" % (D, q))
+    finish(fig, fitted(fig, "%s on %s: posterior-predictive misses per statistic, %s against %s"
+                       % (c["name"], ds_title(D), eE["name"], eR["name"])), ax)
+    return fig, ("Posterior-predictive misses of %s against %s on %s: per statistic the fraction "
+                 "of the windows whose value falls outside the 5-95 %% range of the windows "
+                 "simulated at the posterior draws (filled), and the same on each one's D_sim "
+                 "(rings), the reference; about 0.1 when the model fits"
+                 % (eE["name"], eR["name"], D))
 
 
-def fig_arms_lc2st(st, q, eT, eA, D):
-    aT, aA = st.arr("%s_%s" % (eT["stem"], D)), st.arr("%s_%s" % (eA["stem"], D))
-    ids = aA["lc2st_donor_ids"]
-    order = np.argsort(aA["lc2st_donor_stat"])
+def fig_cmp_lc2st(st, c, eE, eR, D):
+    aE = st.arr("%s_%s" % (eE["stem"], D))
+    by_e = dict(zip(aE["lc2st_donor_ids"].tolist(), aE["lc2st_donor_stat"].tolist()))
+    aR = st.arr("%s_%s" % (eR["stem"], D))
+    ids, sR = aR["lc2st_donor_ids"], aR["lc2st_donor_stat"]
+    sE = np.array([by_e.get(int(d), np.nan) for d in ids], dtype=np.float64)    # by donor id
+    order = np.argsort(sR)
     fig, ax = plt.subplots(figsize=(6.0, 2.6))
     xs = np.arange(ids.size)
-    for e, a in ((eA, aA), (eT, aT)):
-        m = dict(zip(a["lc2st_donor_ids"].tolist(), a["lc2st_donor_stat"].tolist()))
-        ax.scatter(xs, [m.get(int(ids[i]), np.nan) for i in order], s=20,
-                   color=arm_color(e["arm"]), edgecolors=SURFACE, linewidths=0.8, label=e["arm"])
+    for e, s_ in ((eR, sR), (eE, sE)):
+        ax.scatter(xs, s_[order], s=20, color=arm_color(e["arm"]), edgecolors=SURFACE,
+                   linewidths=0.8, label=ens_label(e))
     ax.set_xticks(xs)
-    ax.set_xticklabels([str(int(ids[i])) for i in order], rotation=90, fontsize=5)
-    ax.set_xlabel("donor (ordered by A1's statistic)")
+    ax.set_xticklabels([str(int(d)) for d in ids[order]], rotation=90, fontsize=5)
+    ax.set_xlabel("donor (ordered by its statistic under %s)" % ens_label(eR))
     ax.set_ylabel("donor mean L-C2ST statistic")
-    finish(fig, "%s on %s: L-C2ST per donor" % (q, ds_title(D)), ax)
-    return fig, "Donor mean of the local C2ST statistic for the two arms of %s on %s" % (q, D)
+    finish(fig, fitted(fig, "%s on %s: L-C2ST per donor, %s against %s"
+                       % (c["name"], ds_title(D), eE["name"], eR["name"])), ax)
+    return fig, ("Donor mean of the local C2ST statistic under %s against %s on %s, the donors "
+                 "ordered by %s's" % (eE["name"], eR["name"], D, eR["name"]))
 
 
-def fig_forest(st, q, D):
-    j = st.js("paired_%s_%s" % (q, D))
-    a = st.arr("paired_%s_%s" % (q, D))
+def fig_cmp_forest(c, eE, eR, D, j, a):
+    """The forest plot of E3 for comparison c on D, from its paired files
+    (j, a): per donor Delta_d = lbar_d(E) - lbar_d(E_ref)."""
     order = np.argsort(a["delta_d"])
     dd, se = a["delta_d"][order], a["se_d"][order]
     n = dd.size
     fig, ax = plt.subplots(figsize=(4.8, max(2.4, 0.11 * n + 1.2)))
     ys = np.arange(n)
-    col = arm_color(j["term_arm"])
+    col = arm_color(eE["arm"])
     lo, hi = j["ci"]
     ax.axvspan(lo, hi, color=col, alpha=WASH, lw=0, label="Dbar, %d %% interval" % round(100 * j["level"]))
     ax.axvline(j["Dbar"], color=col, lw=LW)
@@ -598,13 +696,17 @@ def fig_forest(st, q, D):
         ax.scatter(dd, ys, s=3, color=col, lw=0)
         ax.set_yticks([])
         ax.set_ylabel("%d donors, ordered" % n)
-    ax.set_xlabel("Delta_d = lbar_d(%s) - lbar_d(A1) (nats)" % j["term_arm"])
-    verdict = "resolved, %s lower" % j["lower_nll"] if j["resolved"] else "not resolved"
-    finish(fig, "%s on %s: %s (gray lines: +-2 sigma_seed)" % (q, ds_title(D), verdict), ax)
-    return fig, ("Donor-paired difference (E3) of %s's two arms on %s: per donor Delta_d with "
-                 "1.96 SE over its windows, Dbar %+.4f with its donor-cluster bootstrap interval "
-                 "[%+.4f, %+.4f], +-2 sigma_seed = %.4f; G.2: %s"
-                 % (q, D, j["Dbar"], lo, hi, j["two_sigma_seed"], verdict))
+    ax.set_xlabel("Delta_d = lbar_d(%s) - lbar_d(%s) (nats)" % (eE["name"], eR["name"]))
+    verdict = ("resolved, %s lower" % j["lower_nll_ensemble"]) if j["resolved"] else "not resolved"
+    finish(fig, fitted(fig, "%s on %s: %s (gray lines: +-2 sigma_seed)"
+                       % (c["name"], ds_title(D), verdict)), ax)
+    return fig, ("Donor-paired difference (E3) of %s against %s on %s: per donor Delta_d with 1.96 "
+                 "SE over its windows, Dbar %+.4f with its donor-cluster bootstrap interval [%+.4f, "
+                 "%+.4f], +-2 sigma_seed = %.4f; G.2: %s"
+                 % (eE["name"], eR["name"], D, j["Dbar"], lo, hi, j["two_sigma_seed"], verdict))
+
+
+# ---------------------------------------------------------------- per search
 
 
 def fig_trials(st, q, s):
@@ -669,25 +771,68 @@ def fig_learning(st, q, s):
 
 # ---------------------------------------------------------------- across searches
 
+def dbar_panels(rows):
+    """across/dbar's panels, one per kind present, never two kinds in one:
+    "against A1" (left), then "A2 against A5", then any other kind under its
+    own name; each (title, what Dbar is, [(label, paired json, comparison)])
+    with its rows in the order given. rows: [(label, paired json,
+    comparison)] (block 28)."""
+    known = dict((k, (t, x)) for k, t, x in DBAR_KINDS)
+    kinds = [k for k, _t, _x in DBAR_KINDS]
+    for _l, _j, c in rows:
+        if c["kind"] not in kinds:
+            kinds.append(c["kind"])
+    out = []
+    for k in kinds:
+        sel = [r for r in rows if r[2]["kind"] == k]
+        if sel:
+            t, x = known.get(k, (k, "Dbar = E - E_ref"))
+            out.append((t, x, sel))
+    return out
+
+
 def fig_dbar_all(st, rows):
-    fig, ax = plt.subplots(figsize=(5.4, max(2.0, 0.32 * len(rows) + 1.0)))
-    ys = np.arange(len(rows))[::-1]
-    for y, (label, j) in zip(ys, rows):
-        col = arm_color(j["term_arm"])
-        ax.plot([-j["two_sigma_seed"], j["two_sigma_seed"]], [y, y], color=AXIS, lw=4.0,
-                solid_capstyle="butt", zorder=1)
-        ax.errorbar([j["Dbar"]], [y], xerr=[[j["Dbar"] - j["ci"][0]], [j["ci"][1] - j["Dbar"]]],
-                    fmt="o", ms=4, color=col, ecolor=col, elinewidth=1.0, zorder=3)
-    for arm in sorted(set(j["term_arm"] for _l, j in rows)):
-        ax.scatter([], [], s=16, color=arm_color(arm), label="term arm %s" % arm)
-    ax.axvline(0.0, color=INK2, lw=LW_REF)
-    ax.set_yticks(ys)
-    ax.set_yticklabels([l for l, _j in rows], fontsize=6.5)
-    ax.set_xlabel("Dbar = term arm - A1 (nats per window); gray: +-2 sigma_seed")
-    finish(fig, "Every search: the donor-paired difference of its two arms", ax)
-    return fig, ("Dbar (E3) of every search with both arms, on each data set, with its "
-                 "donor-cluster bootstrap interval; the gray bar is +-2 sigma_seed (G.2): a "
-                 "resolved difference lies outside it with an interval that excludes 0")
+    """Dbar of every comparison on each data set it is paired on, one row
+    each, one panel per kind (dbar_panels); the marker in E's arm's hue."""
+    pans = dbar_panels(rows)
+    n_max = max(len(sel) for _t, _x, sel in pans)
+    fig, axs = panels(len(pans), len(pans), w=4.4, h=max(2.0, 0.32 * n_max + 1.0))
+    for ax, (title, what, sel) in zip(axs, pans):
+        ys = np.arange(len(sel))[::-1]
+        for y, (_l, j, c) in zip(ys, sel):
+            col = arm_color(c["arm"])
+            ax.plot([-j["two_sigma_seed"], j["two_sigma_seed"]], [y, y], color=AXIS, lw=4.0,
+                    solid_capstyle="butt", zorder=1)
+            ax.errorbar([j["Dbar"]], [y], xerr=[[j["Dbar"] - j["ci"][0]], [j["ci"][1] - j["Dbar"]]],
+                        fmt="o", ms=4, color=col, ecolor=col, elinewidth=1.0, zorder=3)
+        ax.axvline(0.0, color=INK2, lw=LW_REF)
+        ax.set_yticks(ys)
+        ax.set_yticklabels([l for l, _j, _c in sel], fontsize=6.5)
+        ax.set_ylim(-0.6, len(sel) - 0.4)
+        ax.set_title(title)
+        ax.set_xlabel("%s (nats per window)" % what)
+    arms = []                          # E's arms, each with its searches, in the rows' order
+    for _l, _j, c in rows:
+        hit = [a for a in arms if a[0] == c["arm"]]
+        if not hit:
+            arms.append((c["arm"], [c["search"]]))
+        elif c["search"] not in hit[0][1]:
+            hit[0][1].append(c["search"])
+    for arm, searches in arms:
+        axs[0].scatter([], [], s=16, color=arm_color(arm), label="%s (%s)" % (arm, ", ".join(searches)))
+    finish(fig, fitted(fig, "Every comparison: the donor-paired difference Dbar of its two ensembles "
+                            "(gray: +-2 sigma_seed)"), axs[0])
+    names = []
+    for _l, _j, c in rows:
+        if c["name"] not in [n for n, _d in names]:
+            names.append((c["name"], "%s against %s on %s" % (c["E"], c["E_ref"],
+                                                              ", ".join(c["datasets"]))))
+    return fig, ("Dbar (E3) of every comparison on each data set it is paired on, one panel per "
+                 "kind (%s), with its donor-cluster bootstrap interval and the gray +-2 sigma_seed "
+                 "bar (G.2), a resolved difference lying outside the bar with an interval that "
+                 "excludes 0, the marker in the hue of E's arm: %s"
+                 % ("; ".join("%s, %s" % (t, x) for t, x, _s in pans),
+                    "; ".join("%s is %s" % nd for nd in names)))
 
 
 def fig_lpr_all(st, ens_rows, cohorts):
@@ -774,33 +919,35 @@ def make_all(cfg_path, ecfg_path, log=print):
                 x = dict(x, chosen_by=ex["chosen_by"])
                 f, c = fig_corner(st, e, coh, x, dag)
                 save(f, os.path.join(rel, "post_corner_%s_c%d" % (coh, x["cls"])), c, "posterior")
-    # the searches: both arms, then the search itself
+    # the comparisons (block 28): each one METRICS.json lists (block 27), between
+    # the two ensembles it names, on the data sets it is paired on
     rows = []
+    for cm in st.index.get("comparisons") or []:
+        eE, eR = comparison_ensembles(st.index, cm)
+        dss = paired_datasets(cm, eE, eR)
+        rel = os.path.join("comparisons", cm["name"])
+        f, c = fig_cmp_coverage(st, cm, eE, eR, dss)
+        save(f, os.path.join(rel, "cmp_coverage"), c, "comparisons")
+        for D in dss:
+            if D != "sim":
+                f, c = fig_cmp_nll(st, cm, eE, eR, D)
+                save(f, os.path.join(rel, "cmp_nll_%s" % D), c, "comparisons")
+            if D != "sim" and not D.endswith("dag"):          # a cohort
+                jE, jR = st.js("%s_%s" % (eE["stem"], D)), st.js("%s_%s" % (eR["stem"], D))
+                if jE.get("ppc") and jR.get("ppc"):
+                    f, c = fig_cmp_ppc(st, cm, eE, eR, D)
+                    save(f, os.path.join(rel, "cmp_ppc_%s" % D), c, "comparisons")
+                if jE.get("lc2st") and jR.get("lc2st"):
+                    f, c = fig_cmp_lc2st(st, cm, eE, eR, D)
+                    save(f, os.path.join(rel, "cmp_lc2st_%s" % D), c, "comparisons")
+            j, a = paired_of(st, cm, D)
+            f, c = fig_cmp_forest(cm, eE, eR, D, j, a)
+            save(f, os.path.join(rel, "cmp_forest_%s" % D), c, "comparisons")
+            rows.append(("%s, %s" % (cm["name"], D), j, cm))
+    # the searches themselves (no arms_* figure since block 28)
     for q in cfg.data["synthetic"]["searches"]:
-        mine = [e for e in ens if e["search"] == q["name"]]
         s = st.js("search_%s" % q["name"])
         rel = os.path.join("searches", q["name"])
-        arms = dict((e["arm"], e) for e in mine)
-        if len(arms) >= 2 and "A1" in arms:
-            eA = arms["A1"]
-            eT = [e for a, e in arms.items() if a != "A1"][0]
-            dss = [D for D in eA["datasets"] if D in eT["datasets"]]
-            f, c = fig_arms_coverage(st, q["name"], eT, eA, dss)
-            save(f, os.path.join(rel, "arms_coverage"), c, "searches")
-            for D in dss:
-                if D != "sim":
-                    f, c = fig_arms_nll(st, q["name"], eT, eA, D)
-                    save(f, os.path.join(rel, "arms_nll_%s" % D), c, "searches")
-                if st.js("%s_%s" % (eA["stem"], D)).get("ppc") and D != "sim":
-                    f, c = fig_arms_ppc(st, q["name"], eT, eA, D)
-                    save(f, os.path.join(rel, "arms_ppc_%s" % D), c, "searches")
-                if st.js("%s_%s" % (eA["stem"], D)).get("lc2st") and D != "sim":
-                    f, c = fig_arms_lc2st(st, q["name"], eT, eA, D)
-                    save(f, os.path.join(rel, "arms_lc2st_%s" % D), c, "searches")
-                if st.js("paired_%s_%s" % (q["name"], D)):
-                    f, c = fig_forest(st, q["name"], D)
-                    save(f, os.path.join(rel, "arms_forest_%s" % D), c, "searches")
-                    rows.append(("%s, %s" % (q["name"], D), st.js("paired_%s_%s" % (q["name"], D))))
         if s:
             f, c = fig_trials(st, q["name"], s)
             save(f, os.path.join(rel, "search_trials"), c, "searches")
@@ -821,15 +968,19 @@ def make_all(cfg_path, ecfg_path, log=print):
     if ens_rows:
         f, c = fig_lpr_all(st, ens_rows, cohorts)
         save(f, os.path.join("across", "lpr"), c, "across")
-    # the index
+    # the index: its header names what is left out -- ensembles (block 20),
+    # comparisons and the searches in none (block 27)
+    def named(entries, key):
+        return "; ".join("%s (%s)" % (x[key], x["why"]) for x in entries) or "none"
+
     lines = ["# The evaluation's figures", "",
-             "Written by `hpc/pipeline/evaluation/ev_figures.py` (block 21) from `%s`; formats %s at "
-             "%d dpi. Left out of the metrics: %s." % (os.path.join(ecfg.out_root, "metrics"),
-                                                       ", ".join(ecfg.formats), ecfg.dpi,
-                                                       "; ".join("%s (%s)" % (x["ensemble"], x["why"])
-                                                                 for x in st.index["left_out"])
-                                                       or "none"), ""]
-    for fam in ("calibration", "accuracy", "posterior", "embeddings", "searches", "across"):
+             "Written by `hpc/pipeline/evaluation/ev_figures.py` (blocks 21 and 28) from `%s`; formats "
+             "%s at %d dpi. Left out of the metrics: %s. Comparisons left out: %s. Uncompared "
+             "searches: %s." % (os.path.join(ecfg.out_root, "metrics"), ", ".join(ecfg.formats),
+                                ecfg.dpi, named(st.index.get("left_out") or [], "ensemble"),
+                                named(st.index.get("comparisons_left_out") or [], "comparison"),
+                                named(st.index.get("uncompared") or [], "search")), ""]
+    for fam in FAMILIES:
         sel = [(r, c) for f_, r, c in index if f_ == fam]
         if not sel:
             continue
