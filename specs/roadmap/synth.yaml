@@ -58,6 +58,7 @@ theory:
     status: open
     closed_on:
     decision:
+    note: "Documents: HANDOFF_2026-11-16_synth_v4_results_commentary.md (2026-11-16, docs/project/ on SBI main, commit e26a322): hands the reading of the relaunch's (synth v4) evaluation results to a new chat -- the comparisons, the verdict rule, the metrics, where the results are, the reading caveats. The reading of the first run (v3): the results chat of 2026-11-11 (eqs. 1-6, synth_results_reading_v2.py), in the refs."
   - id: T6.2
     title: "Comparing two tuned arms: each arm's best trial refitted under one protocol"
     summary: "How the two ensembles of a search with a term are chosen and trained so that their donor-paired comparison is fair (block 18): each arm represented by its own best trial on L, the same rule for both (D-121), and both refitted as M = 5 seed ensembles under one member protocol on a fresh donor split (split seed 1, train seeds 1-5, the same budget). What the comparison then measures -- each arm at its own best tuning -- and what it does not: the term switched on and off at fixed hyperparameters (an ablation); why seed m of one arm has no counterpart in the other, so the pairing is by donor, not by seed; the bias of a minimum read on the rows that chose it (selection bias) and why the fresh split and the cohort endpoint avoid it; the trials each arm received as search effort. The mixture, the pseudo-real NLL and the two-clause rule are T6.1's."
