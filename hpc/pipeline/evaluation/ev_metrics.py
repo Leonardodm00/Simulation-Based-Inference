@@ -565,7 +565,12 @@ def paired_all(cfg, ecfg, reported, mdir, log):
     over members, the donor-cluster bootstrap seeded by seed_of(seed,
     "paired", name, D) -- block 20's seed for a comparison named after its
     search. Written to <mdir>/paired_<name>_<D>.json and .npz. Otherwise it
-    is left out with one line, `comparison <name> left out: <why>`.
+    is left out with one line, `comparison <name> left out: <why>`, the why
+    for E and then E_ref (contract amendment 1): "<e> is not reported (not
+    complete)"; "<e> is not reported (<block 20's reason>)" when its sample
+    is absent or not current, whether or not --ensemble named it; "<e> was
+    not requested (--ensemble)" for a current sample --ensemble left out; or
+    "no data set is sampled for both".
 
     Returns (files, made, left_out): the paired files written (absolute),
     and METRICS.json's "comparisons" and "comparisons_left_out"."""

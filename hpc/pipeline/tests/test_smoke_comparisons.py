@@ -38,13 +38,16 @@ Checks (specs/SPEC.md block 27, "Test oracles")
                          comparisons_left_out and uncompared; the log lines,
                          the pass line last; S-A1's sample provenance
                          removed: the two comparisons against A1 left out and
-                         named, A2 against A5 made; --ensemble on a copy of
-                         the configuration with a search not complete and an
-                         S-A25 search: "was not requested", "not complete",
-                         the search in none; [open] an ensemble neither
-                         requested nor sampled: named by its sample's state;
-                         one sample's rows altered: the CLI refuses (exit 3)
-                         naming both ensembles and R3
+                         named, A2 against A5 made, and the same whys when
+                         --ensemble leaves S-A1:A1 out (contract amendment 1:
+                         an ensemble without a current sample is named by its
+                         sample's state, named by --ensemble or not);
+                         --ensemble on a copy of the configuration with a
+                         search not complete and an S-A25 search: "was not
+                         requested" (a current sample left out), "not
+                         complete", the search in none; one sample's rows
+                         altered: the CLI refuses (exit 3) naming both
+                         ensembles and R3
     test_e27c_launcher   report_inputs carries the comparisons; a
                          REPORT_COMPLETE.json recording inputs without them
                          makes ev_submit.plan's report unit stale; the dry
@@ -640,19 +643,22 @@ def test_e27b_metrics():
     try:
         lines = []
         idx2 = EM.compute(F["cfg"], F["ecfg"], ncpus=1, log=lines.append)
-        # [open: the block's report, ISSUE] an ensemble neither asked for by --ensemble nor
-        # sampled: paired_all, without `names`, names it by its sample's state
+        # contract amendment 1: an ensemble that --ensemble did not name and that has no current
+        # sample is named by its sample's state (block 20's reason), as when it is named,
+        # although compute, which skips what --ensemble does not name, gives it no "left_out"
         lines_x = []
         idx_x = EM.compute(F["cfg"], F["ecfg"], names=["S-A2-R3:A2", "S-A5-R3:A5"], ncpus=1,
                            log=lines_x.append)
     finally:
         shutil.move(pj + ".aside", pj)
     why = "S-A1:A1 is not reported (not sampled (%s absent))" % pj
-    assert [x["why"] for x in idx_x["comparisons_left_out"]] == [why, why], idx_x
-    assert idx_x["left_out"] == [] and [c["name"] for c in idx_x["comparisons"]] == [WANT[2][0]]
-    assert sum(1 for l in lines_x if l.startswith("  comparison ")) == 2, lines_x
-    assert {"ensemble": "S-A1:A1", "why": "not sampled (%s absent)" % pj} in idx2["left_out"]
     gone = [{"comparison": w[0], "E": w[2], "E_ref": w[3], "why": why} for w in WANT[:2]]
+    assert idx_x["left_out"] == [] and idx_x["comparisons_left_out"] == gone, idx_x
+    assert idx_x["comparisons"] == want_cmp[2:], idx_x["comparisons"]
+    assert [l for l in lines_x if l.startswith("  comparison ")] == [
+        "  comparison %s left out: %s" % (w[0], why) for w in WANT[:2]], lines_x
+    # without --ensemble: the same whys, and compute's own "left_out" names the sample
+    assert {"ensemble": "S-A1:A1", "why": "not sampled (%s absent)" % pj} in idx2["left_out"]
     assert idx2["comparisons_left_out"] == gone, idx2["comparisons_left_out"]
     assert idx2["comparisons"] == want_cmp[2:], idx2["comparisons"]
     for w in WANT[:2]:
