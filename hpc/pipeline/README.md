@@ -681,7 +681,11 @@ written (D-112) and every job of S1, S2 and S5 runs under the job protocol (D-11
 version of 17:30 is in git history.]
 
 ```
-# L0. ON THE LAPTOP, in Git Bash -- not on davinci, whose clone (~/repos/Sbi-extractor) only
+# L0. [DONE 2026-11-16, D-133: Claude pushed the two commits itself from the file the user attached --
+#     Sbi-extractor feat/real-arm-parity e9aeb55..4955e8d (757a69f, then 4955e8d; the tree 9d8ea296... below).
+#     Nothing to run here any more. A laptop clone on which the file was already applied has the same
+#     tree under other commit hashes: there, `git fetch origin && git reset --hard origin/feat/real-arm-parity`.]
+#     ON THE LAPTOP, in Git Bash -- not on davinci, whose clone (~/repos/Sbi-extractor) only
 #     pulls, in L2 (D-062; HPC_PATHS sec. L). Once: the two Sbi-extractor commits of 2026-10-29,
 #     from the two files sent in the chat, saved in Downloads. The laptop's working clone is
 #     ~/Sbi-extractor (C:\Users\leona\Sbi-extractor); its ~/repos/ holds only the retired one.

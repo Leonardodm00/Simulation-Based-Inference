@@ -57,5 +57,5 @@ dependencies:
       # -- already installed in the cluster's sbi_env (probe P2 PASS,
       # -- J31/J36 PASS on 2026-09-19) but were never listed here, so a
       # -- rebuild would have silently lost them.
-      - pytorch-metric-learning>=2.3,<3   # 3.x has no utils.loss_and_miner_utils (dsn_joint_loss.py)
+      - pytorch-metric-learning>=1.6.3,<3   # davinci runs 1.6.3; 3.x has no utils.loss_and_miner_utils (dsn_joint_loss.py)
       - scikit-optimize>=0.9,<0.11
