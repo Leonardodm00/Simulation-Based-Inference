@@ -251,3 +251,34 @@ implementation:
     needs_theory: []
     needs_hpc: false
     jobs: []
+  - id: I27
+    title: "the comparisons across searches"
+    summary: "Each term search's ensemble against its A1 reference -- its own A1 ensemble in a campaign nesting A1, S-A1's in a term-only one -- and A2 against A5 on each cohort, donor-paired as E3 on the data sets both are sampled on; every comparison not made is named; the launcher lists them (D-132 (5), D-136)."
+    block: 27
+    parent: S6
+    depends_on: [I19, I20, I22]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I28
+    title: "the comparisons' figures"
+    summary: "Per comparison under comparisons/<name>/: both ensembles' coverage, donor NLL, PPC and L-C2ST overlaid and the E3 forest plot per shared data set; the searches' own figures; across/dbar in one panel per kind (D-136)."
+    block: 28
+    parent: S6
+    depends_on: [I21, I27]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+
+# Revisions: a change one side has to absorb because of the other
+# (roadmap.py revise). An implementation stage's flag clears when its
+# code changes after the flag's commit; a topic's when its status
+# changes; or by hand (revise --clear).
+revisions:
+  - stage: T6.2
+    from: I27
+    on: 2026-11-16
+    status_at: open
+    decision: D-136
+    note: "the comparison is now across searches: each arm has its own search of equal budget (D-132), each term arm is compared with S-A1's ensemble and A2 with A5 (D-136); the summary's 'two ensembles of a search with a term' and 'the trials each arm received as search effort' need revising"
+    cleared:

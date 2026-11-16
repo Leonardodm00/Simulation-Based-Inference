@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Smoke test for blocks 19-23 of specs/SPEC.md: the synthetic experiment's
-evaluation and its data overview (the roadmap synth, step S6).
+"""Smoke test for blocks 19-23 and 28 of specs/SPEC.md: the synthetic
+experiment's evaluation, its data overview and the comparisons' figures (the
+roadmap synth, step S6).
 
-Checks (specs/SPEC.md blocks 19-23, "Test oracles")
+Checks (specs/SPEC.md blocks 19-23 and 28, "Test oracles")
     test_e19a_rebuild    the ensembles found (best fit and the other arm's,
                          S-A1's two cohorts); every member rebuilt reproduces
                          its _perrow.npz row for row (nll on D_sim,
@@ -56,14 +57,29 @@ Checks (specs/SPEC.md blocks 19-23, "Test oracles")
                          unknown ensemble refused; the example donors the
                          median of their condition under the A1 ensemble
     test_e21a_figures    ev_figures on the fixture's metrics: the figures
-                         the rules give (per ensemble and data set, per
-                         search with both arms, across searches), each in
-                         FIGURES.md with a caption and none unlisted, every
-                         PNG readable; the corner plots at the example donors
+                         the rules give (per ensemble and data set; per
+                         comparison of METRICS.json's "comparisons", none
+                         when the key is absent; per search; across), no
+                         arms_* figure (block 28), each in FIGURES.md with a
+                         caption and none unlisted, every PNG readable; the
+                         corner plots at the example donors
     test_e21b_static     ev_figures computes nothing: no statistics library
                          imported, no mean, SD, quantile or median called;
                          the arms' and conditions' colours the validated
                          palette's; a figure to PDF; no metrics refused
+    test_e28a_comparisons  ev_figures on a metrics tree of comparisons of
+                         both kinds, built from the fixture's metrics with
+                         one copy relabelled as an A5 ensemble of a search of
+                         its own (block 28): the figure set the rules give,
+                         a comparison against another search's A1 ensemble,
+                         nothing drawn on a data set a comparison does not
+                         list as paired, the comparisons' figures under
+                         "comparisons" in FIGURES.md with captions naming
+                         both ensembles and the data set, the legends the
+                         arm and the search in the arm's hue, the left-out
+                         comparison and the uncompared search in the header,
+                         across/dbar with one panel per kind and one row per
+                         (comparison, data set), the forest's G.2 verdicts
     test_e22a_dry_run    the launcher on the committed synth.json and
                          synth_eval.json (no davinci here): five calibration
                          shards with the committed resources, the builder's
@@ -123,6 +139,12 @@ Run
         prints where. Needs the training environment (torch, sbi, zuko,
         scikit-optimize); without it every check skips. Nothing touches
         davinci.
+    EVAL_MUTATION=<name> python3 hpc/pipeline/tests/test_smoke_evaluation.py test_e28a_comparisons
+        [block 28] Re-runs the check with one piece of ev_figures disabled
+        (the mutations of SPEC block 28, in _PATCHES); test_e28a_comparisons
+        must then FAIL: cmp_ref_own_search, cmp_unpaired_dataset,
+        dbar_one_panel. Not MUTATION: test_smoke_synthetic.py, imported
+        here, reads that one for its own two.
 
 Pure ASCII, LF only.
 """
@@ -131,6 +153,7 @@ import glob
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -159,8 +182,48 @@ SYNTH_EVAL = os.path.join(_PIPE, "projects", "synth", "synth_eval.json")
 
 _FIX = {}
 
+# [block 28] A mutation disables one piece of ev_figures (SPEC block 28, "the
+# mutations to try"); test_e28a_comparisons must then FAIL. _figures() applies
+# it, in this process, to the module the figure checks use. EVAL_MUTATION, not
+# MUTATION, which test_smoke_synthetic.py (imported above) reads for its own.
+EVAL_MUTATION = os.environ.get("EVAL_MUTATION", "")
+_PATCHES = {
+    # the reference ensemble taken from the term search's own entries (its A1
+    # ensemble when it has one, as block 21 paired a search's two arms), not
+    # the one the comparison names
+    "cmp_ref_own_search": (
+        "def _pair(index, c):\n"
+        "    ens = index['ensembles']\n"
+        "    e = dict(ens[c['E']], name=c['E'])\n"
+        "    own = [n for n, x in ens.items() if x['search'] == e['search'] and x['arm'] == 'A1']\n"
+        "    r = own[0] if own else c['E_ref']\n"
+        "    return e, dict(ens[r], name=r)\n"
+        "FG.comparison_ensembles = _pair\n"),
+    # a comparison's figures drawn on every data set its two ensembles share
+    # (block 21's rule for a search's arms), not on those it is paired on
+    "cmp_unpaired_dataset": (
+        "FG.paired_datasets = lambda c, eE, eR: [D for D in eR['datasets'] if D in eE['datasets']]\n"),
+    # the two kinds of comparison in one panel of across/dbar
+    "dbar_one_panel": (
+        "FG.dbar_panels = lambda rows: [('every comparison', 'Dbar = E - E_ref',\n"
+        "                                list(rows))]\n"),
+}
+if EVAL_MUTATION and EVAL_MUTATION not in _PATCHES:
+    raise SystemExit("unknown EVAL_MUTATION %r; known: %s"
+                     % (EVAL_MUTATION, ", ".join(sorted(_PATCHES))))
+
 
 # --------------------------------------------------------------- helpers ---
+
+def _figures():
+    """ev_figures, with the EVAL_MUTATION (if one is set) applied once."""
+    import ev_figures as FG
+    if EVAL_MUTATION and getattr(FG, "_mutation", None) != EVAL_MUTATION:
+        exec(_PATCHES[EVAL_MUTATION], {"FG": FG})
+        FG._mutation = EVAL_MUTATION
+        print("[mutation] %s applied to ev_figures" % EVAL_MUTATION, flush=True)
+    return FG
+
 
 def _need_training_env():
     try:
@@ -889,9 +952,20 @@ def test_e20c_metrics():
 
 
 def _expected_figures(md):
-    """The figures block 21's rules give for the metrics in `md`, by
-    relative path (an independent statement of SPEC block 21's list)."""
+    """The figures blocks 21's and 28's rules give for the metrics in `md`,
+    by relative path (an independent statement of SPEC block 21's list as
+    block 28 restates it): per ensemble, block 21's; per comparison of
+    METRICS.json's "comparisons" (none when the key is absent, as block 20's
+    metrics alone have it), between the two ensembles it names and on the
+    data sets it lists as paired; per search with its search_<q>.json, its
+    own three; across/dbar when "comparisons" is not empty, across/lpr; no
+    arms_* figure."""
     idx = json.load(open(os.path.join(md, "METRICS.json")))
+
+    def js(name):
+        p = os.path.join(md, name + ".json")
+        return json.load(open(p)) if os.path.isfile(p) else None
+
     want = set()
     for name, info in idx["ensembles"].items():
         stem, dss = info["stem"], info["datasets"]
@@ -906,27 +980,32 @@ def _expected_figures(md):
             want.add(base + "post_ppc_%s" % D)
         for D in coh:
             want.add(base + "emb_pca_%s" % D)
-        ex = json.load(open(os.path.join(md, "search_%s.json" % info["search"])))["example_donors"]
+        ex = (js("search_%s" % info["search"]) or {}).get("example_donors") or {}
         for D in coh:
             for x in ex.get(D, {}).get("donors", []):
                 want.add(base + "post_corner_%s_c%d" % (D, x["cls"]))
-    by = {}
-    for name, info in idx["ensembles"].items():
-        by.setdefault(info["search"], {})[info["arm"]] = info
-    for q, arms in by.items():
-        base = "searches/%s/" % q
-        want |= set(base + n for n in ("search_trials", "search_nll_vs_lpr", "search_learning"))
-        if len(arms) == 2 and "A1" in arms:
-            want.add(base + "arms_coverage")
-            term = [a for a in arms if a != "A1"][0]
-            shared = [D for D in arms["A1"]["datasets"] if D in arms[term]["datasets"]]
-            for D in shared:
-                if D != "sim":
-                    want.add(base + "arms_nll_%s" % D)
-                if D != "sim" and not D.endswith("dag"):
-                    want |= {base + "arms_ppc_%s" % D, base + "arms_lc2st_%s" % D}
-                want.add(base + "arms_forest_%s" % D)
-    if any(os.path.basename(f).startswith("paired_") for f in idx["files"]):
+    comps = idx.get("comparisons") or []
+    for c in comps:
+        eE, eR = idx["ensembles"][c["E"]], idx["ensembles"][c["E_ref"]]
+        base = "comparisons/%s/" % c["name"]
+        want.add(base + "cmp_coverage")
+        for D in c["datasets"]:
+            want.add(base + "cmp_forest_%s" % D)
+            if D != "sim":
+                want.add(base + "cmp_nll_%s" % D)
+            if D != "sim" and not D.endswith("dag"):
+                jE, jR = js("%s_%s" % (eE["stem"], D)), js("%s_%s" % (eR["stem"], D))
+                for key in ("ppc", "lc2st"):
+                    if jE.get(key) and jR.get(key):
+                        want.add(base + "cmp_%s_%s" % (key, D))
+    for q in idx.get("searches") or []:
+        s = js("search_%s" % q)
+        if s is not None:
+            base = "searches/%s/" % q
+            want |= {base + "search_trials", base + "search_nll_vs_lpr"}
+            if s.get("ensembles"):
+                want.add(base + "search_learning")
+    if comps:
         want.add("across/dbar")
     want.add("across/lpr")
     return want
@@ -934,8 +1013,8 @@ def _expected_figures(md):
 
 def test_e21a_figures():
     import ev_config
-    import ev_figures as FG
     import ev_metrics as EM
+    FG = _figures()
     F = _fixture()
     for name in ("S-A1:A1", "S-A2-R0:A1", "S-A2-R0:A2"):
         _sampled(name)
@@ -943,13 +1022,15 @@ def test_e21a_figures():
     md = ecfg.sub("metrics")
     if not os.path.isfile(os.path.join(md, "METRICS.json")):
         EM.compute(F["cfg"], F["ecfg"], ncpus=3, log=lambda t: None)
+    fdir = ecfg.sub("figures")
+    shutil.rmtree(fdir, ignore_errors=True)     # no figure of an earlier run on disk
     lines = []
     index = FG.make_all(F["cfg"], F["ecfg"], log=lines.append)
     want = _expected_figures(md)
     got = set(r for _f, r, _c in index)
     assert got == want, ("missing %s; extra %s" % (sorted(want - got)[:6], sorted(got - want)[:6]))
+    assert not [r for r in got if "/arms_" in r], sorted(r for r in got if "/arms_" in r)[:6]
     assert lines[-1].startswith("EVAL FIGURES OK: %d figure(s)" % len(want)), lines[-1]
-    fdir = ecfg.sub("figures")
     listed = []
     for l in open(os.path.join(fdir, "FIGURES.md")).read().splitlines():
         if l.startswith("- `"):
@@ -1024,6 +1105,251 @@ def test_e21b_static():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("[e21b] no statistics in the figures' code; the validated colours; PDF; refusal")
+
+
+# ------------------------------------------------------------ block 28 ---
+
+def _write_json(path, obj):
+    with open(path, "w") as fh:
+        json.dump(obj, fh, indent=1, sort_keys=True)
+
+
+def _paired_contract(base, c, D, seed, shift=0.0):
+    """A paired JSON of block 27's contract for comparison c (an entry of
+    METRICS.json's "comparisons") on data set D, from `base`, a real paired
+    JSON of the fixture (block 20's keys, or block 27's): its numbers with
+    Dbar and the interval moved by `shift` nats (the caller moves the
+    donors' differences alike), G.2's two clauses read again, and the
+    comparison's keys; for kind vs_A1 also block 20's legacy keys, for
+    A2_vs_A5 none of them."""
+    import ev_plan
+    j = dict((k, base[k]) for k in ("schema", "n_rows", "n_donors", "se", "level", "n_boot",
+                                    "scheme", "sigma_seed", "two_sigma_seed"))
+    sd = base.get("sd_members") or {}
+    sd_e = base.get("sd_members_E", sd.get(base.get("term_arm")))
+    sd_r = base.get("sd_members_ref", sd.get("A1"))
+    dbar = base["Dbar"] + shift
+    ci = [base["ci"][0] + shift, base["ci"][1] + shift]
+    beyond = abs(dbar) > j["two_sigma_seed"]
+    excl = ci[0] > 0.0 or ci[1] < 0.0
+    res = bool(beyond and excl)
+    j.update({"dataset": D, "Dbar": dbar, "ci": ci, "beyond_2_sigma_seed": bool(beyond),
+              "ci_excludes_0": bool(excl), "resolved": res, "comparison": c["name"],
+              "kind": c["kind"], "E": c["E"], "E_ref": c["E_ref"], "search": c["search"],
+              "search_ref": c["search_ref"], "arm": c["arm"], "arm_ref": c["arm_ref"],
+              "sd_members_E": sd_e, "sd_members_ref": sd_r,
+              "lower_nll_ensemble": (c["E"] if dbar < 0 else c["E_ref"]) if res else None,
+              "bootstrap_seed": ev_plan.seed_of(seed, "paired", c["name"], D)})
+    if c["kind"] == "vs_A1":
+        j.update({"term_arm": c["arm"], "ensembles": {"term": c["E"], "A1": c["E_ref"]},
+                  "sd_members": {c["arm"]: sd_e, "A1": sd_r},
+                  "lower_nll": ("term arm" if dbar < 0 else "A1") if res else None})
+    return j
+
+
+def _comparisons_tree(F, out):
+    """E28a's metrics tree under `out` (SPEC block 28): block 20's files of
+    S-A1:A1, S-A2-R0:A1 and S-A2-R0:A2 copied from the fixture's metrics
+    with their searches' files and the samples the corner plots read; a copy
+    of S-A2-R0:A2's relabelled as S-A5-R0:A5, the A5 ensemble of a search of
+    its own (no search file, no A1 ensemble); METRICS.json's "comparisons"
+    as block 27's contract gives them -- S-A2-R0 (vs_A1, within its search),
+    S-A5-R0 (vs_A1, against another search's A1 ensemble, S-A1:A1, which has
+    R3 and R3dag besides), S-A2-R0_vs_S-A5-R0 (A2_vs_A5) -- with one
+    comparison left out and one search uncompared, and the paired files.
+    S-A2-R0 is listed as paired on D_sim alone although both its ensembles
+    have R0, whose paired file is on disk too: nothing may be drawn for it.
+    S-A5-R0 on R0 is moved into a resolved difference (the donors'
+    differences, Dbar and its interval by one constant), so that the
+    forest's verdict has both branches. Returns (eval config, comparisons,
+    the left-out entry, the uncompared entry)."""
+    import numpy as np
+    import ev_config
+    ecfg0 = ev_config.load(F["ecfg"])
+    src_md, src_sd = ecfg0.sub("metrics"), ecfg0.sub("samples")
+    shutil.rmtree(out, ignore_errors=True)
+    ec = _eval_config(F["root"], "eval_e28a.json", out=out)
+    ecfg = ev_config.load(ec)
+    md, sd = ecfg.sub("metrics"), ecfg.sub("samples")
+    os.makedirs(md)
+    os.makedirs(sd)
+    idx0 = json.load(open(os.path.join(src_md, "METRICS.json")))
+    ens = dict((n, dict(idx0["ensembles"][n])) for n in ("S-A1:A1", "S-A2-R0:A1", "S-A2-R0:A2"))
+    for n, info in ens.items():
+        for D in info["datasets"]:
+            for ext in (".json", ".npz"):
+                shutil.copy(os.path.join(src_md, "%s_%s%s" % (info["stem"], D, ext)), md)
+        for p in glob.glob(os.path.join(src_sd, "%s_*.npz" % info["stem"])):
+            shutil.copy(p, sd)
+    for q in idx0["searches"]:
+        shutil.copy(os.path.join(src_md, "search_%s.json" % q), md)
+    a2 = ens["S-A2-R0:A2"]
+    ens["S-A5-R0:A5"] = dict(a2, stem="S-A5-R0_A5", arm="A5", search="S-A5-R0", kind="best_fit")
+    for D in a2["datasets"]:
+        shutil.copy(os.path.join(src_md, "S-A2-R0_A2_%s.npz" % D),
+                    os.path.join(md, "S-A5-R0_A5_%s.npz" % D))
+        js = json.load(open(os.path.join(src_md, "S-A2-R0_A2_%s.json" % D)))
+        js.update(ensemble="S-A5-R0:A5", stem="S-A5-R0_A5", arm="A5", search="S-A5-R0")
+        _write_json(os.path.join(md, "S-A5-R0_A5_%s.json" % D), js)
+
+    def comparison(name, kind, E, R, dss):
+        e, r = ens[E], ens[R]
+        return {"name": name, "kind": kind, "E": E, "E_ref": R, "search": e["search"],
+                "search_ref": r["search"], "arm": e["arm"], "arm_ref": r["arm"], "datasets": dss,
+                "paired": dict((D, os.path.join(md, "paired_%s_%s.json" % (name, D))) for D in dss)}
+
+    comps = [comparison("S-A2-R0", "vs_A1", "S-A2-R0:A2", "S-A2-R0:A1", ["sim"]),
+             comparison("S-A5-R0", "vs_A1", "S-A5-R0:A5", "S-A1:A1", ["sim", "R0"]),
+             comparison("S-A2-R0_vs_S-A5-R0", "A2_vs_A5", "S-A2-R0:A2", "S-A5-R0:A5", ["sim", "R0"])]
+    todo = [(c, D) for c in comps for D in c["datasets"]] + [(comps[0], "R0")]   # R0: not listed
+    for c, D in todo:
+        base = json.load(open(os.path.join(src_md, "paired_S-A2-R0_%s.json" % D)))
+        shift = 0.0
+        if (c["name"], D) == ("S-A5-R0", "R0"):
+            shift = max(0.0, -base["ci"][0]) + 1.5 * base["two_sigma_seed"] + 0.01
+        j = _paired_contract(base, c, D, ecfg.seed, shift)
+        if (c["name"], D) == ("S-A5-R0", "R0"):
+            assert j["resolved"] and j["lower_nll_ensemble"] == "S-A1:A1", j
+        _write_json(os.path.join(md, "paired_%s_%s.json" % (c["name"], D)), j)
+        a = np.load(os.path.join(src_md, "paired_S-A2-R0_%s.npz" % D))
+        np.savez_compressed(os.path.join(md, "paired_%s_%s.npz" % (c["name"], D)),
+                            donor_ids=a["donor_ids"], delta_d=a["delta_d"] + shift, se_d=a["se_d"])
+    left = {"comparison": "S-A2-R3", "E": "S-A2-R3:A2", "E_ref": "S-A1:A1",
+            "why": "S-A2-R3:A2 is not reported (not complete)"}
+    unc = {"search": "S-A25-R0", "why": "campaign S-A25: its arms are not defined against A1 (D-136)"}
+    idx = dict(idx0, ensembles=ens, comparisons=comps, comparisons_left_out=[left],
+               uncompared=[unc], files=sorted(glob.glob(os.path.join(md, "*"))))
+    _write_json(os.path.join(md, "METRICS.json"), idx)
+    return ec, comps, left, unc
+
+
+def test_e28a_comparisons():
+    import matplotlib.colors as MC
+    import ev_config
+    import ev_metrics as EM
+    FG = _figures()
+    F = _fixture()
+    for name in ("S-A1:A1", "S-A2-R0:A1", "S-A2-R0:A2"):
+        _sampled(name)
+    if not os.path.isfile(os.path.join(ev_config.load(F["ecfg"]).sub("metrics"), "METRICS.json")):
+        EM.compute(F["cfg"], F["ecfg"], ncpus=3, log=lambda t: None)
+    ec, comps, left, unc = _comparisons_tree(F, os.path.join(F["root"], "ev_e28a"))
+    ecfg = ev_config.load(ec)
+    md, fdir = ecfg.sub("metrics"), ecfg.sub("figures")
+    idx = json.load(open(os.path.join(md, "METRICS.json")))
+    # the figures drawn, kept for a look at their panels and legends
+    spied = ("fig_cmp_coverage", "fig_dbar_all")
+    orig = dict((n, getattr(FG, n)) for n in spied)
+    drawn = {}
+
+    def spy(n):
+        def f(*a, **k):
+            fig, cap = orig[n](*a, **k)
+            drawn[(n, a[1]["name"] if n == "fig_cmp_coverage" else "")] = fig
+            return fig, cap
+        return f
+    for n in spied:
+        setattr(FG, n, spy(n))
+    try:
+        lines = []
+        index = FG.make_all(F["cfg"], ec, log=lines.append)
+    finally:
+        for n in spied:
+            setattr(FG, n, orig[n])
+    # the figure set: the rules', and by hand for the comparisons -- S-A2-R0 on D_sim alone
+    rels = [r for _f, r, _c in index]
+    got, want = set(rels), _expected_figures(md)
+    assert len(rels) == len(got), "a figure drawn twice"
+    assert got == want, ("missing %s; extra %s" % (sorted(want - got)[:6], sorted(got - want)[:6]))
+    by_hand = set(["comparisons/S-A2-R0/cmp_coverage", "comparisons/S-A2-R0/cmp_forest_sim"])
+    for name in ("S-A5-R0", "S-A2-R0_vs_S-A5-R0"):
+        by_hand |= set("comparisons/%s/%s" % (name, n) for n in (
+            "cmp_coverage", "cmp_nll_R0", "cmp_ppc_R0", "cmp_lc2st_R0", "cmp_forest_sim",
+            "cmp_forest_R0"))
+    assert set(r for r in got if r.startswith("comparisons/")) == by_hand, \
+        sorted(set(r for r in got if r.startswith("comparisons/")) ^ by_hand)
+    assert "across/dbar" in got and not [r for r in got if "/arms_" in r]
+    assert lines[-1].startswith("EVAL FIGURES OK: %d figure(s)" % len(want)), lines[-1]
+    # FIGURES.md: the families in order, every figure listed once with its caption; the
+    # comparisons' under "comparisons", naming both ensembles and the data set(s)
+    text = open(os.path.join(fdir, "FIGURES.md")).read().splitlines()
+    head = [l for l in text if l.startswith("Written by ")]
+    assert len(head) == 1, head
+    for part in ("Left out of the metrics: none.",
+                 "Comparisons left out: %s (%s)." % (left["comparison"], left["why"]),
+                 "Uncompared searches: %s (%s)." % (unc["search"], unc["why"])):
+        assert part in head[0], (part, head[0])
+    fams, fam, listed = [], None, {}
+    for l in text:
+        if l.startswith("## "):
+            fam = l[3:]
+            fams.append(fam)
+        elif l.startswith("- `"):
+            rel = l[3:l.index(".{")]
+            cap = l[l.index("`: ") + 3:]
+            assert cap.endswith(".") and len(cap) > 30 and rel not in listed, l
+            listed[rel] = (fam, cap)
+    order = ["calibration", "accuracy", "posterior", "embeddings", "comparisons", "searches",
+             "across"]
+    assert fams == [f for f in order if f in fams] and "comparisons" in fams, fams
+    assert sorted(listed) == sorted(want), "FIGURES.md does not list exactly the figures"
+    for c in comps:
+        for rel in [r for r in want if r.startswith("comparisons/%s/" % c["name"])]:
+            fam, cap = listed[rel]
+            assert fam == "comparisons" and c["E"] in cap and c["E_ref"] in cap, (rel, fam, cap)
+            if rel.endswith("/cmp_coverage"):
+                assert (" on %s," % ", ".join(c["datasets"])) in cap, (rel, cap)
+            else:
+                D = rel.rsplit("_", 1)[1]
+                assert re.search(r" on %s\b" % re.escape(D), cap), (rel, cap)
+    # the forest's verdict: G.2's, the lower ensemble named
+    caps = dict((r, c) for _f, r, c in index)
+    for c in comps:
+        for D in c["datasets"]:
+            j = json.load(open(os.path.join(md, "paired_%s_%s.json" % (c["name"], D))))
+            verdict = ("resolved, %s lower" % j["lower_nll_ensemble"]) if j["resolved"] \
+                else "not resolved"
+            cap = caps["comparisons/%s/cmp_forest_%s" % (c["name"], D)]
+            assert cap.endswith("G.2: " + verdict), (c["name"], D, cap)
+    assert caps["comparisons/S-A5-R0/cmp_forest_R0"].endswith("resolved, S-A1:A1 lower")
+    # the coverage: one panel per paired data set in its order; the legend names the arm
+    # and the search, each curve in its arm's hue
+    for c in comps:
+        fig = drawn[("fig_cmp_coverage", c["name"])]
+        axs = [ax for ax in fig.axes if ax.get_visible()]
+        assert [ax.get_title() for ax in axs] == [FG.ds_title(D) for D in c["datasets"]], \
+            (c["name"], [ax.get_title() for ax in axs])
+        eE, eR = idx["ensembles"][c["E"]], idx["ensembles"][c["E_ref"]]
+        labs = ["%s (%s)" % (e["arm"], e["search"]) for e in (eR, eE)]
+        assert [t.get_text() for t in fig.legends[0].get_texts()] == labs, (c["name"], labs)
+        for ax in axs:
+            hue = dict((l.get_label(), MC.to_hex(l.get_color())) for l in ax.get_lines())
+            for e, lab in zip((eR, eE), labs):
+                assert hue.get(lab) == FG.ARM_COLOR[e["arm"]], (c["name"], lab, hue)
+    # across/dbar: one panel per kind, against A1 left and A2 against A5 right, one row per
+    # (comparison, data set) in order; the caption names every comparison's two ensembles
+    fig = drawn[("fig_dbar_all", "")]
+    axs = [ax for ax in fig.axes if ax.get_visible()]
+    assert [ax.get_title() for ax in axs] == ["against A1", "A2 against A5"], \
+        [ax.get_title() for ax in axs]
+    for ax, kind in zip(axs, ("vs_A1", "A2_vs_A5")):
+        labs = [t.get_text() for t in ax.get_yticklabels()]
+        top_down = [l for _y, l in sorted(zip(ax.get_yticks(), labs), reverse=True)]
+        rows = ["%s, %s" % (c["name"], D) for c in comps if c["kind"] == kind for D in c["datasets"]]
+        assert top_down == rows, (kind, top_down, rows)
+    for c in comps:
+        assert c["E"] in caps["across/dbar"] and c["E_ref"] in caps["across/dbar"], caps["across/dbar"]
+    # the files on disk: exactly the figures, every PNG readable
+    on_disk = set(os.path.relpath(os.path.join(a, f), fdir)[:-4] for a, _d, fs in os.walk(fdir)
+                  for f in fs if f.endswith(".png"))
+    assert on_disk == want, sorted(on_disk ^ want)[:6]
+    for rel in want:
+        with open(os.path.join(fdir, rel + ".png"), "rb") as fh:
+            assert fh.read(8) == b"\x89PNG\r\n\x1a\n", rel
+    print("[e28a] %d figures, %d of them the 3 comparisons' (both kinds, one against another "
+          "search's A1 ensemble, none on a data set not paired); the left-out comparison and the "
+          "uncompared search named; across/dbar in two panels of %d and %d rows"
+          % (len(want), len(by_hand), len(axs[0].get_yticks()), len(axs[1].get_yticks())))
 
 
 def _submit(*argv, env=None, timeout=600):
@@ -1715,6 +2041,7 @@ CHECKS = [("test_e19a_rebuild", test_e19a_rebuild), ("test_e19b_dagger", test_e1
           ("test_e19e_ppc", test_e19e_ppc), ("test_e20a_quantities", test_e20a_quantities),
           ("test_e20b_lc2st", test_e20b_lc2st), ("test_e20c_metrics", test_e20c_metrics),
           ("test_e21a_figures", test_e21a_figures), ("test_e21b_static", test_e21b_static),
+          ("test_e28a_comparisons", test_e28a_comparisons),
           ("test_e22a_dry_run", test_e22a_dry_run),
           ("test_e22b_job_script", test_e22b_job_script), ("test_e22c_launcher", test_e22c_launcher),
           ("test_e22d_end_to_end", test_e22d_end_to_end),
@@ -1758,6 +2085,9 @@ def main():
             print("\n== %s: %s\n%s" % (name, res, msg))
     print("\n%d of %d checks pass in %.0f s" % (sum(1 for r in rows if r[1] == "PASS"), len(rows),
                                                time.time() - t0))
+    if EVAL_MUTATION:
+        print("EVAL_MUTATION=%s: the named piece of ev_figures is disabled; test_e28a_comparisons must "
+              "FAIL" % EVAL_MUTATION)
     return 1 if bad else 0
 
 
