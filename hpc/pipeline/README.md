@@ -921,7 +921,12 @@ against the contraction, the posterior SDs and the NLL; `post_*` the corner plot
 condition, the posterior-predictive ranks and L-C2ST; `emb_*` the members' embeddings -- per search
 `searches/<q>/` the two arms side by side (`arms_*`, the forest plot of E3 among them) and the search itself
 (`search_*`); `across/` every search's Dbar and every ensemble's NLL on R0 and R3. The numbers behind each
-figure are in `<out_root>/metrics/` (`METRICS.json` is their index).
+figure are in `<out_root>/metrics/` (`METRICS.json` is their index). [amended 2026-11-16, blocks 27-28, D-136:
+the pairs are the comparisons of `specs/SPEC.md` sec. 2.5 -- a term arm against its A1 reference (its own search's
+A1 ensemble in a campaign that nests A1, S-A1's in a term-only one), or A2 against A5 on one cohort -- drawn under
+`comparisons/<name>/` (`cmp_coverage`, `cmp_nll_<D>`, `cmp_ppc_<D>`, `cmp_lc2st_<D>`, `cmp_forest_<D>`) in place
+of `searches/<q>/arms_*`; `searches/<q>/` keeps the search's own figures; `across/dbar` holds every comparison's
+Dbar, one panel per kind; the numbers of a comparison on a data set are `metrics/paired_<name>_<D>.json`.]
 
 The data overview (E10, block 23) writes `<out_root>/data/`: `figures/` with `windows_cohorts` and
 `windows_cohorts_zoom` (example windows of R0 and R3 by condition, full and around their maximum),
@@ -995,6 +1000,8 @@ search per arm. The work root holds only `purge/`, so the pipeline starts a new 
 banks, the five searches and their best fits are made from nothing, about as long as the
 first run took (3-13 Nov). The evaluation of the new design (block 27, the pairing of each
 term arm with S-A1) comes before the best fits end; do not run E1-E9 on this run until then.
+[2026-11-16: blocks 27-28 are in; the evaluation of this run is the sheet "synth: the evaluation of the
+relaunch" below.]
 
 ```
 # L1. the code (blocks 25-26) and the synthetic kind's fast checks under the fake PBS, in sbi_env (about 1 min;
@@ -1018,6 +1025,67 @@ cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth
 bash ~/SBI/hpc/pipeline/run_pipeline.sh --project synth --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/synth/pipeline.log
 ```
 
+### synth: the evaluation of the relaunch (2026-11-16, blocks 27-28, D-136)
+
+The relaunch's five ensembles (`synth.json` v4: S-A1 and the four term-only searches, one 5-member
+ensemble each) go through the evaluation of "synth: the evaluation" above, with three differences: no
+other arm's fit (no `not complete` line, no E9); the comparisons of `specs/SPEC.md` sec. 2.5 in place of
+the within-search pairs (block 27); their figures under `comparisons/` (block 28). The six comparisons,
+each donor-paired as E3 on every data set both of its ensembles are sampled on, Delta_d = lbar_d(E) -
+lbar_d(E_ref), so a negative Dbar favours the first: S-A2-R0, S-A5-R0, S-A2-R3 and S-A5-R3, each the
+search's ensemble against S-A1:A1; S-A2-R0_vs_S-A5-R0 and S-A2-R3_vs_S-A5-R3, A2 against A5 on one
+cohort. The verdict is G.2's, per comparison and data set (D-127): |Dbar| beyond 2 sigma_seed and the
+interval excluding 0. Nothing is sampled again for the comparisons: V3-V4 can run before the wave's
+code is pulled.
+
+```
+# V1. the code; pass: the last line names the wave W2's merge or a later commit
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin sci/pipeline && git log --oneline -1
+
+# V2. the best fits follow their searches' finalists (read-only, block 7 (i)); pass: 13 stage rows, each with
+#     status "done" and "yes" in the done column; a best_fit_ row with "no" names the finalist it was fitted
+#     for and the search's: stop there
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project synth --status 2>&1 | grep -E "\| (sim_bank|real_bank|search_|best_fit)"
+
+# V3. the calibration bank and the five samplings (skip when V4 already shows the five EVAL SAMPLE OK). Dry
+#     run, pass: exit 0, no REFUSE or ABORT, five "calbank:<k> would be submitted", five "sample:<q>:<arm> would
+#     be submitted" (S-A1:A1, S-A2-R0:A2, S-A5-R0:A5, S-A2-R3:A2, S-A5-R3:A5), no "not complete" line, "EVAL DRY
+#     RUN: 10 job(s) would be submitted, 0 done, 0 live; nothing written"; then the submission, pass line
+#     "EVAL SUBMIT OK: 10 job(s) submitted, 0 done, 0 live"
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what calbank,sample --dry-run 2>&1 | grep -E "REFUSE|ABORT|would be submitted|not complete|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what calbank,sample
+
+# V4. the samplings' pass lines: every log ends "EVAL JOB EXIT: 0"; "EVAL SAMPLE OK" with 5 file(s) for
+#     S-A1_A1 (sim, R0, R3, R3dag, cal), 3 for S-A2-R0_A2 and S-A5-R0_A5 (sim, R0, cal), 4 for S-A2-R3_A2 and
+#     S-A5-R3_A5 (sim, R3, R3dag, cal)
+qstat -u ldellamea | grep ev_ ; grep -h "EVAL SAMPLE OK\|REFUSE\|EVAL JOB EXIT" /davinci-1/home/ldellamea/runs/synth/evaluation/jobs/logs/*.log
+
+# V5. the report's dry run, after V1; pass: exit 0, no REFUSE or ABORT, "report would be submitted" (with
+#     "stale: its comparisons changed since ..." when a report was made before the wave), then the six lines
+#     "EVAL SUBMIT: comparison S-A2-R0: S-A2-R0:A2 against S-A1:A1 (vs_A1)", ... S-A5-R0, S-A2-R3, S-A5-R3,
+#     "EVAL SUBMIT: comparison S-A2-R0_vs_S-A5-R0: S-A2-R0:A2 against S-A5-R0:A5 (A2_vs_A5)" and
+#     S-A2-R3_vs_S-A5-R3; "EVAL DRY RUN: 1 job(s) would be submitted, 10 done, 0 live" once the samplings ended
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth --dry-run 2>&1 | grep -E "REFUSE|ABORT|report would|report:|comparison|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+
+# V6. the report's submission (after the samplings still queued or running); pass line "EVAL SUBMIT OK:
+#     1 job(s) submitted, ..."
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_eval.sh --project synth
+
+# V7. the report's lines, once it ended: "comparisons: 6 made, 0 left out, 0 search(es) in none", "EVAL METRICS
+#     OK: 5 ensemble(s), 14 data-set file(s), 15 paired comparison(s), 5 search(es), 0 left out", "EVAL FIGURES
+#     OK: <n> figure(s)" (175 by the figure rules: 116 of the ensembles, 42 of the comparisons, 15 of the
+#     searches, 2 across), "EVAL REPORT OK"; and the fifteen verdicts, "paired <name> on <D>: Dbar ... ->
+#     resolved" or "not resolved"
+grep -h "comparisons:\|EVAL METRICS OK\|EVAL FIGURES OK\|EVAL REPORT OK\|REFUSE\|EVAL JOB EXIT\|  paired \| left out:" /davinci-1/home/ldellamea/runs/synth/evaluation/jobs/logs/report.log
+```
+
+Where to look: `figures/across/dbar` (every comparison's Dbar with its interval and +-2 sigma_seed, one panel
+against A1 and one A2 against A5); `figures/comparisons/<name>/cmp_forest_<D>` (the donors' Delta_d) and the
+comparison's coverage, donor NLL, PPC and L-C2ST beside it; `figures/ensembles/<q>_<arm>/` for each ensemble
+alone; `figures/FIGURES.md`, a caption per figure. The numbers: `metrics/paired_<name>_<D>.json` (`Dbar`, `ci`,
+`two_sigma_seed`, `resolved`, `lower_nll_ensemble`), `metrics/METRICS.json` (`comparisons`,
+`comparisons_left_out`).
+
 ## Tests
 
 ```
@@ -1036,7 +1104,8 @@ python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, 
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
 python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # block 9, tools/inputs_check.py, about 1 s, numpy and the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_synthetic.py     # blocks 15-18, the synthetic kind: about 30 s with numpy and scipy, 2 min more with torch, sbi, zuko, skopt (T17 and T18 end to end)
-python3 hpc/pipeline/tests/test_smoke_evaluation.py    # blocks 19-23, the evaluation and the data overview: builds a reduced project once (about 1 min, torch, sbi, zuko, skopt), then about 5 min; EVAL_FIXTURE=<dir> reuses one, EVAL_KEEP=1 keeps it
+python3 hpc/pipeline/tests/test_smoke_evaluation.py    # blocks 19-23 and 28, the evaluation, the data overview and the comparisons' figures: builds a reduced project once (about 1 min, torch, sbi, zuko, skopt), then about 5 min; EVAL_FIXTURE=<dir> reuses one, EVAL_KEEP=1 keeps it
+python3 hpc/pipeline/tests/test_smoke_comparisons.py   # block 27, the comparisons across searches: E27a in a second (stdlib); E27b and E27c build a reduced v4-like project (about 2 min, the training environment); CMP_FIXTURE=<dir> reuses one, CMP_KEEP=1 keeps it
 ```
 
 Block 1's smoke test under the fake PBS; blocks 4-6 (the runner) are tested by

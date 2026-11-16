@@ -581,7 +581,13 @@ n_post, per row i:
   [amended 2026-11-16, D-136: E and E' are the two ensembles of a
   comparison kappa, "The comparisons" above, of which the within-search
   pair is case (a) for a campaign that nests A1; on D_sim the donors are
-  the report split's];
+  the report split's] [2026-11-16, the final check of wave W2, F1:
+  blocks 20 and 27 compute Dbar as `paired_bootstrap(..., within="all")`'s
+  estimate, the mean of d_i over the ok rows; it equals the mean over the
+  donors of Delta_d when every donor has the same number of ok rows, as on
+  every data set of synth (2 rows per donor on D_sim, 12 on a cohort, all or
+  none on R3dag, since theta-dagger is one per donor); the estimator for
+  unequal rows is open (the hardening wave)];
 - each member's embeddings z = h_{psi_m}(x) on D_sim and on a cohort, and
   their squared MMD with a Gaussian kernel at the median bandwidth
   (`hpc/npe_diagnostics.py`, `mmd2_biased`).
@@ -4188,7 +4194,8 @@ Claude; Confirmed: no]
   <tag>.json --eval-config <tag>_eval.json [--ensemble <q>:<arm> ...]
   [--ncpus N]` writes, under `<out_root>/metrics/`, `<stem>_<D>.json` per
   ensemble and data set, `paired_<q>_<D>.json` per search with a term and
-  data set, and `search_<q>.json` per search (pass line `EVAL METRICS OK`);
+  data set [amended 2026-11-16, block 27: `paired_<name>_<D>.json` per
+  comparison of sec. 2.5 and data set], and `search_<q>.json` per search (pass line `EVAL METRICS OK`);
   [amended 2026-11-11 at the build] beside each `<stem>_<D>.json` and
   `paired_<q>_<D>.json` an `.npz` of the per-row arrays and curves the
   figures draw (block 21 computes nothing), and `METRICS.json`, the index
@@ -4330,7 +4337,10 @@ Claude; Confirmed: no]
   `arms_nll_<D>` (every data set but D_sim), `arms_ppc_<D>` and
   `arms_lc2st_<D>` (the cohorts), `arms_forest_<D>` (every paired data
   set), `search_trials`, `search_nll_vs_lpr`, `search_learning`, and
-  `across/dbar`, `across/lpr`. The example donors are block 20's
+  `across/dbar`, `across/lpr`. [superseded 2026-11-16 by block 28: no
+  `arms_*` figure; each comparison's figures under `comparisons/<name>/`
+  (`cmp_*`); `searches/<q>/` keeps `search_*`; `across/dbar` over the
+  comparisons, one panel per kind] The example donors are block 20's
   (`search_<q>.json`'s `example_donors`: per condition the donor of median
   lbar_d under the search's A1 ensemble, S-A1's while that one is not
   reported); the per-row contraction and the D_sim reference of L-C2ST
@@ -4425,7 +4435,9 @@ Claude; Confirmed: no]
   (its `sbi_dir` at this checkout) and `synth_eval.json`: five calibration
   qsub lines with the committed resources, `ROADMAP_STAGE=I19`,
   `SKIP_CONDA=0` and the builder's arguments of `calbank_build`, nine
-  folders not complete, nothing written; the wrapper's plan equal to the
+  folders not complete [amended 2026-11-16: five under `synth.json` v4,
+  one per search and no other arm's fit; the check counts five since block
+  26], nothing written; the wrapper's plan equal to the
   launcher's; `--project`, a bad `--what`, an absent project (skipped where
   the runs root exists); E22b `eval_run.pbs`: bash -n, ASCII and LF,
   executable, the activation before the markers, no bare `conda activate`;
@@ -4933,7 +4945,10 @@ pins proposed by Claude; Confirmed: no]
       or `RefuseError("<E> and <E_ref> do not share the rows of <D>")`;
       ok = E's `in_box` and both `logq_ref` finite; d_i = l_i(E) -
       l_i(E_ref) on the ok rows; sigma_seed = max(`member_sd` of E on D,
-      of E_ref on D); `paired_block` with the seed `ev_plan.seed_of(ecfg.seed,
+      of E_ref on D) [2026-11-16, the final check's S2: `member_sd` is the
+      sample SD (ddof 1) over the members of their mean NLL on that
+      ensemble's own in-box rows with a finite density -- on synth's data
+      sets the comparison's ok rows]; `paired_block` with the seed `ev_plan.seed_of(ecfg.seed,
       "paired", name, D)` (for a comparison named q: block 20's seed, so a
       project of v3's design keeps its numbers);
     - written to `<mdir>/paired_<name>_<D>.json` and `.npz` (the contract
@@ -4998,7 +5013,10 @@ pins proposed by Claude; Confirmed: no]
   - A project of v3's design (S-A2 or S-A5 searches with `alt_best_fit`
     true): its comparisons are block 20's pairs, under the same names and
     seeds, with the same numbers; `test_smoke_evaluation.py`'s checks pass
-    unchanged.
+    unchanged. [2026-11-16, the final check's S4: this holds for its
+    comparisons against A1; rule (b) adds A2_vs_A5 comparisons where an S-A2
+    and an S-A5 search share a cohort, as the committed v3 had on R0 and R3,
+    which block 20 never made.]
 - Custom code: none (the bootstrap is `bootstrap_paired.paired_bootstrap`,
   as in block 20).
 - Test oracles (`test_smoke_comparisons.py`, pure ASCII; it may import the
@@ -5048,7 +5066,41 @@ pins proposed by Claude; Confirmed: no]
 - Confirmed: yes 2026-11-16 (D-136: the comparisons, A2 against A5, the
   names left out, the build); the kind names, the S-A25 rule and the
   launcher's lines are Claude's proposal within it.
-- Status: drafted (wave W2's contract).
+- Status: smoke-tested 2026-11-16 (wave W2): built by an implementer agent
+  on Opus in its own worktree against the contract `cea2373` and its
+  amendment 1 `c4257ba`; `test_smoke_comparisons.py` 3 of 4 (the
+  convergence check skipped; E27b on a reduced v4-like project -- S-A1 on
+  R0, S-A2-only and S-A5-only on R3), its 15 mutations each caught;
+  `test_smoke_evaluation.py` 18 of 19 after the merge with block 28;
+  vermin's minimum 3.3 for `ev_plan.py` and `ev_submit.py` `[SANDBOX
+  2026-11-16]`; read against this entry at the gate and merged (`13d21aa`);
+  the final check by an independent agent on Opus at `bd7651f`,
+  `specs/test_reports/2026-11-16_1018_incremental.md`: PASS WITH ISSUES, no
+  BLOCKER or MAJOR, the nine paired files of the v4-like run recomputed from
+  the samples, a v3 project's numbers equal to block 20's at the base. Not
+  run on davinci.
+- Accepted at the gate (2026-11-16; plumbing, the orchestrator's): the
+  launcher's why "its comparisons changed since <finished>" when only the
+  comparisons differ; `compute` lists the comparisons first, so a
+  configuration whose comparisons cannot be listed is refused before any
+  per-ensemble work; with both ensembles missing the why names E;
+  `lower_nll_ensemble` is E when Dbar < 0; the comparison lines follow the
+  report's unit whatever its state and are not printed when its qsub fails
+  (exit 4); the report's unit carries its comparisons; the run's count of
+  samples is "a complete ensemble's provenance exists", without hashing;
+  the refusal's text "search <q> (campaign <c>, no A1 trial) has no A1
+  reference: ..."; the helpers `sample_left_out`, `_read_json`,
+  `_paired_arrays` and the constants `TERM_ARM`, `NESTS_A1`, `UNCOMPARED`;
+  the test's `CMP_FIXTURE` and `CMP_KEEP`.
+- Open (the final check of 2026-11-16, left for the hardening wave): F4, a
+  paired data set with fewer than two donors ends the metrics run with a
+  traceback (about 1e-17 on the committed R3 of 27 donors); F5, an
+  unreadable sample provenance does too (block 20's path, and block 27's
+  under `--ensemble`); F6, a one-member ensemble's sigma_seed is 0; F7, the
+  files of an earlier report stay beside a new one's in `metrics/` and
+  `figures/`, unlisted; F8, the launcher exits 1 with a traceback, not 2, on
+  a project file `config.py` refuses (the same at the base); F1's estimator
+  for donors of unequal rows (sec. 2.5).
 
 ### Block 28: the comparisons' figures (added 2026-11-16; D-132 (5), D-136; roadmap synth, step S6; wave W2)
 
@@ -5127,7 +5179,32 @@ pins proposed by Claude; Confirmed: no]
   FIGURES.md.
 - Confirmed: yes 2026-11-16 (D-136); the families, names, panels and
   captions are Claude's proposal within it.
-- Status: drafted (wave W2's contract).
+- Status: smoke-tested 2026-11-16 (wave W2): built by an implementer agent
+  on Opus in its own worktree against the contract `cea2373`;
+  `test_smoke_evaluation.py` 18 of 19 (the convergence check skipped; E21a
+  restated, E21b, E28a on a metrics tree of both kinds, 108 figures), its
+  three mutations each caught; the figures looked at by the implementer (a
+  one-panel title cut off, fixed); read against this entry at the gate and
+  merged (`ddfec22`); the final check (block 27's report): the v4-like
+  report draws 113 figures, 24 of them the three comparisons', none
+  `arms_*`, the two panels of `across/dbar` `[SANDBOX 2026-11-16]`. Not run
+  on davinci.
+- Accepted at the gate (2026-11-16; plumbing, the orchestrator's):
+  refusals on a breach of block 27's contract -- a comparison naming an
+  ensemble METRICS.json does not report, listing no paired data set, paired
+  on a data set where E or E_ref has no metrics, or with a paired file
+  absent: `RefuseError`, exit 3; titles that name two ensembles wrapped to
+  the figure's width (14 characters per inch at 9 pt), `finish` giving each
+  extra line 0.15 in; FIGURES.md's header "Uncompared searches: ..." and
+  "(blocks 21 and 28)"; `across/dbar`'s x labels and its legend, one entry
+  per arm of E with that arm's searches; a kind other than the two in a
+  panel of its own; donors matched by id in `cmp_nll` and `cmp_lc2st`;
+  `cmp_ppc`'s D_sim rings only where D_sim has a PPC; the forest plot in E's
+  arm's hue; the mutations under `EVAL_MUTATION` (`MUTATION` is the
+  synthetic test's); E21a clears the figures folder before drawing. [The
+  final check's S5] A caption is FIGURES.md's line, which ends with a full
+  stop; the index `make_all` returns carries it without one (block 21's
+  convention).
 
 ## 6. Pipeline entry points
 
