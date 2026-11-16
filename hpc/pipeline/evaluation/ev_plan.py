@@ -1,11 +1,12 @@
 """What the evaluation finds and what it builds, in the standard library only
 (block 19; specs/SPEC.md sec. 2.5 and blocks 19 and 22): the ensembles of a
-synthetic project and the calibration bank's build. Imported by the
-sampler and by the launcher (block 22), which runs on the login node's
-python without numpy or torch.
+synthetic project, the comparisons between them (block 27) and the
+calibration bank's build. Imported by the sampler and by the launcher (block
+22), which runs on the login node's python without numpy or torch.
 
     cfg = ev_plan.load_project(".../synth.json")
     for e in ev_plan.ensembles(cfg): ...          # complete ensembles
+    for c in ev_plan.comparisons(cfg): ...        # sec. 2.5's comparisons (block 27)
     build = ev_plan.calbank_build(cfg, ecfg)      # the builder's argv per shard
     inputs = ev_plan.data_inputs(cfg, ecfg)       # what the data overview reads (block 23)
 
@@ -35,6 +36,14 @@ Ensemble = namedtuple("Ensemble", "name stem search arm folder kind seeds record
 # ensembles' names "<search>:<arm>", read donor-paired as E3 with E = E and
 # E' = E_ref; `search`, `search_ref` their searches; `arm`, `arm_ref` their arms
 Comparison = namedtuple("Comparison", "name kind E E_ref search search_ref arm arm_ref")
+
+# [block 27] A(q), the term arm of a search's campaign (sec. 2.5): S-A2 and S-A5
+# nest A1 (their A1 reference is their own A1 ensemble); S-A2-only and
+# S-A5-only (block 26) do not (theirs is the one S-A1 search's)
+TERM_ARM = {"S-A2": "A2", "S-A5": "A5", "S-A2-only": "A2", "S-A5-only": "A5"}
+NESTS_A1 = ("S-A2", "S-A5")
+# a campaign with a term that takes part in no comparison, and why (D-136)
+UNCOMPARED = {"S-A25": "campaign S-A25: its arms are not defined against A1 (D-136)"}
 
 
 class RefuseError(RuntimeError):
@@ -138,7 +147,42 @@ def comparisons(cfg, with_uncompared=False):
     Raises RefuseError when a search of a term-only campaign has no A1
     reference -- no search of campaign S-A1, or two or more -- naming the
     search and the S-A1 searches found."""
-    raise NotImplementedError("block 27: ev_plan.comparisons")
+    searches = cfg.data["synthetic"]["searches"]
+    s_a1 = [q["name"] for q in searches if q["campaign"] == "S-A1"]
+    out, uncompared = [], []
+    # (a) each search with a term against its A1 reference
+    for q in searches:
+        camp = q["campaign"]
+        if camp in UNCOMPARED:
+            uncompared.append((q["name"], UNCOMPARED[camp]))
+            continue
+        if camp not in TERM_ARM:
+            continue                                   # S-A1: a reference only
+        if camp in NESTS_A1:
+            ref = q["name"]
+        elif len(s_a1) == 1:
+            ref = s_a1[0]
+        else:
+            raise RefuseError(
+                "search %s (campaign %s, no A1 trial) has no A1 reference: its comparison needs "
+                "exactly one search of campaign S-A1, the configuration has %s"
+                % (q["name"], camp, ("%d (%s)" % (len(s_a1), ", ".join(s_a1))) if s_a1 else "none"))
+        arm = TERM_ARM[camp]
+        out.append(Comparison(name=q["name"], kind="vs_A1", E="%s:%s" % (q["name"], arm),
+                              E_ref="%s:A1" % ref, search=q["name"], search_ref=ref, arm=arm,
+                              arm_ref="A1"))
+    # (b) A2 against A5 on one cohort, in the order of q and then of q'
+    for q in searches:
+        if TERM_ARM.get(q["campaign"]) != "A2":
+            continue
+        for q2 in searches:
+            if TERM_ARM.get(q2["campaign"]) != "A5" or q2["real"] != q["real"]:
+                continue
+            out.append(Comparison(name="%s_vs_%s" % (q["name"], q2["name"]), kind="A2_vs_A5",
+                                  E="%s:A2" % q["name"], E_ref="%s:A5" % q2["name"],
+                                  search=q["name"], search_ref=q2["name"], arm="A2",
+                                  arm_ref="A5"))
+    return (out, uncompared) if with_uncompared else out
 
 
 def find(cfg, name):
@@ -196,15 +240,18 @@ def sample_json(ecfg, stem):
 
 def report_inputs(cfg, ecfg):
     """What a report is made of (block 22): the sha256 of every complete
-    ensemble's sample provenance that exists, by stem, and the report's
-    values (ev_config.REPORT_PARAMS). A report whose recorded inputs differ
-    is stale."""
+    ensemble's sample provenance that exists, by stem, the report's values
+    (ev_config.REPORT_PARAMS) and [block 27] the comparisons, [[name, E,
+    E_ref], ...] in `comparisons`' order. A report whose recorded inputs
+    differ is stale, so a report made before block 27 is. RefuseError as
+    `comparisons`."""
     samples = {}
     for e in ensembles(cfg):
         pj = sample_json(ecfg, e.stem)
         if os.path.isfile(pj):
             samples[e.stem] = sha256_file(pj)
-    return {"samples": samples, "params": ecfg.report_params()}
+    return {"samples": samples, "params": ecfg.report_params(),
+            "comparisons": [[c.name, c.E, c.E_ref] for c in comparisons(cfg)]}
 
 
 def data_dir(ecfg):
