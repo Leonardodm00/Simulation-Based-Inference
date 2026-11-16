@@ -20,7 +20,9 @@
 # Every suite builds its own reduced project in a temporary folder and drives
 # it with the tests' fake PBS (tests/fake_pbs): no real job is submitted, no
 # bank, search or state of a real project is read or written, and nothing is
-# left behind but the logs named below.
+# left behind but the logs named below: the suites' temporary folders, and
+# the caches Python and matplotlib would write into the checkout and $HOME,
+# go to one folder of this job under $TMPDIR, removed at its end.
 #
 # Submit from ANY login node (the -o path is absolute, so the log is found):
 #   qsub -q cpu -o $HOME/w1_checks.log -v W1_REPO=$HOME/SBI_w1 $HOME/SBI_w1/hpc/pipeline/tests/run_w1_checks.pbs
@@ -43,7 +45,9 @@
 #
 # Variables (qsub -v): W1_REPO, the checkout to test (default $HOME/SBI_w1);
 # W1_ENV, the conda environment (default sbi_env, the projects' envs.train);
-# W1_OUT, the folder of the per-suite logs (default $HOME/w1_checks).
+# W1_OUT, the folder of the per-suite logs (default $HOME/w1_checks). A
+# relative W1_REPO or W1_OUT is read from $HOME, wherever the job starts.
+# A REFUSE line (exit 2) means nothing was run: it names the cause.
 #
 # Pure ASCII, LF only.
 # =============================================================================
@@ -52,6 +56,10 @@ set -eo pipefail
 REPO="${W1_REPO:-$HOME/SBI_w1}"
 ENV_NAME="${W1_ENV:-sbi_env}"
 OUT="${W1_OUT:-$HOME/w1_checks}"
+# qsub starts the job in $HOME from a spool copy of this file: a relative path
+# is read from $HOME, never from wherever this script happens to be started
+case "$REPO" in /*) ;; *) REPO="$HOME/$REPO" ;; esac
+case "$OUT" in /*) ;; *) OUT="$HOME/$OUT" ;; esac
 SUITES="test_smoke_theta_box.py test_smoke_identity.py test_smoke_finalist.py test_smoke_pipeline.py test_smoke_block7.py test_smoke_synthetic.py"
 REF_COMMIT="8d5b16285140f1a4181c0901bf535c7da041ae39"   # test_smoke_theta_box.py's reference tree
 
@@ -63,11 +71,29 @@ if [ ! -f "$TESTS/test_smoke_finalist.py" ]; then
     exit 2
 fi
 
-# The environment: the hook and the activation source third-party scripts that
-# are not `set -u` clean, so -u is armed only after them (hpc-git-delivery).
+# The environment: the hook and the activation source third-party scripts
+# (deactivate.d, activate.d) that are neither `set -u` nor `set -e` clean, so
+# both are off across them, -u is armed only after them (hpc-git-delivery),
+# and a failure is said on a W1CHECK line instead of ending the job unlogged.
 if [ "${W1_SKIP_CONDA:-0}" != "1" ]; then
-    eval "$(conda shell.bash hook)"
+    set +eu
+    if ! command -v conda >/dev/null 2>&1; then
+        echo "W1CHECK: REFUSE: no conda on PATH on $(hostname); nothing was run"
+        exit 2
+    fi
+    HOOK="$(conda shell.bash hook)"
+    if [ $? -ne 0 ] || [ -z "$HOOK" ]; then
+        echo "W1CHECK: REFUSE: conda shell.bash hook failed on $(hostname); nothing was run"
+        exit 2
+    fi
+    eval "$HOOK"
     conda activate "$ENV_NAME"
+    if [ $? -ne 0 ] || [ "${CONDA_DEFAULT_ENV:-}" != "$ENV_NAME" ]; then
+        echo "W1CHECK: REFUSE: conda activate $ENV_NAME failed (CONDA_DEFAULT_ENV=${CONDA_DEFAULT_ENV:-<unset>}); nothing was run"
+        exit 2
+    fi
+    unset HOOK
+    set -e
 fi
 set -u
 
@@ -79,14 +105,34 @@ for v in $(compgen -v | grep '^PBS_' || true); do unset "$v"; done
 unset PIPELINE_SKIP_CONDA SKIP_CONDA FAKE_PBS_SPOOL || true
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 
+# One folder of this job for everything the suites and their libraries write
+# beside the logs (their temporary projects, torch's and matplotlib's caches,
+# Python's bytecode): nothing lands in the checkout or in $HOME, and it is
+# removed when the job ends, whatever ends it.
+W1_TMP="$(mktemp -d "${TMPDIR:-/tmp}/w1check.XXXXXX" 2>/dev/null)" || W1_TMP=""
+if [ -z "$W1_TMP" ] || [ ! -d "$W1_TMP" ]; then
+    echo "W1CHECK: REFUSE: cannot create a temporary folder under ${TMPDIR:-/tmp}; nothing was run"
+    exit 2
+fi
+trap 'rm -rf "$W1_TMP"' EXIT
+export TMPDIR="$W1_TMP" MPLCONFIGDIR="$W1_TMP/matplotlib" XDG_CACHE_HOME="$W1_TMP/cache" PYTHONDONTWRITEBYTECODE=1
+
 cd "$REPO"
-HEAD_NOW="$(git rev-parse --short HEAD)"
+HEAD_NOW="$(git rev-parse --short HEAD 2>/dev/null)" || HEAD_NOW=""
+if [ -z "$HEAD_NOW" ]; then
+    echo "W1CHECK: REFUSE: $REPO is not a git checkout (git rev-parse HEAD failed); nothing was run"
+    exit 2
+fi
 echo "W1CHECK: checkout $REPO at $HEAD_NOW ($(git log -1 --format=%s | cut -c1-70))"
 if ! git cat-file -e "${REF_COMMIT}^{commit}" 2>/dev/null; then
     echo "W1CHECK: REFUSE: this checkout's history lacks $REF_COMMIT, which test_smoke_theta_box.py compares with (a shallow clone? use a worktree of ~/SBI)"
     exit 2
 fi
-python3 - <<'EOF'
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "W1CHECK: REFUSE: no python3 on PATH (the environment ${ENV_NAME}); nothing was run"
+    exit 2
+fi
+python3 - <<'EOF' || echo "W1CHECK: environment: python3 could not report its packages (the suites say the rest)"
 import importlib, sys
 out = ["python %s" % sys.version.split()[0]]
 for m in ("numpy", "scipy", "torch", "sbi", "zuko", "skopt", "pytorch_metric_learning"):
@@ -97,7 +143,10 @@ for m in ("numpy", "scipy", "torch", "sbi", "zuko", "skopt", "pytorch_metric_lea
 print("W1CHECK: environment: " + ", ".join(out))
 EOF
 
-mkdir -p "$OUT"
+if ! mkdir -p "$OUT" 2>/dev/null; then
+    echo "W1CHECK: REFUSE: cannot create $OUT; nothing was run"
+    exit 2
+fi
 set +e
 FAILED=""
 N=0
