@@ -34,8 +34,6 @@ configuration.
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
-import copy
-import glob
 import os
 import re
 

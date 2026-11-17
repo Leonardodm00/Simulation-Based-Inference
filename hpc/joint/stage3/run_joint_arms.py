@@ -73,7 +73,9 @@ ARMS = ("A0", "A0s", "A1", "A2", "A2s", "A3", "A5", "A_ref", "shuffled")
 
 # [block 31, D-148 (3)] the real bank's id arrays that may name a row's
 # replicate group (--rep-group-key); rep_group is the shard contract's
-# optional array (latent_bank.OPTIONAL_ROW_ARRAYS, Sbi-extractor block 9)
+# optional array (latent_bank.OPTIONAL_ROW_ARRAYS, Sbi-extractor block 9).
+# [amendment 5] build_parser holds a literal copy of this tuple and of
+# joint_batches.REP_PAIRS; _check_parser_choices compares them at import.
 REP_GROUP_KEYS = ("donor", "rep_group", "batch", "well")
 # [block 31] at most this many pairs are scored by the replicate diagnostic
 # (block 14's 64)
@@ -322,17 +324,50 @@ def build_parser():
     # [block 31, D-146..D-148] the replicate pair rule; both defaults are
     # block 14's, so a call without them is unchanged (sec. 4). Without a
     # real bank (S-A1's trials) they are accepted and unused.
-    p.add_argument("--rep-pairs", default="cross_well", choices=REP_PAIRS,
+    # [amendment 5, 2026-11-17, F3] The two choices are literal tuples: the
+    # stage-4 suites (smoke_test_joint_tune.py J28, smoke_test_joint_space.py
+    # J35) lift this function out of the module by AST and run it without
+    # the module's names. _check_parser_choices, at import, holds them equal
+    # to joint_batches.REP_PAIRS and REP_GROUP_KEYS.
+    p.add_argument("--rep-pairs", default="cross_well",
+                   choices=("cross_well", "within_group"),
                    help="[block 31] arm A5's replicate pairs: cross_well "
                         "(default; block 14's F-ab: two rows of one group in "
                         "two different wells) or within_group (two different "
                         "real rows of one group, any well, drawn uniformly "
                         "from the within-group pairs)")
-    p.add_argument("--rep-group-key", default="donor", choices=REP_GROUP_KEYS,
+    p.add_argument("--rep-group-key", default="donor",
+                   choices=("donor", "rep_group", "batch", "well"),
                    help="[block 31] the real bank's id array that names a "
                         "row's replicate group (default donor; rep_group is "
                         "written by Sbi-extractor's block 9)")
     return p
+
+
+def _check_parser_choices():
+    """[block 31, amendment 5] The choices of --rep-pairs and --rep-group-key
+    in build_parser (literal there) are joint_batches.REP_PAIRS and this
+    module's REP_GROUP_KEYS, in their order, so the lists stay one; an
+    AssertionError at import otherwise. Raised explicitly rather than by an
+    assert statement, which `python -O` would strip."""
+    want = {"--rep-pairs": tuple(REP_PAIRS),
+            "--rep-group-key": tuple(REP_GROUP_KEYS)}
+    got = {}
+    # argparse keeps a parser's actions in _actions (no public accessor);
+    # option_strings and choices are the actions' documented attributes
+    for action in build_parser()._actions:
+        for flag in want:
+            if flag in action.option_strings:
+                got[flag] = (None if action.choices is None
+                             else tuple(action.choices))
+    if got != want:
+        raise AssertionError(
+            "run_joint_arms.build_parser's choices %r are not %r "
+            "(joint_batches.REP_PAIRS, REP_GROUP_KEYS): change both"
+            % (got, want))
+
+
+_check_parser_choices()
 
 
 def load_arm(pattern):
