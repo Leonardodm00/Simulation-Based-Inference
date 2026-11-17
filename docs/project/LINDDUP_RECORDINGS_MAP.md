@@ -4,6 +4,7 @@
 |---|---|
 | 2026-11-17 | v1. Written from the user's `ls -R` of `Deep_bio/` (pasted 10:57 Europe/Rome) `[CLUSTER, the user's paste]`. The move of sec. 2 is handed to the user as commands; NOT yet run when this was written. The donor column is empty: the folder tree does not name a donor (sec. 4). |
 | 2026-11-17 | v2. The user's message of 11:14: the donor is the condition (D-144; sec. 4, the donor column filled: `C`, `P`); the `cmp` check of sec. 5 run on davinci `[CLUSTER, the user's paste]`: `DATA_P/Batch4` wells A2, A3, B1, B2, B3 are byte-for-byte copies of `DATA_P/Batch3/SubBatch1`'s, A1 shares no file with it. The move of sec. 2 not reported run. |
+| 2026-11-17 | v3. The user's message of 11:51: the move of sec. 2 ran ("This worked"; output not pasted), so the recordings are at `LindaColloDUP/recordings/`; the five copies are left out of the real data (D-145): 30 wells, 17 control, 13 DUP. |
 
 Machine-readable copy of sec. 3: `docs/project/linddup_recordings_map.csv` (same rows, same columns, plus the paths).
 
@@ -113,7 +114,7 @@ Output of the `cmp` loop on davinci `[CLUSTER, the user's paste of 11:14]`:
 | B2 | 2297 | 2297 |
 | B3 | 2273 | 2273 |
 
-So P-B4-A2, -A3, -B1, -B2, -B3 are the same recordings as P-B3-S1-A2, -A3, -B1, -B2, -B3; P-B4-A1 is a different recording from P-B3-S1-A1. The DUP class holds 13 distinct recordings (18 - 5), the cohort 30 (35 - 5). `extracted_v2` and its manifest (`c925c5106137fe82`, 35 wells) hold the five twice. Not decided: whether the five copies are left out of the banks (Claude's recommendation: leave them out; a copy paired with its original is a replicate pair of distance zero, and the five weigh double in the class statistics), and where the real `Batch4` wells A2-B3 are, if they exist.
+So P-B4-A2, -A3, -B1, -B2, -B3 are the same recordings as P-B3-S1-A2, -A3, -B1, -B2, -B3; P-B4-A1 is a different recording from P-B3-S1-A1. The DUP class holds 13 distinct recordings (18 - 5), the cohort 30 (35 - 5). `extracted_v2` and its manifest (`c925c5106137fe82`, 35 wells) hold the five twice. Decided 2026-11-17 11:51 (D-145): the five copies are left out of the real data. Not decided: where the real `Batch4` wells A2-B3 are, if they exist.
 
 The command, for the record:
 
