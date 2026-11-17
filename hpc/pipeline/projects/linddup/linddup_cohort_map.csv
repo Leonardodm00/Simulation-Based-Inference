@@ -29,8 +29,8 @@ pathological/Batch3_SubBatch2/ptrain_B1,pathological,pathological_Batch3,yes,raw
 pathological/Batch3_SubBatch2/ptrain_B2,pathological,pathological_Batch3,yes,raw recordings LindaColloDUP/recordings/DATA_P/Batch3/SubBatch2/ptrain_B2
 pathological/Batch3_SubBatch2/ptrain_B3,pathological,pathological_Batch3,yes,raw recordings LindaColloDUP/recordings/DATA_P/Batch3/SubBatch2/ptrain_B3
 pathological/DATA_P_Batch4/ptrain_A1,pathological,pathological_Batch4,yes,raw recordings LindaColloDUP/recordings/DATA_P/Batch4/ptrain_A1
-pathological/DATA_P_Batch4/ptrain_A2,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_A2 (cmp of every electrode file, 2026-11-17; D-145)
-pathological/DATA_P_Batch4/ptrain_A3,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_A3 (cmp of every electrode file, 2026-11-17; D-145)
-pathological/DATA_P_Batch4/ptrain_B1,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_B1 (cmp of every electrode file, 2026-11-17; D-145)
-pathological/DATA_P_Batch4/ptrain_B2,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_B2 (cmp of every electrode file, 2026-11-17; D-145)
-pathological/DATA_P_Batch4/ptrain_B3,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_B3 (cmp of every electrode file, 2026-11-17; D-145)
+pathological/DATA_P_Batch4/ptrain_A2,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_A2 (cmp of every electrode file on 2026-11-17; D-145)
+pathological/DATA_P_Batch4/ptrain_A3,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_A3 (cmp of every electrode file on 2026-11-17; D-145)
+pathological/DATA_P_Batch4/ptrain_B1,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_B1 (cmp of every electrode file on 2026-11-17; D-145)
+pathological/DATA_P_Batch4/ptrain_B2,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_B2 (cmp of every electrode file on 2026-11-17; D-145)
+pathological/DATA_P_Batch4/ptrain_B3,pathological,pathological_Batch4,no,byte-identical copy of pathological/Batch3_SubBatch1/ptrain_B3 (cmp of every electrode file on 2026-11-17; D-145)
