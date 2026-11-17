@@ -674,6 +674,9 @@ tail -n 8 ~/purge_giulia_delete.log; cd ~/SBI && eval "$(conda shell.bash hook)"
 
 ### LindDUP: the first submission (2026-10-29)
 
+[Superseded 2026-11-17 by "LindDUP: lcdup15 and its three arms -- the first submission" below: D-138 replaced the
+MEAMA campaign this section runs, and it was never submitted. Kept for its L0-L6 notes.]
+
 The same discipline: one line at a time, each read before the next. [2026-10-29 19:30,
 D-112..D-114: L0 is new (the two Sbi-extractor commits of the day, through the laptop);
 L1-L6 keep their commands with new pass lines; S2 runs on a campaign still being
@@ -1086,6 +1089,114 @@ alone; `figures/FIGURES.md`, a caption per figure. The numbers: `metrics/paired_
 `two_sigma_seed`, `resolved`, `lower_nll_ensemble`), `metrics/METRICS.json` (`comparisons`,
 `comparisons_left_out`).
 
+### LindDUP: lcdup15 and its three arms -- the first submission (2026-11-17, blocks 29-32, D-138..D-154)
+
+LindDUP's pipeline on the LindaColloDUP15 campaign `lcdup15_rho1300_neur_n01` (D-138, which replaced
+MEAMA) and the DUP15HD recordings, with the cohort map `projects/linddup/linddup_cohort_map.csv`
+(donor = condition, pairing group = condition x batch, the five copied `DATA_P/Batch4` wells left
+out: 30 wells, 17 control and 13 DUP; D-144..D-146). It has three arms, A1, A2 and A5. Each is
+searched and fitted on the same banks, with 148 cores of its own (3 jobs of 48 at once; 444 for the
+project) and no clock cap (D-140, D-141, D-148, D-150). The order is S1 (skipped: `extracted_v2` is
+the cohort of record), S2 (re-detection at the DUP15HD probe), S3 (the freeze, p = 14), S4-S6 (the
+banks: partial topologies dropped whole, D-143), then `search_A1|A2|A5` and `best_fit_A1|A2|A5`.
+This section supersedes "LindDUP: the first submission (2026-10-29)" above, which ran the MEAMA
+campaign and was never submitted. Run one line at a time and read each result before the next. The
+pass condition of each line is a line that must APPEAR.
+
+Where things land: the work root `/davinci-1/home/ldellamea/pipeline/linddup` (state, log, reports);
+S2's re-detections `/davinci-1/home/ldellamea/ANN/MEA_analysis/mea_out_linddup_lcdup15`; the freeze
+`<Sbi-extractor>/artifacts/label_axes_linddup_lcdup15.json`; the banks
+`/davinci-1/home/ldellamea/banks/linddup_sim` and `linddup_real`; each arm's search
+`/davinci-1/home/ldellamea/tune_joint_linddup/<A1|A2|A5>/<S-A1|S-A2-only|S-A5-only>`; and its best fit
+`/davinci-1/home/ldellamea/runs/linddup/<A1|A2|A5>/linddup_best`.
+
+```
+# N1. this code and its cluster-side check; pass lines: the commit named in the chat of 2026-11-17 (wave W3 and its fix round) or later from git log, PIPELINE CODE OK
+#     The pull changes giulia.json and synth.json too (config v11): a Giulia or synth sequencer still in the
+#     queue would refuse the new digest at its next hand-over (both chains have ended: D-116, D-136).
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git fetch origin && git checkout sci/pipeline && git pull --ff-only origin sci/pipeline && git log --oneline -1 && bash -c 'set -e; cd hpc/pipeline; for f in $(find . -name "*.py" -o -name "*.sh" -o -name "*.pbs" -o -name "*.json" -o -name "*.csv" | grep -v __pycache__); do if LC_ALL=C grep -q $'"'"'\r'"'"' "$f"; then echo "CR in $f"; exit 1; fi; if LC_ALL=C grep -qP "[^\x00-\x7F]" "$f"; then echo "non-ASCII in $f"; exit 1; fi; done; python3 -m py_compile pipeline.py config.py state.py pbs.py envs.py stages/*.py tools/*.py tests/*.py; python3 -c "import sys; sys.path.insert(0, \".\"); import pipeline, stages; print(sorted(stages.BUILT))"; echo PIPELINE CODE OK'
+
+# N2. Sbi-extractor: the pull and its suites (SBI_HPC_DIR -> ~/SBI/hpc, pulled in N1); pass lines, in order:
+#     the commit named in the chat of 2026-11-17 or later, then
+#     -- 12 pass, 0 fail, 0 error, 0 todo, 2 skip   (the cohort map, Block 9)
+#     -- 11 pass, 0 fail, 0 error, 0 todo, 2 skip   (partial topologies, Block 10)
+#     -- 41 pass, 0 fail, 0 error, 0 todo, 2 skip   (the bank plan)
+#     -- 21 pass, 0 fail, 0 error, 0 todo, 2 skip    (the banks; sbi_export has no torch, so the runner's dry run is skipped)
+#     ALL 40 CHECKS PASSED                          (the re-detection launcher, LindDUP's profile included)
+cd ~/repos/Sbi-extractor && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin feat/real-arm-parity && git log --oneline -1 && export SBI_HPC_DIR=~/SBI/hpc && source env.sh && python3 export_windows/smoke_test_cohort_map.py 2>&1 | tail -1 && python3 export_windows/smoke_test_partial_topologies.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_plan.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_export.py 2>&1 | tail -1 && ANN_TOOLS=~/ANN/MEA_analysis python3 sim_reextract/smoke_test_sim_reextract.py 2>&1 | tail -1
+
+# N3. the wave's suites under the fake PBS, in sbi_env (two of them train a small network; about 8 min in all);
+#     pass lines, one per suite:
+#     ...test_smoke_runs.py: -- 5 pass, 0 fail, 0 error, 0 todo, 1 skip        (several searches and their caps)
+#     ...test_smoke_stop.py: -- 6 pass, 0 fail, 0 error, 0 todo, 2 skip        (stop-search)
+#     ...test_smoke_report.py: -- 6 pass, 0 fail, 0 error, 1 skip              (the search report)
+#     ...test_smoke_inputs_check.py: 8 of 9 checks pass in <s> s               (the inputs check on v11)
+#     ...test_smoke_block2.py: 15 of 16 checks pass in <s> s                                   (the bank stages, the test task)
+#     ...smoke_test_rep_pairs.py: -- 12 pass, 0 fail, 0 error, 0 todo, 1 skip  (the replicate pair rule)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && export SBIX_CLONE=/davinci-1/home/ldellamea/repos/Sbi-extractor && for t in hpc/pipeline/tests/test_smoke_runs.py hpc/pipeline/tests/test_smoke_stop.py hpc/pipeline/tests/test_smoke_report.py hpc/pipeline/tests/test_smoke_inputs_check.py hpc/pipeline/tests/test_smoke_block2.py hpc/joint/stage3/smoke_test_rep_pairs.py; do echo "$t: $(python3 $t 2>&1 | tail -1)"; done
+
+# N4. the campaign, read-only: no LindDUP job left; the topology folders without topology_meta.json (the
+#     virtual MEA stops on a whole task that holds one: the Neuro-astro network project's reply, sec. 2.2) and
+#     the simulation files without their iter_*.json (a run cut by the kill, possibly truncated: unusable by
+#     that reply's rule, and a truncated one makes S2's re-detection fail its whole task). Pass: no qstat line
+#     (the campaign's arrays 1942752[] and 1942753[] are gone, no pl_linddup or ld_ job), then the line
+#     "topology folders <T>, without topology_meta.json <a>; simulation files <N>, without their json <b>"
+cd /davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP && C=campaign_lcdup15_rho1300_neur_n01 && qstat -u $USER | grep -E '1942752|1942753|pl_linddup| ld_' ; find $C -mindepth 2 -maxdepth 2 -type d -name 'topo_*' | sort > ~/lcdup15_topos.txt && find $C -mindepth 3 -maxdepth 3 -name topology_meta.json | sed 's|/topology_meta.json$||' | sort > ~/lcdup15_topos_meta.txt && comm -23 ~/lcdup15_topos.txt ~/lcdup15_topos_meta.txt > ~/lcdup15_no_meta.txt && find $C -mindepth 3 -maxdepth 3 -name 'iter_*.npz' | sed 's|\.npz$||' | sort > ~/lcdup15_npz.txt && find $C -mindepth 3 -maxdepth 3 -name 'iter_*.json' | sed 's|\.json$||' | sort > ~/lcdup15_json.txt && comm -23 ~/lcdup15_npz.txt ~/lcdup15_json.txt | sed 's|$|.npz|' > ~/lcdup15_npz_without_json.txt && echo "topology folders $(wc -l < ~/lcdup15_topos.txt), without topology_meta.json $(wc -l < ~/lcdup15_no_meta.txt); simulation files $(wc -l < ~/lcdup15_npz.txt), without their json $(wc -l < ~/lcdup15_npz_without_json.txt)"
+
+# N5. your call: set N4's folders and files aside, into the sibling folder ..._set_aside (outside the campaign
+#     glob; nothing deleted), keeping each parent folder's modification time: S2's plan leaves out every task
+#     changed in the last 6 h (D-112), and a removal would otherwise count as a change. A topology that loses a
+#     file without json was partial already (its json files are fewer than its task dispatched), so the bank
+#     drops it whole either way (D-143) and records it in the plan. Pass lines: MOVED <a> topology folder(s)
+#     and <b'> simulation file(s) ... (b' = b less the files inside the moved folders), then N4's line again
+#     with 0 and 0
+cd /davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP && C=campaign_lcdup15_rho1300_neur_n01 && A=${C}_set_aside && n=0 && m=0 && while read -r d; do s=$(dirname "$d"); t=$(stat -c %Y "$s"); mkdir -p "$A/${s#$C/}" && mv "$d" "$A/${s#$C/}/" && touch -m -d "@$t" "$s" && n=$((n+1)); done < ~/lcdup15_no_meta.txt && while read -r f; do [ -f "$f" ] || continue; s=$(dirname "$f"); t=$(stat -c %Y "$s"); mkdir -p "$A/${s#$C/}" && mv "$f" "$A/${s#$C/}/" && touch -m -d "@$t" "$s" && m=$((m+1)); done < ~/lcdup15_npz_without_json.txt && echo "MOVED $n topology folder(s) and $m simulation file(s) to $PWD/$A (the folders' times kept)"
+
+# N6. the inputs check (read-only; blocks 9 and 32); pass line: INPUTS CHECK: 0 FAIL, <w> WARN. Read the rows
+#     cohort map (OK: 35 wells, 5 excluded; 2 donors; 4 pairing groups; included per class control:17,
+#     pathological:13), topology metadata (OK: every topology folder (<n>) holds topology_meta.json), partial
+#     topologies (NOTE: <n> partial topologies in <m> task(s), <s> simulations: the bank plan drops them whole),
+#     searches (NOTE: 3 search(es): A1: S-A1, max_cores 148; A2: S-A2-only, ...; A5: S-A5-only, ...; the caps
+#     add up to 444 cores against resources.max_cores 444 (the sequencer's job takes 4 of them) -- each arm
+#     runs 3 jobs of 48, 432 cores in all), being written (OK: no task changed within 6 h ...: S2 plans all
+#     <n>; a NOTE names tasks touched in the last 6 h, which S2's first round would leave out), and the task and
+#     simulation counts. Paste it whole.
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/inputs_check.py --project linddup --json ~/inputs_check_linddup.json 2>&1 | tee ~/inputs_check_linddup.txt
+
+# N7. the dry run (submits nothing); pass: exit 0, no REFUSE, STOP or FAILED line, and the lines
+#     real_extraction: would be skipped; sim_redetection: would run (the array at CONCURRENCY 9 of 48 cores);
+#     six "cores (block 29, D-141): the jobs of search_<q>, best_fit_<q> share at most 148 cores ... at most 3
+#     job(s) of 48 cores at once"; three "at most 3 trial(s) at once" and three "at most 3 member(s) at once";
+#     nine argv lines ending in "--rep-pairs within_group --rep-group-key rep_group" (the probes', the trials',
+#     the members'); "cores: at most 444 at once"; "cores of search A1|A2|A5: at most 148"; "the sequencer: PBS
+#     jobs named pl_linddup on queue intel"
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --dry-run 2>&1 | tee ~/pipeline_linddup_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|cores|exit|rep-pairs" ; echo "exit ${PIPESTATUS[0]}"
+
+# N8. the run, only on that dry run; pass lines, in order: environment sbi_export: <prefix> (recorded for
+#     nodes without conda, D-111), the same for sbi_env, then SUBMITTED the sequencer: job <id> (pl_linddup)
+cd ~/SBI && grep -q "sim_redetection: would run" ~/pipeline_linddup_dry.log && ! grep -qE "REFUSE|STOP:|FAILED" ~/pipeline_linddup_dry.log && bash hpc/pipeline/run_pipeline.sh --project linddup || echo "STOP: not submitted (the dry run was not clean)"
+
+# N9. any time, from any login node. The status and the log: in --status the cores lines (at most 444; per
+#     search at most 148) and a "search <q>: stop requested ..." line while a stop request stands; in the log
+#     S2's rounds and gate, the banks' lines (`sim_bank: [launch] WALLTIME=auto: test task <i> read <k>
+#     simulations ...`), then per arm `search_<q>: ...`, `SEARCH COMPLETE (...)`, `BEST FIT COMPLETE`, and at
+#     the end PIPELINE DONE
+bash ~/SBI/hpc/pipeline/run_pipeline.sh --project linddup --status; tail -n 12 /davinci-1/home/ldellamea/pipeline/linddup/pipeline.log
+#     One arm's trials (read-only; A1, A2 or A5); pass line: SEARCH REPORT OK: <n> trial(s) read; nothing was written
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/search_report.py --config hpc/pipeline/projects/linddup/linddup.json --search A1 --qstat 2>&1 | tee ~/search_report_linddup_A1.txt
+#     Stop one arm's search by hand (block 30; refused before its first completed trial): no new trial; the
+#     running trials finish, or are deleted with --kill-running; then its best fit starts on the best trial so
+#     far. Pass line: STOP REQUESTED: search A1 (S-A1); kill running: no; the sequencer acts at its next tick ...
+#     (later in the log: SEARCH COMPLETE (user_stop)). --cancel withdraws a request not yet acted on.
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/pipeline.py stop-search --config hpc/pipeline/projects/linddup/linddup.json --search A1
+```
+
+A `STOP:` line in the log ends the chain on purpose. Read it and the job's log, then run the dry run and
+the submission again with `--retry <stage>`, as in "LindDUP: the first submission (2026-10-29)" L6. S2's
+array walltime is 12 h per task, an estimate (`sim.walltime`): a task killed at that limit is rerun, at
+most twice. Raise it in `linddup.json` with `--accept-config-change` if the first round's tasks come
+close.
+
 ## Tests
 
 ```
@@ -1102,7 +1213,10 @@ python3 hpc/pipeline/tests/test_smoke_reset.py         # tools/search_reset.py, 
 python3 hpc/pipeline/tests/test_smoke_purge.py         # blocks 10 and 24, tools/purge_outputs.py, about 20 s, stdlib and the fake PBS
 python3 hpc/pipeline/tests/test_smoke_perrow.py        # tools/perrow_check.py, a few seconds, numpy (with torch, sbi and zuko also the real-flow oracle)
 python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, end to end on the stand-in, needs all of the above
-python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # block 9, tools/inputs_check.py, about 1 s, numpy and the Sbi-extractor checkout (SBIX_CLONE)
+python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # blocks 9 and 32, tools/inputs_check.py, a few seconds, numpy and the Sbi-extractor checkout (SBIX_CLONE)
+python3 hpc/pipeline/tests/test_smoke_runs.py          # block 29, several searches with their core caps, about 3 min, torch, sbi, skopt for its end to end
+python3 hpc/pipeline/tests/test_smoke_stop.py          # block 30, stop-search, about 1 min, the same
+python3 hpc/joint/stage3/smoke_test_rep_pairs.py       # block 31, the replicate pair rule, about 1-2 min, the same
 python3 hpc/pipeline/tests/test_smoke_synthetic.py     # blocks 15-18, the synthetic kind: about 30 s with numpy and scipy, 2 min more with torch, sbi, zuko, skopt (T17 and T18 end to end)
 python3 hpc/pipeline/tests/test_smoke_evaluation.py    # blocks 19-23 and 28, the evaluation, the data overview and the comparisons' figures: builds a reduced project once (about 1 min, torch, sbi, zuko, skopt), then about 5 min; EVAL_FIXTURE=<dir> reuses one, EVAL_KEEP=1 keeps it
 python3 hpc/pipeline/tests/test_smoke_comparisons.py   # block 27, the comparisons across searches: E27a in a second (stdlib); E27b and E27c build a reduced v4-like project (about 2 min, the training environment); CMP_FIXTURE=<dir> reuses one, CMP_KEEP=1 keeps it
