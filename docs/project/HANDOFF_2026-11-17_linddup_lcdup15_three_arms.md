@@ -4,6 +4,7 @@
 |---|---|
 | 2026-11-17 | v1. Written by the results-commentary chat (the chat that read synth v4's evaluation, D-136's Status) for the LindDUP pipeline chat, at the user's word of 09:29 Europe/Rome. State at writing: four decisions logged (D-138..D-141, log v1.140 on `main` `8d70dd8`); `linddup.json` still v10 (MEAMA, A1 only) on `sci/pipeline` `ee8b382`; nothing built, nothing run. |
 | 2026-11-17 | v2. The outputs of sec. 4's three checks, pasted by the user at 09:55 Europe/Rome from `dvlogin02` `[CLUSTER, the user's paste]`: recorded in sec. 4, with what they change in sec. 5. |
+| 2026-11-17 | v3. The `intel` nodes' sizes, pasted by the user at 10:18 `[CLUSTER, the user's paste]`: 82 nodes of 48 cores, 81 with 1007 GB and 1 with 881 GB; a 48-core trial or member fits one whole node (sec. 4). The user's word of 10:17 that the simulation arrays on `cfd` and `cpu` will be removed: the snapshot is to be fixed after that (sec. 7). |
 
 Tags: `[LOG D-nnn]` the decision log on `main`; `[CODE SBI@ee8b382 file]` read in the code on `sci/pipeline`; `[BRIEF]` the user's `LindaColloDUP15_SBI_brief.md` (written 2026-11-16 from the ANN repository; attached by the user to the results-commentary chat, not in this repository: ask the user to attach it); `[BENCH]` computed by the results-commentary chat on the synth v4 bundle (`synth_v4_results.tar.gz`), scripts delivered to the user; `[user]`; `[estimate]`; `[reasoning]` not checked.
 
@@ -74,7 +75,7 @@ Results `[CLUSTER, the user's paste of 2026-11-17 09:55, dvlogin02]`:
 |---|---|---|
 | Count | `progress: 442,473 / 1,000,000 (44.2%)   discard rate: 0.28%   total disk: 1.200 TiB`; arrays `1942752[]` (cfd, 192 cores) and `1942753[]` (cpu, 48 cores) in state `B` | still running; the bank is a snapshot, so the count to train on has to be frozen when the bank is built |
 | Axes | 13 active names; 14 swept axes: Sigma (3, 15, lin), gbarA (0.01, 10, log), tauA (10, 2000, log), U_0_ar (1e-4, 0.05, log), U_max (0.1, 1, log), U_0_sr (0.1, 1, log), Omega_f_sr, Omega_f_ar, Omega_d (0.1, 4.5, log), g_ampa, g_nmda (0.01, 10, log), delta_gA (0.005, 10, log), x0 (0.05, 0.5, log), conn_prob (0.01, 0.4, lin) | as the brief says, the launched U_0_sr box [0.1, 1] included; p = 14 confirmed on one task's `job_args.json` (the first sweep folder; the others not read) |
-| `intel` | `resources_max.walltime = 240:00:00`; `max_run_res.ncpus = [u:ldellamea=960]`; enabled and started; no per-job ncpus or mem line | a job may ask at most 240 h: the best fit's 300 h walltime must come down (members resume, block 6); 444 cores fit under the user's 960; whether one node holds 48 cores and 160-200 GB is still not shown (a node listing is needed) |
+| `intel` | `resources_max.walltime = 240:00:00`; `max_run_res.ncpus = [u:ldellamea=960]`; enabled and started; no per-job ncpus or mem line | a job may ask at most 240 h: the best fit's 300 h walltime must come down (members resume, block 6); 444 cores fit under the user's 960; node sizes, from `pbsnodes -a` filtered on `resources_available.tag = intel` (10:18): 82 nodes of 48 cores, 81 with 1007 GB and 1 with 881 GB, so a 48-core job of 160-200 GB fills one node's cores and fits its memory; three arms at three jobs each take 9 whole nodes, and each arm's 4-core sequencer needs a share of another node |
 
 At 442,473 simulations: n_train about 376,100; a 6-pass trial is 8,820 / 4,420 / 2,220 steps at batch 256 / 512 / 1024; a member pass 1,470 steps at batch 256; trial and arm times of sec. 5 scale by about 1.43 (typical trial about 7 h, one arm about 850 h) `[estimate]`.
 
@@ -120,7 +121,8 @@ Numbers are `[BENCH]`; the full reading is D-136's Status and the user's documen
 ## 7. Still needed from the user
 
 - The well-to-donor map of the 35 DUP15HD wells (A5's pairs, D-140). Asked 2026-11-16 and 2026-11-17, not given.
-- The outputs of sec. 4.
+- The outputs of sec. 4: given 2026-11-17 (recorded there).
+- The final simulation count: the user said on 2026-11-17 10:17 that the campaign's arrays on `cfd` and `cpu` will be removed; after that, rebuild the campaign index (a job killed mid-write may leave a truncated file `[reasoning]`) and record the count as the snapshot LindDUP trains on. Not yet done.
 - The calls of sec. 5 (the clock, the three-arm layout, the edge support) and of sec. 6 (the term arms' ranking, the promotion stage).
 - The brief itself, attached to the pipeline chat.
 
