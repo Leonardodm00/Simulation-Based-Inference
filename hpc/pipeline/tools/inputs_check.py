@@ -11,7 +11,19 @@ sim.sim_main (its sweep tasks' job_args.json and manifest.json, the names of
 their iteration files, the modification times of their folders, and the 0-d
 members of at most N raw iteration files, one per topology), the real arm's
 cohort manifest, sim.out_root, and from the Sbi-extractor checkout the S2
-profile and sbi_labels. Writes nothing (but --json).
+profile and sbi_labels. Writes nothing (but --json); its imports from the
+checkouts and the simulator's folder write no bytecode there.
+
+Configuration v11 (block 32; D-143, D-145, D-148): the cohort map
+(real.cohort_map) is read by the Sbi-extractor checkout's own reader,
+export_windows/cohort_map.read_cohort_map (its Block 9), against the cohort
+manifest; every raw topology folder must hold topology_meta.json (the virtual
+MEA stops on the whole task otherwise); with bank.drop_partial_topologies,
+the partial topologies are counted by Sbi-extractor Block 10's rule -- K(t) =
+_resolved_n_workers x n_params_per_worker of the task's job_args.json, f(t, k)
+= the topology's iter_*.json files + the non-blank lines of its
+_failures.jsonl, partial iff f < K, a refusal iff f > K; and a `searches`
+list is named with its core caps.
 
 Every check prints one line, OK / FAIL / WARN / NOTE: a FAIL means a stage
 would refuse, or run on inputs the configuration does not describe; a WARN
@@ -34,9 +46,11 @@ Pure ASCII, LF only; Python 3.6 syntax; numpy.
 """
 
 import argparse
+import contextlib
 import getpass
 import glob
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -61,6 +75,16 @@ SWEEP_RE = re.compile(r"^sweep_[^_]+_task\d+$")
 TOPO_RE = re.compile(r"^topo_(\d+)$")
 ITER_RE = re.compile(r"^iter_(\d+)\.npz$")
 CAMPAIGN_RE = re.compile(r"_v(\d+)$")
+# [block 32] the raw topology's files Sbi-extractor Block 10 counts (f(t, k)) and
+# the metadata the virtual MEA needs (the ANN reply of 2026-11-17, sec. 2.2)
+ITER_JSON_RE = re.compile(r"^iter_(\d+)\.json$")
+TOPOLOGY_META = "topology_meta.json"
+FAILURES = "_failures.jsonl"
+DISPATCH_KEYS = ("_resolved_n_workers", "n_params_per_worker")   # K(t), their product
+# [block 32] Sbi-extractor Block 9's reader of the cohort map, loaded from its file
+COHORT_MAP_REL = ("export_windows", "cohort_map.py")
+COHORT_MAP_MODULE = "sbix_cohort_map"     # the name it is loaded under (never a cached import)
+PULL_BLOCK9 = "the Sbi-extractor checkout has no Block 9: pull it"
 BOX_RTOL = 1e-12            # float64 roundoff on a JSON-read bound (the bank plan's)
 EXIT_FAIL, EXIT_USAGE = 1, 2
 GAP_FILES_CAP = 20000       # iteration files whose times the pace reads, at most
@@ -105,8 +129,11 @@ def scan_campaign(sim_main, campaign_glob):
     """The sweep tasks of the campaigns under sim_main matching the glob.
 
     Each task: campaign, sweep, dir, job_args (dict or None), manifest (dict
-    or None), topo {k: sorted iteration indices}, newest (the latest
-    modification time of the task folder, its topo folders and its JSON)."""
+    or None), topo {k: sorted iteration indices}, raw {k: {"json": the
+    topology's iter_*.json files, "meta": it holds topology_meta.json,
+    "failures": it holds _failures.jsonl}} (block 32, from the same listing),
+    newest (the latest modification time of the task folder, its topo
+    folders and its JSON)."""
     camps = sorted(d for d in glob.glob(os.path.join(sim_main, campaign_glob)) if os.path.isdir(d))
     tasks = []
     for cd in camps:
@@ -117,19 +144,22 @@ def scan_campaign(sim_main, campaign_glob):
             times = [_mtime(td)]
             ja_p, mf_p = os.path.join(td, "job_args.json"), os.path.join(td, "manifest.json")
             times += [_mtime(ja_p), _mtime(mf_p)]
-            topo = {}
+            topo, raw = {}, {}
             for e in sorted(os.listdir(td)):
                 m = TOPO_RE.match(e)
                 p = os.path.join(td, e)
                 if m is None or not os.path.isdir(p):
                     continue
                 times.append(_mtime(p))
-                topo[int(m.group(1))] = sorted(int(m2.group(1)) for m2 in
-                                               (ITER_RE.match(n) for n in os.listdir(p)) if m2)
+                names = os.listdir(p)
+                k = int(m.group(1))
+                topo[k] = sorted(int(m2.group(1)) for m2 in (ITER_RE.match(n) for n in names) if m2)
+                raw[k] = {"json": sum(1 for n in names if ITER_JSON_RE.match(n)),
+                          "meta": TOPOLOGY_META in names, "failures": FAILURES in names}
             tasks.append({"campaign": os.path.basename(cd), "sweep": sw, "dir": td,
                           "job_args": _read_json(ja_p) if os.path.isfile(ja_p) else None,
                           "manifest": _read_json(mf_p) if os.path.isfile(mf_p) else None,
-                          "topo": topo, "newest": max(t for t in times if t is not None)})
+                          "topo": topo, "raw": raw, "newest": max(t for t in times if t is not None)})
     return [os.path.basename(c) for c in camps], tasks
 
 
@@ -251,15 +281,166 @@ def _sha_ok(path):
     return bool(tokens) and tokens[0].lower() == h.hexdigest()
 
 
+@contextlib.contextmanager
+def _no_bytecode():
+    """An import from a checkout or the simulator's folder writes no
+    __pycache__ there: the check reads, never writes (block 9)."""
+    old = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        yield
+    finally:
+        sys.dont_write_bytecode = old
+
+
 def _sbi_labels(sbix_dir):
     """Sbi-extractor's sbi_labels, or (None, the reason)."""
     if sbix_dir not in sys.path:
         sys.path.insert(0, sbix_dir)
     try:
-        import sbi_labels as SL     # noqa: E402
+        with _no_bytecode():
+            import sbi_labels as SL     # noqa: E402
         return SL, None
     except Exception as exc:       # noqa: BLE001 -- reported, never hidden
         return None, "%s: %s" % (type(exc).__name__, exc)
+
+
+# --- block 32: the partial topologies (Sbi-extractor Block 10's rule) ---------
+
+def dispatch_size(job_args):
+    """K(t): the simulations the task dispatched per topology, its job_args'
+    _resolved_n_workers x n_params_per_worker, both positive integers.
+    (K, None), or (None, the reason)."""
+    ja = job_args or {}
+    bad = []
+    for key in DISPATCH_KEYS:
+        v = ja.get(key)
+        if not (isinstance(v, int) and not isinstance(v, bool) and v > 0):
+            bad.append(("%s %r" % (key, v)) if key in ja else ("%s absent" % key))
+    if bad:
+        return None, "job_args.json lacks a positive integer (%s)" % ", ".join(bad)
+    return ja[DISPATCH_KEYS[0]] * ja[DISPATCH_KEYS[1]], None
+
+
+def failure_lines(path):
+    """The non-blank lines of a topology's _failures.jsonl: its runs that
+    ended in a failure, each finished (Block 10). Read as bytes, so a
+    message in any encoding counts as the line it is."""
+    with open(path, "rb") as fh:
+        return sum(1 for line in fh if line.strip())
+
+
+def partial_topologies(tasks):
+    """Sbi-extractor Block 10's rule on the raw tree. For each task with a
+    job_args.json (one without is left out of S2's plan: the `task files`
+    row), K(t) = dispatch_size, and for each topo_<k> f(t, k) = its
+    iter_*.json files + the non-blank lines of its _failures.jsonl (0
+    without the file): partial iff f < K; f > K, or a K that cannot be read,
+    refuses. Returns (partial [(task index, k, f, K)], refusals [text])."""
+    partial, refused = [], []
+    for n, t in enumerate(tasks):
+        if t["job_args"] is None:
+            continue
+        name = "%s/%s" % (t["campaign"], t["sweep"])
+        K, why = dispatch_size(t["job_args"])
+        if why is not None:
+            refused.append("%s: %s" % (name, why))
+            continue
+        for k in sorted(t["raw"]):
+            r = t["raw"][k]
+            f = r["json"]
+            if r["failures"]:
+                path = os.path.join(t["dir"], "topo_%05d" % k, FAILURES)
+                try:
+                    f += failure_lines(path)
+                except OSError as exc:
+                    refused.append("%s: %s" % (path, exc))
+                    continue
+            if f > K:
+                refused.append("%s topo %d: %d finished of %d dispatched (more runs than the task "
+                               "dispatched)" % (name, k, f, K))
+            elif f < K:
+                partial.append((n, k, f, K))
+    return partial, refused
+
+
+# --- block 32: the cohort map (Sbi-extractor Block 9's reader) ------------------
+
+def load_cohort_map(sbix_dir):
+    """Sbi-extractor's export_windows/cohort_map.py, loaded from its file in
+    the checkout paths.sbix_dir names (read again at each call, never a
+    cached import; no bytecode written there). (module, None), or (None,
+    (pull, the reason)): pull True when the checkout has no Block 9."""
+    path = os.path.join(sbix_dir, *COHORT_MAP_REL)
+    if not os.path.isfile(path):
+        return None, (True, "%s absent" % path)
+    for p in (sbix_dir, os.path.dirname(path)):       # its own imports, found as bank_real.py finds them
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    spec = importlib.util.spec_from_file_location(COHORT_MAP_MODULE, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[COHORT_MAP_MODULE] = mod                # a dataclass looks its module up by name
+    try:
+        with _no_bytecode():
+            spec.loader.exec_module(mod)
+    except Exception as exc:       # noqa: BLE001 -- reported, never hidden
+        sys.modules.pop(COHORT_MAP_MODULE, None)
+        return None, (False, "%s cannot be imported: %s: %s" % (path, type(exc).__name__, exc))
+    if not callable(getattr(mod, "read_cohort_map", None)):
+        return None, (True, "%s has no read_cohort_map" % path)
+    return mod, None
+
+
+def check_cohort_map(F, d, man, man_path):
+    """The `cohort map` row: real.cohort_map read by the checkout's own
+    read_cohort_map(path, manifest) against the manifest this check reads
+    (Block 9 holds the rules: the wells, the labels, the refusals, the ids)."""
+    label = "cohort map"
+    path = d["real"]["cohort_map"]
+    if path is None:
+        F.add("NOTE", label, "no cohort map: donor = well")
+        return
+    if not os.path.isfile(path):
+        F.add("FAIL", label, "real.cohort_map %s absent: the real bank (S6) cannot read it" % path)
+        return
+    mod, why = load_cohort_map(d["paths"]["sbix_dir"])
+    if mod is None:
+        F.add("FAIL", label, ("%s (%s)" % (PULL_BLOCK9, why[1])) if why[0] else why[1])
+        return
+    if man is None:
+        F.add("NOTE", label, "%s absent: nothing to check the map %s against (S1 writes the manifest)"
+              % (man_path, path))
+        return
+    try:
+        cm = mod.read_cohort_map(path, man)
+    except NotImplementedError:
+        F.add("FAIL", label, "%s (%s: read_cohort_map raises NotImplementedError)"
+              % (PULL_BLOCK9, os.path.join(d["paths"]["sbix_dir"], *COHORT_MAP_REL)))
+        return
+    except Exception as exc:       # noqa: BLE001 -- reported, never hidden
+        err = getattr(mod, "CohortMapError", None)
+        own = isinstance(err, type) and isinstance(exc, err)
+        F.add("FAIL", label, "%s -- the real bank (S6) refuses this map"
+              % (str(exc) if own else "%s: %s" % (type(exc).__name__, exc)))
+        return
+    try:
+        wells = man["wells"]
+        per = {}
+        for i in sorted(cm.donor_of):           # the included wells, by manifest index
+            c = str(wells[i]["out_dir"]).replace(os.sep, "/").split("/")[0]   # bank_real.py's class
+            per[c] = per.get(c, 0) + 1
+        classes = [str(c) for c in (man.get("classes") or [])]
+        order = classes + sorted(c for c in per if c not in classes)
+        text = ("%d wells, %d excluded; %d donors; %d pairing groups; included per class %s (%s, "
+                "sha256 %s)" % (len(wells), len(cm.excluded), len(cm.donor_labels),
+                                len(cm.rep_group_labels),
+                                ", ".join("%s:%d" % (c, per.get(c, 0)) for c in order),
+                                path, str(cm.sha256)[:16]))
+    except (AttributeError, KeyError, IndexError, TypeError) as exc:
+        F.add("FAIL", label, "read_cohort_map returned %s, not Block 9's CohortMap: %s: %s"
+              % (type(cm).__name__, type(exc).__name__, exc))
+        return
+    F.add("OK", label, text)
 
 
 def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
@@ -338,6 +519,34 @@ def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
     jas = [t["job_args"] for t in tasks if t["job_args"] is not None]
     mfs = [t["manifest"] for t in tasks if t["manifest"] is not None]
 
+    # --- block 32: the raw topologies (S2's metadata; the bank plan's partial rule) ---
+    no_meta = [os.path.relpath(os.path.join(t["dir"], "topo_%05d" % k), s["sim_main"])
+               for t in tasks for k in sorted(t["raw"]) if not t["raw"][k]["meta"]]
+    if no_meta:
+        F.add("FAIL", "topology metadata", "%d topology folder(s) without %s: %s%s -- move them out of "
+              "their sweep folder before S2: the virtual MEA stops on the whole task (ANN reply "
+              "2026-11-17, sec. 2.2)" % (len(no_meta), TOPOLOGY_META, ", ".join(no_meta[:10]),
+                                        " ..." if len(no_meta) > 10 else ""))
+    elif tasks:
+        F.add("OK", "topology metadata", "every topology folder (%d) holds %s" % (n_topo, TOPOLOGY_META))
+    if not b["drop_partial_topologies"]:
+        F.add("NOTE", "partial topologies", "not checked (drop_partial_topologies false)")
+    elif tasks:
+        partial, refused = partial_topologies(tasks)
+        if refused:
+            more = (" ... (%d in all)" % len(refused)) if len(refused) > 5 else ""
+            F.add("FAIL", "partial topologies", "the bank plan refuses (Sbi-extractor Block 10, "
+                  "drop_partial_topologies true): %s%s" % ("; ".join(refused[:5]), more))
+        else:
+            first = ["%s/%s topo %d: %d of %d" % (tasks[n]["campaign"], tasks[n]["sweep"], k, f, K)
+                     for n, k, f, K in partial[:5]]
+            F.add("NOTE", "partial topologies", "%d partial topologies in %d task(s), %d simulations: "
+                  "the bank plan drops them whole%s"
+                  % (len(partial), len(set(n for n, _k, _f, _K in partial)),
+                     sum(len(tasks[n]["topo"][k]) for n, k, _f, _K in partial),
+                     (" -- %s%s" % (", ".join(first), " ..." if len(partial) > 5 else ""))
+                     if partial else ""))
+
     # --- simtime and the window ------------------------------------------------
     simtimes = _single([ja.get("simtime") for ja in jas])
     if len(simtimes) == 1 and _finite(simtimes[0]) and float(simtimes[0]) == float(b["t_win_s"]):
@@ -380,8 +589,9 @@ def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
         else:
             F.add("FAIL", "n_e", "bank.n_e %r, the manifest's electrodes_per_subset %r"
                   % (b["n_e"], eps))
+    check_cohort_map(F, d, man, man_path)                      # block 32
 
-    # --- the label's width and the O_N box -------------------------------------
+    # --- the label's width and the on-axis box ----------------------------------
     actives = _single([m.get("active_indices") for m in mfs])
     sa = d["search"]["shape_anchors"]
     if len(actives) == 1 and isinstance(actives[0], list):
@@ -588,7 +798,8 @@ def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
     widths = _single([len(m.get("param_names") or []) for m in mfs])
     if SL is not None:
         try:
-            reg = SL.load_registry(s["sim_main"])
+            with _no_bytecode():
+                reg = SL.load_registry(s["sim_main"])
             n = len(reg.param_names)
             if widths == [n]:
                 F.add("OK", "registry", "%d axes in %s, as the manifests' param_names" % (n, s["sim_main"]))
@@ -598,6 +809,21 @@ def run_checks(cfg, max_files, quiet_hours, use_qstat, out=None):
         except Exception as exc:   # noqa: BLE001 -- reported, never hidden
             F.add("NOTE", "registry", "load_registry(%s) failed: %s: %s"
                   % (s["sim_main"], type(exc).__name__, exc))
+
+    # --- block 32: the searches of a v11 list and their core caps (block 29) ----------
+    qs = d.get("searches")
+    if isinstance(qs, list):
+        caps = [q["max_cores"] for q in qs if q["max_cores"] is not None]
+        free = len(qs) - len(caps)
+        F.add("NOTE", "searches", "%d search(es): %s; the caps add up to %d cores against "
+              "resources.max_cores %d (the sequencer's job takes %d of them)%s"
+              % (len(qs), "; ".join("%s: %s, %s" % (q["name"], q["campaign"],
+                                                    ("max_cores %d" % q["max_cores"])
+                                                    if q["max_cores"] is not None
+                                                    else "no cap of its own") for q in qs),
+                 sum(caps), d["resources"]["max_cores"], d["driver"]["ncpus"],
+                 ("; %d search(es) without a cap of their own: the project's cap only" % free)
+                 if free else ""))
 
     # --- size and the queue ------------------------------------------------------
     if W:
