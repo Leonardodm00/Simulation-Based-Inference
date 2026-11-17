@@ -71,6 +71,26 @@ Checks (specs/SPEC.md block 2, "Test oracles")
                         in process, the array waits while its gate does not
                         fit, and a cap that can never hold the gate stops
                         the stage at its start
+    test_test_task      contract amendment 4, the test task is the plan's
+                        first task with simulations: in process (plans
+                        written here, the launcher's calls recorded) a plan
+                        whose task 0 holds none gives `test` and `array`
+                        TEST_INDEX 1, the log bank_test_1.log, the record
+                        `bank test task 1`, the skip rule on task_0001.json
+                        (task 0's marker does not skip it); a plan whose
+                        every task holds 0, or that cannot be read, stops
+                        the stage at its start with its line, before any
+                        launcher call; every task holding simulations gives
+                        the arguments and lines of before (TEST_INDEX 0);
+                        the dry run names the rule. Through the sequencer,
+                        a plan of record whose every task holds 0, or that
+                        cannot be read: STOP with the line, exit 3, no job.
+                        End to end on the stand-in, task 0's topologies
+                        partial with drop_partial_topologies true: the plan
+                        gives task 0 n_iters 0, the test job TASK_INDEX 1
+                        and its log bank_test_1.log, WALLTIME=auto from
+                        task 1's pace, VERIFIED; a retry with task 0's
+                        marker moved out skips the test on task_0001.json
 
 Run
     python3 hpc/pipeline/tests/test_smoke_block2.py
@@ -729,6 +749,66 @@ class _FakeSub(object):
         return job_id
 
 
+class _RecSub(_FakeSub):
+    """_FakeSub that keeps what the stage records of a launcher's jobs: (job
+    id, role, log path)."""
+
+    def __init__(self, running=()):
+        _FakeSub.__init__(self, running)
+        self.records = []
+
+    def record(self, job_id, role, cmd, log_path=None, **kw):
+        self.records.append((job_id, role, log_path))
+
+
+def _plan_with(path, n_iters):
+    """A plan JSON at `path` whose tasks hold `n_iters` simulations each (the
+    stage reads `tasks[].n_iters`; Sbi-extractor's plan holds more per task);
+    returns its sha256, which a marker of this plan carries."""
+    tasks = [{"name": "campaign_x/sweep_task%04d" % i, "n_iters": int(n),
+              "shards": [{"shard": i, "start": 0, "stop": int(n)}]} for i, n in enumerate(n_iters)]
+    with open(path, "w") as fh:
+        json.dump({"tasks": tasks, "n_rows": int(sum(n_iters))}, fh, indent=1, sort_keys=True)
+    return _sha(path)
+
+
+def _write_marker(bank, index, plan_sha):
+    """Task `index`'s completion marker, of the plan whose sha256 is `plan_sha`."""
+    os.makedirs(os.path.join(bank, "tasks"), exist_ok=True)
+    with open(_marker(bank, index), "w") as fh:
+        json.dump({"plan_sha256": plan_sha, "finished": "2026-11-17T15:00:00+01:00"}, fh)
+
+
+def _partial_task0(s, workers=2, per_worker=3):
+    """Sbi-extractor Block 10's inputs on the stand-in's raw tree, so that the
+    real plan tool gives task 0 no simulation: every task's job_args.json
+    dispatches K = workers x per_worker runs per topology; every raw
+    iteration file gets its `iter_<i>.json` sidecar; the topologies of tasks
+    1 and 2 are completed with `_failures.jsonl` lines (f = K), task 0's are
+    left partial (its 5, 4 and 2 runs of 6); `bank.drop_partial_topologies`
+    true in the configuration."""
+    k_dispatched = int(workers) * int(per_worker)
+    for n, t in enumerate(s.ds["fixture"]["tasks"]):
+        ja = os.path.join(t["campaign_dir"], "job_args.json")
+        d = json.load(open(ja))
+        d.update(_resolved_n_workers=int(workers), n_params_per_worker=int(per_worker))
+        with open(ja, "w") as fh:
+            json.dump(d, fh, indent=2, sort_keys=True)
+        for topo in sorted(glob.glob(os.path.join(t["campaign_dir"], "topo_*"))):
+            iters = sorted(glob.glob(os.path.join(topo, "iter_*.npz")))
+            assert 0 < len(iters) < k_dispatched or (n > 0 and len(iters) == k_dispatched), (topo, iters)
+            for p in iters:
+                with open(p[:-len(".npz")] + ".json", "w") as fh:
+                    json.dump({"iter": os.path.basename(p)}, fh)
+            if n > 0:
+                with open(os.path.join(topo, "_failures.jsonl"), "w") as fh:
+                    for j in range(k_dispatched - len(iters)):
+                        fh.write(json.dumps({"iter_idx": 900 + j, "error_msg": "synthetic"}) + "\n")
+    s.cfg["bank"]["drop_partial_topologies"] = True
+    with open(s.path, "w") as fh:
+        json.dump(s.cfg, fh, indent=1, sort_keys=True)
+
+
 def _in_process():
     """A stand-in, its configuration loaded, its log folder, a stand-in plan."""
     s = Standin()
@@ -1234,6 +1314,187 @@ def test_cores():
         s.close()
 
 
+def test_test_task():
+    """Contract amendment 4: the test task is the plan's first task with
+    simulations, TEST_INDEX of `test` and `array` alike."""
+    import stages.bank as B
+    # (1) in process, plans written here, the launcher's calls recorded
+    s, cfg, logdir = _in_process()
+    saved = os.environ.get("PIPELINE_LOG_GRACE_S")
+    os.environ["PIPELINE_LOG_GRACE_S"] = "3600"
+    try:
+        stage = B.SimBankStage()
+        calls = []
+        outputs = {"test": "  job   : 71.fake\n",
+                   "array": "# tasks       : 3  (8 simulations); largest: x\n  job   : 72[].fake\n"
+                            "  gate  : 73.fake\n"}
+
+        def launcher(c, mode, log_path, **extra):
+            calls.append((mode, dict(extra)))
+            return 0, outputs[mode]
+        stage._run_launcher = launcher
+
+        def test_log(i):
+            return os.path.join(logdir, "bank_test_%d.log" % i)
+
+        def array_args(i):
+            """The array's launcher variables (the stand-in's walltime and concurrency)."""
+            return {"WALLTIME": "00:30:00", "TEST_INDEX": str(i), "CONCURRENCY": "20"}
+
+        def started(sub):
+            """A fresh stage started on the plan at s.plan; returns its state."""
+            del calls[:]
+            st = {"jobs": [], "sub": {}}
+            stage.start(cfg, st, sub)
+            return st
+
+        def test_ends(st, sub, i, plan_sha=None):
+            """The test job ends, its log saying TASK <i> OK; with `plan_sha`, its
+            marker (of that plan) is there too. Returns the poll's answer."""
+            st["jobs"] = [{"id": st["sub"]["test_job"], "role": "t", "finished": False}]
+            with open(test_log(i), "w") as fh:
+                fh.write("TASK %d OK\n[job] bank_task_exit=0 finished=x\n" % i)
+            if plan_sha is not None:
+                _write_marker(s.bank, i, plan_sha)
+            del calls[:]
+            return stage.poll(cfg, st, sub)
+
+        # the function: the smallest index whose n_iters is above 0
+        for n_iters, want in (([0, 0, 7, 0], 2), ([4], 0), ([3, 5, 2], 0), ([0, 5, 3], 1)):
+            _plan_with(s.plan, n_iters)
+            assert B.first_task_with_simulations(s.plan) == (want, None), (n_iters, want)
+        # (a) task 0 holds no simulation: test and array get TEST_INDEX 1
+        sha = _plan_with(s.plan, [0, 5, 3])
+        sub = _RecSub()
+        st = started(sub)
+        assert calls == [("test", {"TEST_INDEX": "1"})], calls
+        assert sub.records == [("71.fake", "bank test task 1", test_log(1))], sub.records
+        assert st["sub"]["test_index"] == 1 and st["sub"]["test_log"] == test_log(1), st["sub"]
+        assert st["sub"]["phase"] == "test", st["sub"]
+        # ... a marker of task 0 (an empty task's, as its array element writes) is not
+        #     the test task's: the test is not skipped
+        _write_marker(s.bank, 0, sha)
+        st0 = started(_RecSub())
+        assert calls == [("test", {"TEST_INDEX": "1"})] and st0["sub"]["phase"] == "test", calls
+        # ... nor does it pass the test job, which waits for its own marker
+        assert test_ends(st, sub, 1) == "running" and calls == [], (calls, sub.lines)
+        # ... task 1's marker passes the test; the array gets TEST_INDEX 1
+        assert test_ends(st, sub, 1, sha) == "running", st["sub"]
+        assert calls == [("array", array_args(1))], calls
+        assert "sim_bank: test task passed: TASK 1 OK (its marker is this plan's)" in sub.lines, sub.lines
+        assert [r[1] for r in sub.records[1:]] == ["bank array", "bank gate"], sub.records
+        # ... the skip rule reads task_0001.json: with it and without task 0's marker, skipped
+        os.remove(_marker(s.bank, 0))
+        sub = _RecSub()
+        st = started(sub)
+        assert "sim_bank: the test task's marker belongs to this plan: test skipped" in sub.lines, sub.lines
+        assert calls == [("array", array_args(1))] and st["sub"]["test_skipped"], calls
+        # ... a state written before the amendment (no test_index): the array reads the plan
+        st = {"jobs": [], "sub": {"phase": "test", "round": 0}}
+        del calls[:]
+        stage._start_array(cfg, st, _RecSub())
+        assert calls == [("array", array_args(1))] and st["sub"]["test_index"] == 1, (calls, st["sub"])
+        # (b) a plan whose every task holds 0, or that cannot be read: the stage stops
+        #     at its start with the line, before any job
+        cases = [([0, 0, 0], "the bank plan %s has no task with simulations" % s.plan),
+                 ([], "the bank plan %s has no task with simulations" % s.plan),
+                 ('{"tasks": [{"n_iters": 0}, {"name": "x"}, {"n_iters": 4}]}',
+                  "the bank plan %s cannot be read: task 1 has n_iters None, not an integer" % s.plan),
+                 ('{"plan": "no tasks"}',
+                  "the bank plan %s cannot be read: its tasks are absent, not a list" % s.plan),
+                 ("{not json", "the bank plan %s cannot be read: JSONDecodeError: " % s.plan),
+                 (None, "the bank plan %s cannot be read: FileNotFoundError: " % s.plan)]
+        for body, line in cases:
+            if isinstance(body, list):
+                _plan_with(s.plan, body)
+            elif body is None:
+                os.remove(s.plan)
+            else:
+                with open(s.plan, "w") as fh:
+                    fh.write(body)
+            sub = _RecSub()
+            st = started(sub)
+            assert calls == [] and sub.records == [] and sub.submitted == [], (body, calls, sub.records)
+            assert st["sub"]["fail"].startswith(line) and st["sub"]["phase"] == "failed", (body, st["sub"])
+            assert stage.poll(cfg, st, sub) == "finished" and calls == [], body
+            ok, why = stage.verify(cfg, st)
+            assert not ok and why == st["sub"]["fail"], (ok, why)
+        # (c) every task holds simulations: every argument and line as before (TEST_INDEX 0)
+        sha = _plan_with(s.plan, [3, 5, 2])
+        sub = _RecSub()
+        st = started(sub)
+        assert calls == [("test", {"TEST_INDEX": "0"})], calls
+        assert sub.records == [("71.fake", "bank test task 0", test_log(0))], sub.records
+        assert test_ends(st, sub, 0, sha) == "running" and calls == [("array", array_args(0))], calls
+        assert "sim_bank: test task passed: TASK 0 OK (its marker is this plan's)" in sub.lines, sub.lines
+        sub = _RecSub()
+        st = started(sub)
+        assert "sim_bank: the test task's marker belongs to this plan: test skipped" in sub.lines, sub.lines
+        assert calls == [("array", array_args(0))], calls
+        # the dry run, before any plan: the test task named by its rule
+        line = [l for l in stage.dry_run(cfg, {}) if l.startswith("test (")][0]
+        assert ("tasks/task_<iiii>.json belongs to the plan" in line
+                and "TEST_INDEX=<the plan's first task with simulations> bash %s/export_windows/"
+                    "launch_bank.sh test" % s.sbix in line and "TASK <i> OK" in line), line
+    finally:
+        if saved is None:
+            os.environ.pop("PIPELINE_LOG_GRACE_S", None)
+        else:
+            os.environ["PIPELINE_LOG_GRACE_S"] = saved
+        s.close()
+    # (2) end to end on the stand-in (the real plan tool, launcher and tasks, the fake
+    #     PBS): task 0's topologies partial with drop_partial_topologies true
+    s = Standin(bank_walltime="auto")
+    try:
+        # first, through the sequencer: a plan of record (its sidecar matches: S4 skipped)
+        # whose every task holds 0, or that cannot be read -> STOP at S5's start, no job
+        for body, line in (([0, 0, 0], "has no task with simulations"),
+                           ("{not json", "cannot be read: JSONDecodeError: ")):
+            os.makedirs(os.path.dirname(s.plan), exist_ok=True)
+            if isinstance(body, list):
+                _plan_with(s.plan, body)
+            else:
+                with open(s.plan, "w") as fh:
+                    fh.write(body)
+            with open(s.plan + ".sha256", "w") as fh:
+                fh.write("%s  bank_plan.json\n" % _sha(s.plan))
+            rc, out = s.run([], timeout=300)
+            assert rc == 3 and "bank_plan: skipped, artefact of record exists" in out, out
+            assert "STOP: stage sim_bank failed: the bank plan %s %s" % (s.plan, line) in out, out
+            assert s.n_submitted() == 0 and "real_bank:" not in out, out
+            os.remove(os.path.join(s.cfg["paths"]["work_root"], "state.json"))
+        for f in (s.plan, s.plan + ".sha256"):
+            os.remove(f)
+        _partial_task0(s)
+        rc, out = s.run([], timeout=900)
+        assert rc == 0 and "PIPELINE DONE" in out and "sim_bank: VERIFIED:" in out, out
+        plan = json.load(open(s.plan))
+        n_iters = [t["n_iters"] for t in plan["tasks"]]
+        assert n_iters[0] == 0 and min(n_iters[1:]) > 0, n_iters
+        assert [p["topo"] for p in plan["tasks"][0]["partial_topos"]] == [0, 1, 2], plan["tasks"][0]
+        assert "sim_bank: recorded bank test task 1 -> " in out, out
+        assert "sim_bank: test task passed: TASK 1 OK" in out, out
+        assert ("sim_bank: [launch] WALLTIME=auto: test task 1 read %d simulations" % n_iters[1]) in out, out
+        tests = [r for r in s.jobs() if r["name"] == "bank_test"]
+        assert len(tests) == 1 and tests[0]["vars"]["TASK_INDEX"] == "1", tests
+        assert tests[0]["out"] == os.path.join(s.sbix, "export_windows", "synth", "logs", "bank_test_1.log")
+        assert "TASK 1 OK" in open(tests[0]["out"]).read()
+        assert [r["name"] for r in s.jobs()] == ["bank_test", "bank_task", "bank_gate", "bank_verify"]
+        # the skip rule reads task_0001.json: the certificate removed and task 0's marker
+        # moved out of the bank; a retry skips the test, the array writes task 0's again
+        _remove_certificate(s.bank)
+        shutil.move(_marker(s.bank, 0), os.path.join(s.root, "task_0000.json.moved"))
+        n0 = s.n_submitted()
+        rc, out2 = s.run(["--retry", "sim_bank"], timeout=900)
+        assert rc == 0 and "PIPELINE DONE" in out2 and "sim_bank: VERIFIED:" in out2, out2
+        assert "sim_bank: the test task's marker belongs to this plan: test skipped" in out2, out2
+        assert "recorded bank test task" not in out2, out2
+        assert [r["name"] for r in s.jobs()][n0:] == ["bank_task", "bank_gate", "bank_verify"], s.jobs()
+        assert os.path.isfile(_marker(s.bank, 0))
+    finally:
+        s.close()
+
+
 # ------------------------------------------------------------------ main ---
 
 CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_reference),
@@ -1243,7 +1504,7 @@ CHECKS = [("test_known_answer", test_known_answer), ("test_reference", test_refe
           ("test_dropped_gate", test_dropped_gate), ("test_healing", test_healing),
           ("test_log_timing", test_log_timing), ("test_decisions", test_decisions),
           ("test_env_faults", test_env_faults), ("test_env_decisions", test_env_decisions),
-          ("test_cores", test_cores)]
+          ("test_cores", test_cores), ("test_test_task", test_test_task)]
 
 
 def main():
