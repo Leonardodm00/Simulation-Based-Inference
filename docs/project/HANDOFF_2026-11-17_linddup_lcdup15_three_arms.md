@@ -14,6 +14,7 @@ Tags: `[LOG D-nnn]` the decision log on `main`; `[CODE SBI@ee8b382 file]` read i
 | 2026-11-17 | v8. The user's messages of 12:11 and 12:17: the A5 pair is settled (D-146) -- two subregion windows of one batch, the batch being `Batch3` / `Batch4` within a condition (four groups: C-Batch3 5 wells, C-Batch4 12, P-Batch3 12, P-Batch4 1); within-well pairs are included, so the runner's refusal of them (D-118 Status) has to go. To build here: the pairing level as a configuration value (well, plate folder, batch), set to batch; and a check on the A1 fit before A5's search -- the summaries' distance over within-well pairs against across-well pairs of one batch (map sec. 4b). v7's open point on the pair is closed. |
 | 2026-11-17 | v9. The user's message of 12:24 (D-147): v8's check on the A1 fit before A5's search is dropped -- the three arms are searched and fitted side by side, A5 not waiting for A1; an A5 pair is two distinct windows drawn uniformly at random within its group (condition x batch; any well, subregion and 180 s). With 54 windows per well (9 subregions x 6 windows, the 6 assumed), about 8 % of the pairs fall inside one well in the 12-well groups, 20 % in C-Batch3, all in P-Batch4 (map sec. 4b). Sec. 5 and 7 updated. |
 | 2026-11-17 | v10. The build of D-148 is done, checked and pushed. SBI `sci/pipeline` `7ba708f` and Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`. Wave W3 (SBI blocks 29-32, Sbi-extractor Blocks 9-10) and the final checks' fix round are in new sec. 9. The davinci run sheet is SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms -- the first submission" (N1-N9; at `54edb32` its N3 also runs the reset and identity suites, a README-only commit). Sec. 5's open items are marked settled where D-148..D-150 settled them. Nothing has run on davinci yet. |
+| 2026-11-17 | v11. The user's paste of 18:52 Europe/Rome from `dvlogin04` `[CLUSTER, the user's paste]`. It ran the listing line sent mid-build, the earlier form of N4. The campaign's arrays `1942752[]` (cfd, 192 cores) and `1942753[]` (cpu, 48 cores) were still queued, state B, named `lcdup_cam*`. There were 5,673 topology folders and 0 without `topology_meta.json`. Sec. 9 is updated. The lines are to run on 2026-11-18; a reminder is set for 09:00. |
 
 ## 1. The task
 
@@ -196,6 +197,19 @@ The order of the stages, and what to expect at each:
 3. S3: the freeze, p = 14.
 4. S4-S6: the banks.
 5. The three searches start together, with 3 jobs of 48 cores each, and no clock cap.
+
+### The campaign at 18:52 (`[CLUSTER, the user's paste]`)
+
+- The campaign's arrays were still in the queue, in state B (some subjobs running):
+  - `1942752[]`, cfd, `lcdup_cam*`, 192 cores;
+  - `1942753[]`, cpu, `lcdup_cam*`, 48 cores.
+  So the campaign is still being written. The user's plan of 10:17 was to remove them (v3).
+- There were 5,673 topology folders, and none without `topology_meta.json`.
+- The npz files without their json were not counted: that is N4's check, which the earlier line lacked.
+- If the arrays are deleted (`qdel 1942752[] 1942753[]`), the kill can leave:
+  - partial topologies, which the bank drops (D-143);
+  - simulation files without their json, possibly truncated. N4 lists them and N5 sets them aside.
+- Running the lines 6 h or more after the kill puts every task past S2's quiet rule (D-112), so its first round plans them all `[reasoning]`.
 
 ### Still open
 
