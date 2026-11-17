@@ -52,6 +52,7 @@
 | 2026-10-15 | v1.59. D-086 (the B5 chat, 11:44, `[user]`): `head_pool_ops` becomes a searched axis of the Giulia search (code 0 = mean, code 1 = mean, max and std per encoder stage), replacing for that search the space's fixed code 1 that no flag carried to the runner (F-b). Status lines: D-038 (its `head_pool_ops` fix takes the searched code in the Giulia search), D-085 (config v1 amended: `space_overrides` gains the axis). Index: D-086 added; D-085's cell. Open calls: D-038's open parts annotated; the F-s row's annotation of 2026-10-14 corrected (49-215 M parameters at depth 6, not 74-215 M; the error announced in the pipeline plan v1.2, sec. 4b). Read before this write (a full read to a file: v1.58 of 2026-10-14, unchanged). Next free number D-087. |
 | 2026-10-15 | v1.60. D-087 and D-088 (the B5 chat, 12:44, `[user]`). D-087: the joint loop's early-stopping margin, 1e-6 nats per row, stays as the code has it -- inert, no calibrated threshold for the NLL (the user's answer to Claude's report of 12:27 that no reason for the value is recorded). D-088: the user's values for the Giulia search and best fit -- the split 85/10/5 by donor, 48 cores per trial, one best-fit seed for now, 50 initial points, 20 GP rounds of 10, 20 epochs per trial; config v2 (`giulia.json`) sent. Status lines: D-085 (amended by D-088), D-086 (its open `n_initial_points` settled by D-088). Index: D-087, D-088 added; D-085's cell. Read before this write (a full read to a file: v1.59 of this morning, unchanged). Next free number D-089. |
 | 2026-10-15 | v1.61. D-089 (the B5 chat, 12:56, `[user]`): the finalist is fitted as an ensemble of M_ens = 10 independent (encoder, flow) pairs, combined as the uniform mixture -- the joint plan's Stage 4 ensemble (5 members, D7), never built in the joint driver (F-ap), at 10. Claude's reading, to confirm: the ten members share one donor split (D-088's "one seed"). Config v3 (`giulia.json`) sent; the build moves to a new chat, `claude/HANDOFF_2026-10-15_giulia_pipeline_build.md`. Status line: D-088 ((3) read with D-089). Index: D-089 added; D-088's cell. Read before this write (a full read to a file: v1.60 of 12:44, unchanged). Next free number D-090. |
+| 2026-11-17 | v1.147. Four new decisions (the results-commentary chat, the user's message of 12:33 Europe/Rome and the card answered at about 13:05): D-148 (implement LindDUP's decisions and make the new features the pipeline's standard; the build plan approved), D-149 (A2's and A5's term weights searched as now, log10 lambda in [-3, 1], ranked on the simulated NLL), D-150 (no clock cap on LindDUP's searches: `max_total_walltime_h` null; the user stops a search by hand), D-151 (Claude pushes to Sbi-extractor directly; D-062's laptop route ends for that repository). Index: D-148..D-151 added; D-062's and D-141's cells annotated. |
 | 2026-11-17 | v1.146. One new decision (the results-commentary chat, the user's message of 12:24 Europe/Rome): D-147 (no check gates arm A5 -- D-146's comparison on the A1 fit is dropped and the three arms run side by side; an A5 pair is two distinct real windows drawn uniformly at random within its group). Evidence for its Implies: `[verified by running it]` an exact count against a Monte Carlo check (`pair_mix.py`, delivered, not committed). `LINDDUP_RECORDINGS_MAP.md` v5, the handoff v9. Index: D-147 added; D-146's cell annotated. |
 | 2026-11-17 | v1.145. One new decision (the results-commentary chat, the user's messages of 12:11 and 12:17 Europe/Rome): D-146 (an A5 replicate pair is two subregion windows of one batch, the batch being `Batch3` / `Batch4` within a condition; the level a configuration value; a check on the A1 fit before A5's search). It revises D-140's "two wells of one donor" and narrows D-144's reading. `LINDDUP_RECORDINGS_MAP.md` v4 (sec. 4b), its CSV, the handoff v8. Index: D-146 added; D-140's and D-144's cells annotated. v1.144's open call on the pair is closed. |
 | 2026-11-17 | v1.144. One new decision (the results-commentary chat, the user's message of 11:51 Europe/Rome): D-145 (the five copied wells of `DATA_P/Batch4` are left out of LindDUP's real data; the user's "Perfect" on Claude's recommendation). Status: D-142, the move ran -- the user, on the four commands: "This worked" `[user; the commands' output not pasted]`. Open calls: which rows form an A5 replicate pair -- the user leans to pairs within a well, across its subregions ("what do you think?"); Claude's reply recommends within-well pairs; not decided; it would revise D-140's "two wells of one donor". `LINDDUP_RECORDINGS_MAP.md` v3, the handoff v7. Index: D-145 added; D-142's cell. |
@@ -247,7 +248,7 @@ point to where.
 | D-059 | 2026-10-03 | v10-v12 go together with v1-v9: C8 re-detects all 253 tasks over the mixed label contract | active; one task left out of the first run (D-060) |
 | D-060 | 2026-10-03 | C8 runs now over the finished simulations; a v12 task still simulating is left out by name | active; its left-out task goes into the re-run (D-068, 2026-10-06); its account of what the gate checks corrected (2026-10-07) |
 | D-061 | 2026-10-03 | C8 does not re-detect a task that replays another task's seed (DUP15HD) | active; the gate built 2026-10-05 (D-063, D-064; patch v2) and on GitHub since 14:38 (`a8e9a43`); plan verified on the real data (S7y, 15:10); array run; gate REFUSED 17 of 93 tasks (2026-10-06 07:16), Stage C open; the re-run's gate REFUSED 1 of 95 (`v12/sweep_cfd_task0011`, 2026-10-06 21:42); the record written 2026-10-07 13:11 (94 tasks) |
-| D-062 | 2026-10-05 | Claude may push to Simulation-Based-Inference directly; Sbi-extractor and Astro-Neuron-Network are not covered (as read) | active as a permission; not yet effective in the C8 chat's session (dry-run push refused 2026-10-05) |
+| D-062 | 2026-10-05 | Claude may push to Simulation-Based-Inference directly; Sbi-extractor and Astro-Neuron-Network are not covered (as read) | active as a permission; not yet effective in the C8 chat's session (dry-run push refused 2026-10-05) [2026-11-17: for Sbi-extractor superseded by D-151 -- Claude pushes there directly] |
 | D-063 | 2026-10-05 | The replay gate keeps the copy with the most iterations; theta and params compared at 10 shared files per pair | active; built (patch v2 since D-064), on GitHub (`a8e9a43`); the test task moved aside (M1) |
 | D-064 | 2026-10-05 | One task per seed: a replay that only overlaps the kept copy is dropped too, with the files only it holds | active; built (patch v2), on GitHub (`a8e9a43`); fired once on the real data (1 file lost) |
 | D-065 | 2026-10-06 | After the C8 record: delete the old extractions of what is re-extracted (and of the Giulia recordings) and the duplicates' raw simulations; list, then delete | done 2026-10-07 (C2: 376 folders) |
@@ -326,13 +327,17 @@ point to where.
 | D-138 | 2026-11-16 | LindDUP's simulated arm is the campaign `lcdup15_rho1300_neur_n01` (neurons only; 13 free axes plus `conn_prob`, p = 14; 180 s), replacing the MEAMA campaign completely for this project | active; the configuration and the tools' check of the new campaign to build (the LindDUP chat); supersedes D-104's simulated arm, and D-107 and D-112 for LindDUP |
 | D-139 | 2026-11-16 | LindDUP trains on `lcdup15_rho1300_neur_n01` (n01) as it is, with its seed defect (one in-simulation noise seed and one bias pattern for every simulation) | active; a caveat on every LindDUP result |
 | D-140 | 2026-11-16 | LindDUP searches and fits arms A2 and A5 as well as A1; A5's replicate pair is two wells of one donor | active; the well-to-donor map of the DUP15HD cohort not yet given; supersedes D-106's "A1 only" [2026-11-17: the user pointed to the `Deep_bio/` tree; it gives condition, batch, sub-batch, well and no donor -- `docs/project/LINDDUP_RECORDINGS_MAP.md` sec. 4; which unit is the donor still to be said] [2026-11-17 11:14: said -- the condition, D-144] [2026-11-17 12:17: the A5 pair is revised by D-146 -- subregions of one batch] |
-| D-141 | 2026-11-16 | LindDUP's three searches and best fits use Giulia's optimisation and training values; the user will look at interim results and may stop a search early and fit the best configurations reached; cores on the `intel` queue, 120 per arm proposed by the user | active; 148 cores per arm, three 48-core jobs beside the sequencer's 4 (the user, 18:29; v1.140); supersedes D-109's 200 on `cpu` |
+| D-141 | 2026-11-16 | LindDUP's three searches and best fits use Giulia's optimisation and training values; the user will look at interim results and may stop a search early and fit the best configurations reached; cores on the `intel` queue, 120 per arm proposed by the user | active; 148 cores per arm, three 48-core jobs beside the sequencer's 4 (the user, 18:29; v1.140); supersedes D-109's 200 on `cpu` [2026-11-17: the clock -- no cap, D-150] |
 | D-142 | 2026-11-17 | The DUP15HD recordings `DATA_C` / `DATA_P` move from `Deep_bio/` into the LindDUP project folder, `LindaColloDUP/recordings/`; symlinks stay at the old paths; `extracted_v2` stays | done 2026-11-17 (the user, 11:51: "This worked") |
 | D-143 | 2026-11-17 | In `lcdup15_rho1300_neur_n01`, a topology cut short by a kill is dropped whole | active; to build (the LindDUP pipeline chat) |
 | D-144 | 2026-11-17 | The donor of a DUP15HD well is its condition: two donors (control, DUP); batches, sub-batches and wells are replicates within a donor | active; to build (the LindDUP pipeline chat) [2026-11-17 12:17: the A5 pair is revised by D-146 -- subregions of one batch] |
 | D-145 | 2026-11-17 | The five wells of `DATA_P/Batch4` that are copies of `DATA_P/Batch3/SubBatch1`'s (A2, A3, B1, B2, B3) are left out of LindDUP's real data: 30 wells, 17 control and 13 DUP | active; to build (the LindDUP pipeline chat) |
 | D-146 | 2026-11-17 | An A5 replicate pair is two subregion windows of one batch (`Batch3` / `Batch4` within a condition: four groups), within-well pairs included; the pairing level is a configuration value (well, plate folder, batch) set to batch; before A5's search the A1 fit's summaries are compared within wells and across wells of a batch | active; to build (the LindDUP pipeline chat) [2026-11-17 12:24: the check dropped and the draw settled, D-147] |
 | D-147 | 2026-11-17 | No check gates A5: the three arms are searched and fitted side by side; an A5 pair is two distinct windows drawn uniformly at random within its group (any well, subregion, 180 s) | active; to build (the LindDUP pipeline chat) |
+| D-148 | 2026-11-17 | Implement LindDUP's decisions (D-138..D-147) and make the new features standard: several arms in one recorded project, each with its own core cap; a command that stops a search and starts its best fit; the A5 pair drawn at random within a group, within-well pairs allowed; a cohort map giving each recorded well its donor and pairing group and leaving wells out; partial topologies dropped whole. The pairing rule and the cohort map are what a new project gets by default; the build plan approved | active; to build (this chat, as orchestrator) |
+| D-149 | 2026-11-17 | A2's and A5's term weights searched as now: log10 lambda in [-3, 1], ranked on the simulated report NLL | active |
+| D-150 | 2026-11-17 | No clock cap on LindDUP's searches (`max_total_walltime_h` null): a search runs its 250 trials or until the user stops it | active |
+| D-151 | 2026-11-17 | Claude pushes to Sbi-extractor directly (supersedes D-062's laptop route for that repository) | active |
 
 Ideas:
 
@@ -1982,6 +1987,43 @@ Ideas:
 - **Does not decide:** weighting the draw towards within-well pairs (the user's "especially" of 11:51) -- not asked; the draw is uniform as recorded.
 - **Sources:** `[user]` 2026-11-17 12:24.
 - **Status:** active; to build in the LindDUP pipeline chat.
+
+---
+
+### D-148 -- Implement LindDUP's decisions and make the new features the pipeline's standard
+- **Date / by:** 2026-11-17 / `[user]` (the results-commentary chat, 12:33 Europe/Rome; the plan approved on Claude's card at about 13:05).
+- **Binds:** the SBI pipeline (`hpc/pipeline/`, the runner and tuner under `hpc/joint/`, branch `sci/pipeline`) and Sbi-extractor's bank tools (`export_windows/`, branch `feat/real-arm-parity`); `linddup.json`; every project's configuration from v11.
+- **Decision (the user's words):** "Perfect implement everything and make it standard (will be the default for other runs in other projects) THen the submission"; on the plan card: "Yes, start the build".
+- **Statement (Claude's reading, as put on the plan of 12:50 and approved):** five blocks, built by parallel implementers and checked by an independent tester: (1) a recorded project may hold several searches (arms) on one shared set of banks, each with its own core cap within `resources.max_cores`; (2) a command stops a search -- no new trial; running trials finish, or are killed on request -- and its best fit starts on the best trial so far; (3) the A5 replicate pair is two distinct real windows drawn at random within a group named by a real-bank id field, within-well pairs allowed (D-146, D-147); (4) a cohort map gives each recorded well its donor and its pairing group and can leave wells out (here D-144, D-146, D-145); (5) a topology with fewer simulations than its task dispatched is dropped whole (D-143). "Standard": the features are generic; the pairing rule and the cohort map are what a new project's configuration gets by default; Giulia's configuration moves to v11 without changing what it ran; the synthetic project pins its old rule (two wells of one donor, F-ab), since its batches mix donors of different theta. Then `linddup.json` v11, the final check, and the davinci run sheet. Not included: the promotion stage, a ceiling on saturated windows, any change to the flow's edge support, the posteriors and report command.
+- **Sources:** `[user]` 2026-11-17 12:33 and the card.
+- **Status:** active; the build starts 2026-11-17.
+
+---
+
+### D-149 -- A2's and A5's term weights are searched as now
+- **Date / by:** 2026-11-17 / `[user]` (the card of about 13:05: "Search as now", against Claude's recommendation "Floor at 0.1").
+- **Binds:** `linddup.json`'s searches of arms A2 and A5 (`S-A2-only`, `S-A5-only`).
+- **Statement:** log10 lambda_dsn and log10 lambda_rep keep the joint space's range [-3, 1]; trials are ranked on the simulated report NLL, as in every search. On the synthetic bench this ranking chose log10 lambda between -2.81 and -1.90 (D-136 Status), so A2 and A5 may end close to A1; the user knows this and keeps the search unchanged.
+- **Sources:** `[user]` the card.
+- **Status:** active.
+
+---
+
+### D-150 -- No clock cap on LindDUP's searches
+- **Date / by:** 2026-11-17 / `[user]` (the card of about 13:05: "No cap", Claude's recommendation).
+- **Binds:** `search.max_total_walltime_h` of `linddup.json` (null) for each of its searches.
+- **Statement:** a search runs its 50 + 20 x 10 trials, or until the user stops it with the stop command (D-148 (2)); D-090's 400 h does not apply to LindDUP.
+- **Sources:** `[user]` the card.
+- **Status:** active.
+
+---
+
+### D-151 -- Claude pushes to Sbi-extractor directly
+- **Date / by:** 2026-11-17 / `[user]` (the card of about 13:05: "Push directly", Claude's recommendation).
+- **Binds:** how changes reach Sbi-extractor (branch `feat/real-arm-parity`); supersedes D-062's laptop route for that repository (Astro-Neuron-Network unchanged).
+- **Statement:** the session was given push access to Sbi-extractor on 2026-11-17; Claude commits and pushes there as on SBI's `sci/pipeline`; the user pulls on davinci.
+- **Sources:** `[user]` the card.
+- **Status:** active.
 
 ---
 
