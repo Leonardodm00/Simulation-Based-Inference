@@ -5405,7 +5405,9 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
     (`pbs.delete`; the trial records `stop_deleted`); when the job has
     ended, the trial gets the stage's killed record with the reason
     `stopped by the user (stop-search --kill-running)`, status `killed`,
-    and is not resubmitted;
+    and is not resubmitted; [amendment 3, 2026-11-17, D-154: a job that
+    wrote its ledger record before the deletion took effect keeps that
+    record -- ok or failed -- which a killed record never overwrites;]
   - without kill_running: the running trials run to their end; a trial
     whose job ends without its record is killed with the reason `ended
     without a record after a stop request` and is not resubmitted;
@@ -5424,6 +5426,17 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
 - `status_line(view)`: None without a request; else `stop requested <utc>
   (kill running: yes|no)`, with `; the search ended (user_stop)` once its
   SEARCH_COMPLETE.json says so.
+- [amendment 3, 2026-11-17, D-154; a follow-up of the wave, block "30b"]
+  `tools/search_report.py`: a trial `cancelled` reads `next: nothing
+  (cancelled by the stop request; never submitted)`, and while the search's
+  STOP_REQUEST.json stands no trial's `next:` predicts a submission or a
+  resubmission (it reads `next: nothing (a stop request stands: ...)` with
+  what the stage does instead -- the job deleted under kill_running, the
+  trial killed when its job ends without a record); the report prints the
+  request's `status_line` after its header. The dry-run lines of the search
+  and of the best fit that describe a trial's, a probe's and a member's
+  argv show the `--runner-extra` text with the replicate flags (block 31)
+  that the submitted argv carries.
 - Test oracles (`tests/test_smoke_stop.py`, the fake PBS and the stand-in
   runner): T30a the command -- each refusal (ended search, no completed
   trial, `--search` missing or unknown on a list configuration, given on a
