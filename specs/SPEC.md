@@ -5356,7 +5356,23 @@ group cap) Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   `test_smoke_reset.py`, `test_smoke_purge.py`, `test_smoke_perrow.py`
   pass as at the contract commit.
 - Custom code: none.
-- Status: drafted.
+- Status: smoke-tested 2026-11-17 (wave W3, merged e4c85d9): `tests/
+  test_smoke_runs.py` 5 pass, 1 skip (convergence) -- T29c's ticks show
+  each search at 3 jobs of 48 at once and the project at 432 of 440 cores;
+  T29d end to end on the stand-in with two searches to PIPELINE DONE; five
+  mutations, each caught. Regression as at the contract commit:
+  test_smoke_pipeline 6/1, block1b 6/1, synthetic 18 of 19, report 5/1,
+  reset 5/1, purge 11/1, perrow 5/1, block1c 7/1, block8 1/1; the
+  synthetic and Giulia dry runs byte-identical to the contract commit's;
+  LindDUP's dry run exits 0 with the 12 stages and a cores line per search
+  `[SANDBOX 2026-11-17]`. Accepted deviations: the run classes are built
+  lazily in runs.py (`stage_classes()`; synthetic.py binds them under their
+  old names) so that runs.py imports neither search.py nor best_fit.py at
+  its top (block 30's search.py imports search_stop, which imports runs);
+  helpers `run_core_group`, `pick_search`; a stop line per search
+  `search <q>: <status_line>`; the run stages' dry run adds a line per
+  capped search (`at most 3 job(s) of 48 cores at once`). Not run on
+  davinci.
 
 ### Block 30: stop a search by hand (added 2026-11-17; D-148 (2), D-141, D-150; wave W3)
 
@@ -5455,7 +5471,22 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   `test_smoke_finalist.py`, `test_smoke_report.py` pass as at the contract
   commit.
 - Custom code: none.
-- Status: drafted.
+- Status: smoke-tested 2026-11-17 (wave W3, merged b1e53d1): `tests/
+  test_smoke_stop.py` 5 pass, 2 skip (convergence, determinism); T30b-T30d
+  end to end on the fake PBS (`SEARCH COMPLETE (user_stop)`, the deleted
+  jobs' Exit_status 271, no resubmission though `resubmit_killed` is true);
+  six mutations, each caught; regression as at the contract commit: report
+  5/1, identity 4 pass 2 skip 1 TODO (block 29's, then), finalist 6/2,
+  block7 7 of 8 `[SANDBOX 2026-11-17]`. Accepted deviations: the stage
+  deletes through the recorder's `delete` when it has one, else the
+  adapter's; a node fault under a request heals the record but never
+  resubmits (the trial ends `cancelled`); a hold or an environment fault
+  under a request is `ended without a record after a stop request`; a
+  record written before the deletion is kept (D-154, amendment 3);
+  `cancelled` is terminal and gets no ledger record; `--cancel` with
+  `--kill-running` is refused; an unreadable request is a request without
+  kill_running. Follow-up 30b (amendment 3): the report and the dry run.
+  Not run on davinci (PBS Pro's qdel of a running trial).
 
 ### Block 31: the replicate pair rule (added 2026-11-17; D-148 (3), D-146, D-147; wave W3)
 
@@ -5560,7 +5591,21 @@ D-147, D-148; the sampler's construction Claude's; Confirmed: yes
   from a union of groups without enumerating it; checked:
   `numpy.random.Generator.choice` over groups then over rows, which is what
   it uses).
-- Status: drafted.
+- Status: smoke-tested 2026-11-17 (wave W3, merged d44a76d):
+  `hpc/joint/stage3/smoke_test_rep_pairs.py` 12 pass, 1 skip
+  (convergence); T31b at 2,000,000 draws: within-well shares 0.1969,
+  0.0818, 0.0824, 1.0000 against 0.1970, 0.0819, 0.0819, 1 (amendment 2);
+  against 88c32e5's runner with KEY donor, L, history, endpoint and the
+  replicate block bit for bit equal (A1 6.79678972562, A5 6.79841470718),
+  block 14's fallback included; the four stage suites as at the contract
+  commit (joint 40/1, blocks_11_14 9/1, joint_arms 33, blocks_4_6 10/1);
+  mutations of the sampler and of the cross_well diagnostic, each caught
+  `[SANDBOX 2026-11-17]`. Accepted deviations: each step seeds a numpy
+  Generator from 62 bits of `g_rep` (resume exact within one environment;
+  numpy does not promise its streams across versions); under within_group
+  `batcher.pairs` is None and `n_pairs` gives |P|; the KEY refusal fires
+  whenever a real bank is loaded; `runner_extra` refuses a value that is
+  not one word. Not run on davinci.
 
 ### Block 32: the inputs check on configuration v11 (added 2026-11-17; D-148, D-143, D-145, D-142; wave W3)
 
@@ -5628,7 +5673,16 @@ plan; Confirmed: yes 2026-11-17]
   (being written, reference, invariants, contract, determinism, edge
   cases) moved to the new tree and passing.
 - Custom code: none.
-- Status: drafted.
+- Status: smoke-tested 2026-11-17 (wave W3, merged bdbd8e2): `tests/
+  test_smoke_inputs_check.py` 8 pass, 1 skip (convergence) on the
+  lcdup15-like tree, `INPUTS CHECK: 0 FAIL, 0 WARN` with the cohort map's
+  row `35 wells, 5 excluded; 2 donors; 4 pairing groups; included per class
+  control:17, pathological:13`; 16 injected bugs, each caught
+  `[SANDBOX 2026-11-17]`. Accepted deviations: the map file absent is a
+  FAIL; a task without job_args.json is skipped by the partial count;
+  `<s> simulations` counts the partial topologies' iter_*.npz; the module
+  is loaded from its file with no bytecode written into the checkouts.
+  Not run on davinci.
 
 ## 6. Pipeline entry points
 
@@ -5642,7 +5696,7 @@ plan; Confirmed: yes 2026-11-17]
 | `python3 hpc/pipeline/tests/test_smoke_block2.py`, `test_smoke_block3.py` | blocks 2 and 3: the bank stages and the input stages on the stand-in davinci; since 2026-10-29 (b) their jobs through the job protocol (D-113) | the Sbi-extractor checkout (`SBIX_CLONE`) at or after D-113, numpy | about 2 min, 30 s |
 | `python3 hpc/pipeline/tests/test_smoke_block8.py` | block 8: the one command end to end on the stand-in with the real tools | both of the above | about 1 min |
 | `python3 hpc/pipeline/tests/test_smoke_block7c.py` | D-111: the environment's fallback, environment faults, the chain's replacement and watchdog; D-113's `stage_job_units` | the training environment (torch, sbi, skopt) | a few minutes |
-| `python3 hpc/pipeline/tests/test_smoke_inputs_check.py` | block 9: the inputs check (D-112's and D-113's rows included) | the Sbi-extractor checkout at or after D-113, numpy | about 1 s |
+| `python3 hpc/pipeline/tests/test_smoke_inputs_check.py` | blocks 9 and 32: the inputs check (D-112's and D-113's rows included; since block 32 on an lcdup15-like tree, with the cohort map, topology metadata, partial topologies and searches rows) | the Sbi-extractor checkout at or after D-113 (Block 9 for the real cohort-map reader; a stand-in otherwise), numpy | 2-7 s |
 | `python3 hpc/pipeline/tools/purge_outputs.py --config <file> --what search,best_fit,sim_bank [--confirm <CODE>]` | block 10: the list-then-delete of a project's search, best fit and simulated bank | davinci (the tests: a synthetic project) | seconds to list; minutes to delete hundreds of GB |
 | `python3 hpc/pipeline/tests/test_smoke_purge.py` | block 10's smoke test under the fake PBS | none (stdlib) | about 15 s |
 | `bash hpc/pipeline/run_pipeline.sh --project synth --dry-run` | blocks 15-17: the synthetic experiment's 13 stages and every kind of qsub line; submits nothing [2026-11-11, block 18: 17 stages with v3; on the running state with `--accept-config-change`] | the committed `synth.json`; davinci paths need not exist | seconds |
