@@ -5,6 +5,7 @@
 | 2026-11-17 | v1. Written by the results-commentary chat (the chat that read synth v4's evaluation, D-136's Status) for the LindDUP pipeline chat, at the user's word of 09:29 Europe/Rome. State at writing: four decisions logged (D-138..D-141, log v1.140 on `main` `8d70dd8`); `linddup.json` still v10 (MEAMA, A1 only) on `sci/pipeline` `ee8b382`; nothing built, nothing run. |
 | 2026-11-17 | v2. The outputs of sec. 4's three checks, pasted by the user at 09:55 Europe/Rome from `dvlogin02` `[CLUSTER, the user's paste]`: recorded in sec. 4, with what they change in sec. 5. |
 | 2026-11-17 | v3. The `intel` nodes' sizes, pasted by the user at 10:18 `[CLUSTER, the user's paste]`: 82 nodes of 48 cores, 81 with 1007 GB and 1 with 881 GB; a 48-core trial or member fits one whole node (sec. 4). The user's word of 10:17 that the simulation arrays on `cfd` and `cpu` will be removed: the snapshot is to be fixed after that (sec. 7). |
+| 2026-11-17 | v4. The Neuro-astro network project's reply to the SBI request (a file the user passed on at 10:46; its own tags `[REPO]`, `[RUN]`, `[OWN]`, at ANN `main` 1789e40 and f216b00): new sec. 3b. It corrects the brief and this handoff: 192 or 48 simulations share each topology, not one. The well-to-donor map is not known to that project. |
 
 Tags: `[LOG D-nnn]` the decision log on `main`; `[CODE SBI@ee8b382 file]` read in the code on `sci/pipeline`; `[BRIEF]` the user's `LindaColloDUP15_SBI_brief.md` (written 2026-11-16 from the ANN repository; attached by the user to the results-commentary chat, not in this repository: ask the user to attach it); `[BENCH]` computed by the results-commentary chat on the synth v4 bundle (`synth_v4_results.tar.gz`), scripts delivered to the user; `[user]`; `[estimate]`; `[reasoning]` not checked.
 
@@ -37,7 +38,7 @@ Campaign facts are `[BRIEF]`, not checked on the files by any chat. Folder: `~/A
 | Coordinates | -- | log axes in natural-log coordinates, linear axes as values; each axis uniform in its coordinate |
 | Simulated time | 200 s, W 20,000 | 180 s (dt 0.05 ms), so W 18,000 at 0.01 s |
 | Wiring | flat, contact gate per topology | flat, `conn_prob` ~ U[0.01, 0.4] per topology; no gate |
-| One simulation per topology | yes | yes |
+| Simulations per topology | one | [corrected 2026-11-17: 192 (cfd tasks) or 48 (cpu tasks), not one -- sec. 3b] |
 | Files | per-topology folders | `sweep_<queue>_task<NNNN>/topo_<NNNNN>/iter_<NNNNN>.npz` (+ `.json`), `topology.npz`, `job_args.json` (`_active_param_names`, `_axis_declaration`), `manifest.json`, `_failures.jsonl` |
 | Count | -- | about 310,000 on 2026-11-16, still running, target 1e6 `[user]` |
 
@@ -52,6 +53,23 @@ Known properties to carry into the build `[BRIEF]`:
 Sections of `linddup.json` that are MEAMA's and must be rewritten: `sim` (root, campaign, `t_sim_s`), `freeze` (`campaigns`, `require_conn_rule`), `bank` (`on_axis` `O_N`, `on_declared_box`, `topology_axes` with `stoa_gate_p`, `expected_p` 34, `t_win_s` 200), `search.shape_anchors` (p 34, d_theta 34, W 20,000), `resources` (queue, cap), `search.max_total_walltime_h`. The real arm (`real`, the DUP15HD cohort of record, 35 wells: 17 control, 18 pathological) is unchanged `[LOG D-104]`.
 
 Not checked, to check first: whether `sim_reextract/` (the re-detection profile `linddup.sh`), the label freeze and the bank tool read this campaign (the constant columns, `conn_prob` beside `theta`, no `O_N` axis, no astrocyte spikes); which commit's code ran and the U_0_sr box as launched (the campaign's `PROVENANCE_*.txt` and `job_args.json`).
+
+## 3b. The ANN project's reply of 2026-11-17 (`[ANN-REPLY]`; with the user, not in this repository)
+
+| Point | What it says | Consequence for the build |
+|---|---|---|
+| Topologies are shared | each topology (one `conn_prob`, one wiring, one set of positions, the build seed 50, so the same V(0) and bias pattern) carries 192 simulations on a cfd task and 48 on a cpu task, each with its own independent theta draw; 32 topologies per task | the simulated "donor" is the topology folder `sweep_*/topo_*`: split train / selection / report by topology, never by simulation; donors have unequal sizes (192 or 48 rows), so E3's F1 (Dbar with donors of unequal rows) now arises; `conn_prob` has one distinct value per topology, a few thousand in all `[reasoning]`, not one per simulation |
+| Usable files | a simulation is usable iff its `iter_*.json` exists; a topology iff its `topology_meta.json` exists; a topology cut by a kill keeps only its quickest runs, which lean quiet | drop partial topologies whole (the reply's audit line writes `artifacts/lcdup15_n01_partial_topologies.txt`) |
+| Columns | the 13 free axes are columns 0, 1, 4, 5, 6, 7, 8, 9, 10, 14, 15, 16, 17 of the 37-D `theta`; read `_active_indices` from `job_args.json` and check it is the same in every task; the other 24 columns are constant; log axes are ln(value / unit), Sigma linear | theta boxes in coordinates are in the reply's table 4.1; do not test rows against the registry's 37-D box (I_inj is frozen outside it) |
+| `conn_prob` | npz key `conn_prob` (float64), also in the sidecar, `topology_meta.json` and `summary.csv`; uniform on [0.01, 0.4], linear | read it beside `theta` |
+| Time base | `spk_N_t` float32 seconds, `spk_N_i` 0-158; 180 s; the range check drops the first 2 s; the ANN side prescribes no rate bin | the bin is the recordings' |
+| Geometry | none stored with a simulation; `topology.npz` holds `N_pos` (159 x 2, um, in [0, 350]^2). The ANN repository's `hpc/MEA Traces/process_campaign.py` already re-detects at the DUP15HD preset (`--n_side 3 --pitch 60 --edge 25 --fs 10110.09`), writing `mea_iter_*.npz`; its `simtime` key is not the duration (take 180 s from `topology_meta.json`); a topology folder without a readable `topology.npz` stops that task's run | decide between that tool and Sbi-extractor's `sim_reextract/` (D-015, D-021, D-024 fix the same probe); 55-67 of 159 neurons are within detection range in the reply's sandbox run |
+| Screening | screen on the observation only (a statistic of x computed the same way on simulations and recordings), never on theta or on the full-raster rate; apply the same screen to the held-out simulations and report the share removed | for each x kept, the screened training set targets the unscreened posterior (the reply's eq. (2), its own derivation, not re-derived here) |
+| Code that ran | the PROVENANCE file holds sha256 values, no commit; the reply gives the f216b00 reference hashes and a compare line | to run on davinci |
+| Silent / saturated shares | not known for the campaign; a line on `summary.csv` computes them after the index is written | sizing only, not a screen |
+| The well-to-donor map | NOT KNOWN to the ANN project (repository, project knowledge, past chats and PubMed searched) | it has to come from the experimental side's plating records: per well, donor, line or clone, plating date, plate and DIV at recording; A5 stays blocked until then |
+
+The reply's order on davinci after the arrays are removed: no lcdup job left; the count; the audit; provenance; the index and its completeness check; the shares.
 
 ## 4. Read-only checks for davinci: run 2026-11-17 09:55, results below
 
@@ -120,7 +138,7 @@ Numbers are `[BENCH]`; the full reading is D-136's Status and the user's documen
 
 ## 7. Still needed from the user
 
-- The well-to-donor map of the 35 DUP15HD wells (A5's pairs, D-140). Asked 2026-11-16 and 2026-11-17, not given.
+- The well-to-donor map of the 35 DUP15HD wells (A5's pairs, D-140). Asked 2026-11-16 and 2026-11-17; the ANN project does not have it (sec. 3b); it has to come from the plating records.
 - The outputs of sec. 4: given 2026-11-17 (recorded there).
 - The final simulation count: the user said on 2026-11-17 10:17 that the campaign's arrays on `cfd` and `cpu` will be removed; after that, rebuild the campaign index (a job killed mid-write may leave a truncated file `[reasoning]`) and record the count as the snapshot LindDUP trains on. Not yet done.
 - The calls of sec. 5 (the clock, the three-arm layout, the edge support) and of sec. 6 (the term arms' ranking, the promotion stage).
