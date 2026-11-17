@@ -21,11 +21,15 @@ state, and `--retry search_<name>` in the pass line.
 
 What is set aside, to `<campaign>_set_aside_<utc>/` beside the campaign
 folder: `trials/` (the ledger), `pending/`, `runs/`, `jobs/`,
-`pipeline_rounds.json`, `finalists.json`, `SEARCH_COMPLETE.json` -- each
-only if present -- with a `RESET_RECORD.json` naming the jobs deleted and
-the time. Kept in place: `gate/` (the budget gate's probe files, reused by
-the next search: no probe jobs again) and `bank_split.json` (rewritten by
-the next search anyway).
+`pipeline_rounds.json`, `finalists.json`, `SEARCH_COMPLETE.json` and
+[block 30, amendment 5, the final check's F1] `STOP_REQUEST.json` (a stop
+by hand, `pipeline.py stop-search`: the file outlives its search as the
+record of the stop, so it goes with the rounds and the search starts again
+with no request) -- each only if present, each a listing item with its size
+in the CODE -- with a `RESET_RECORD.json` naming the jobs deleted and the
+time. Kept in place: `gate/` (the budget gate's probe files, reused by the
+next search: no probe jobs again) and `bank_split.json` (rewritten by the
+next search anyway).
 
 Refused (exit 4, nothing done): a sequencer job of the project
 (`pl_<tag>`) queued or running -- stop it first (`--stop`); a CODE that no
@@ -58,10 +62,12 @@ import pipeline as P                    # noqa: E402
 import state as ST                      # noqa: E402
 import stages.common as CM              # noqa: E402
 import stages.runs as R                 # noqa: E402  (block 29: --search)
+import stages.search_stop as SST        # noqa: E402  (block 30: the stop request's file)
 from stages.search import SearchStage   # noqa: E402
 
+# [block 30, amendment 5] the stop request (search_stop.STOP_FILE) goes with the rounds
 MOVED = ("trials", "pending", "runs", "jobs", "pipeline_rounds.json", "finalists.json",
-         "SEARCH_COMPLETE.json")
+         "SEARCH_COMPLETE.json", SST.STOP_FILE)
 KEPT = ("gate", "bank_split.json")
 WAIT_S = 180.0
 

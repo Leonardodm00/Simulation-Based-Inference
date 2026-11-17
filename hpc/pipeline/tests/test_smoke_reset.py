@@ -29,9 +29,24 @@ Checks
     test_edge_cases     a wrong CODE: refused, nothing done; a sequencer
                         job queued: refused; a configuration that does not
                         load: exit 2
+    test_stop_request   [block 30, amendment 5, the final check's F1] the
+                        CODE changes when a STOP_REQUEST.json appears (an
+                        item with its size); a search ended user_stop
+                        (SEARCH_COMPLETE.json, pipeline_rounds.json and the
+                        request beside the round), reset with --confirm: the
+                        listing names STOP_REQUEST.json, it is in the
+                        set-aside folder (the same bytes, in the record's
+                        `moved`) and no longer in the campaign; then the
+                        search stage, started as the submission after the
+                        reset starts it (a fresh state; the tuner and the
+                        scheduler stood in for in this process), passes the
+                        gate on its kept probe files and proposes round 0,
+                        whose trials it submits
     MUTATION=code       (environment) the CODE made constant, equal to the
                         wrong CODE the edge case offers: test_edge_cases
                         (a wrong CODE acts) and test_reference must FAIL
+    MUTATION=stop_left  (environment) the request left in place (not in the
+                        items set aside): test_stop_request must FAIL
 
 Run
     python3 hpc/pipeline/tests/test_smoke_reset.py
@@ -66,6 +81,9 @@ MUTATION = os.environ.pop("MUTATION", "")      # the report test reads its own M
 import config as C                  # noqa: E402
 import pbs as PBS                   # noqa: E402
 import state as ST                  # noqa: E402
+import stages.common as CM          # noqa: E402
+import stages.search as SS          # noqa: E402
+import stages.search_stop as SST    # noqa: E402
 import search_reset as SR           # noqa: E402
 import test_smoke_report as TR      # noqa: E402
 
@@ -74,8 +92,11 @@ TOOL = os.path.join(_TOOLS, "search_reset.py")
 
 if MUTATION == "code":
     SR.code_of = lambda lst: "deadbeef"
+elif MUTATION == "stop_left":
+    # [amendment 5] the stop request left in the campaign folder (F1 as found)
+    SR.MOVED = tuple(n for n in SR.MOVED if n != SST.STOP_FILE)
 elif MUTATION:
-    raise SystemExit("unknown MUTATION %r; known: code" % MUTATION)
+    raise SystemExit("unknown MUTATION %r; known: code, stop_left" % MUTATION)
 
 
 # --------------------------------------------------------------- helpers ---
@@ -327,6 +348,176 @@ def test_edge_cases():
         shutil.rmtree(root, ignore_errors=True)
 
 
+# -- block 30, amendment 5 (the final check's F1): the stop request --------
+
+def _sha(path):
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def _write(path, obj):
+    d = os.path.dirname(path)
+    if not os.path.isdir(d):
+        os.makedirs(d)
+    with open(path, "w") as fh:
+        json.dump(obj, fh, indent=1, sort_keys=True)
+    return path
+
+
+class _Rec(object):
+    """The sequencer's recorder as the search stage sees it
+    (pipeline.Submitter), in this process: no job ends; every submission
+    recorded (into the stage's jobs, as the Submitter does); `fits` always."""
+
+    def __init__(self, st):
+        self.st = st
+        self.lines = []
+        self.submitted = []
+
+    def log(self, text):
+        self.lines.append(str(text))
+
+    def fits(self, n):
+        return True
+
+    def status(self, job_id):
+        return PBS.JobStatus(job_id, "R")
+
+    def submit(self, argv, role, log_path=None, cwd=None, env=None, ncpus=None, after=None):
+        jid = "%d.rec" % (700 + len(self.submitted))
+        self.submitted.append((role, jid))
+        self.st["jobs"].append({"id": jid, "role": role, "cmd": list(argv), "log": log_path,
+                                "finished": False, "submitted_utc": CM.utc_now(), "ncpus": 1})
+        return jid
+
+
+class _Tuner(object):
+    """common.run_tuner in this process: `costliest` writes the costliest
+    file of batch size 16 (the gate's kept probe folder is b16), `propose`
+    the pending specs of `ids`; any other call fails the check."""
+
+    def __init__(self, ids):
+        self.ids = list(ids)
+        self.calls = []
+
+    def __call__(self, cfg, args, log_path=None, timeout=None):
+        self.calls.append(args[0])
+        dirs = SS.SearchStage()._dirs(cfg)
+        if args[0] == "costliest":
+            _write(os.path.join(args[args.index("--out-dir") + 1], "costliest_b16.json"), {"config": {}})
+            return ""
+        if args[0] == "propose":
+            for tid in self.ids:
+                _write(os.path.join(dirs["pending"], tid + ".json"),
+                       {"trial_id": tid, "campaign": cfg.data["search"]["campaign"],
+                        "config": {"lr": 0.001}})
+            return ""
+        raise AssertionError("the stage called the tuner's %r" % (args[0],))
+
+
+def test_stop_request():
+    """The listing's checks are collected and the stage is started in any
+    case, so that a failure shows both the listing and what the reset search
+    does (F1: the request left behind ends it at once, user_stop)."""
+    root = tempfile.mkdtemp(prefix="reset_stop_")
+    old_tuner = CM.run_tuner
+    problems = []
+
+    def check(ok, what):
+        if not ok:
+            problems.append(what)
+
+    try:
+        path, ids, camp = TR._campaign(root)
+        os.makedirs(os.path.join(camp, "gate", "b16"))
+        _write(os.path.join(camp, "gate", "b16", "A1_seed0_probe.json"),
+               {"projected_trial_seconds": 1.0})
+        env = _env(root)
+        cfg = C.load_config(path)
+        req_path = SST.request_path(cfg)
+        assert req_path == os.path.join(camp, "STOP_REQUEST.json"), req_path
+        # (a) the CODE changes when a request appears: an item with its size
+        c0 = SR.code_of(_with_env(env, lambda: SR.listing(cfg)))
+        req = SST.write_request(cfg, False, "someone", "login9", "2026-11-17T08:00:00Z")
+        lst = _with_env(env, lambda: SR.listing(cfg))
+        got = [it for it in lst["items"] if it["name"] == "STOP_REQUEST.json"]
+        check(got == [{"name": "STOP_REQUEST.json", "entries": 1,
+                       "bytes": os.path.getsize(req_path)}],
+              "the request is not an item of the listing with its size: %r" % lst["items"])
+        check(SR.code_of(lst) != c0, "a stop request did not change the CODE")
+        # (b) the search ended user_stop: its artefact, its rounds file and the request
+        # beside the round; the stage done in the state; reset with --confirm
+        _write(os.path.join(camp, "SEARCH_COMPLETE.json"),
+               {"schema": "search_complete/1", "ended_by": "user_stop", "stop_request": req,
+                "finalist": {"trial_id": ids["ok"], "nll": 0.25, "config": {}}})
+        _write(os.path.join(camp, "pipeline_rounds.json"),
+               {"schema": "pipeline_rounds/1", "ended_by": "user_stop",
+                "rounds": [{"round": 0, "trial_ids": sorted(ids.values())}]})
+        st0 = ST.State.load(cfg.data["paths"]["work_root"])
+        st0.data["stages"]["search"]["status"] = "done"
+        st0.save()
+        req_sha = _sha(req_path)
+        rc, out = _run(["--config", path], env)
+        assert rc == 0, out
+        check("  would set aside STOP_REQUEST.json " in out,
+              "the listing does not name STOP_REQUEST.json:\n" + out)
+        for name in ("SEARCH_COMPLETE.json", "pipeline_rounds.json", "trials", "pending"):
+            check("  would set aside %-24s" % name in out, "the listing misses " + name)
+        code = _code(out)
+        rc, out = _run(["--config", path, "--confirm", code], env)
+        assert rc == 0 and "SEARCH RESET DONE: 0 job(s) deleted, round(s) set aside as " in out, out
+        aside = [d for d in os.listdir(os.path.dirname(camp)) if d.startswith("S-A1_set_aside_")]
+        assert len(aside) == 1, aside
+        aside = os.path.join(os.path.dirname(camp), aside[0])
+        check(not os.path.lexists(req_path), "the request is still in the campaign folder")
+        moved_req = os.path.join(aside, "STOP_REQUEST.json")
+        check(os.path.isfile(moved_req) and _sha(moved_req) == req_sha,
+              "the request is not in the set-aside folder with its bytes")
+        rec = json.load(open(os.path.join(aside, "RESET_RECORD.json")))
+        check("STOP_REQUEST.json" in rec["moved"] and "SEARCH_COMPLETE.json" in rec["moved"],
+              "the record's moved: %r" % rec["moved"])
+        check(SST.read_request(cfg) is None and SST.status_line(cfg) is None,
+              "a request still stands: %r" % SST.status_line(cfg))
+        check(sorted(os.listdir(camp)) == ["gate"], "left in the campaign: %r" % os.listdir(camp))
+        # (c) the submission after it (--retry search: a fresh state; the bank's split hash
+        # given, the tuner and the scheduler stood in for): the stage starts, passes the gate
+        # on its kept probe file, proposes round 0 and submits its trials
+        stage = SS.SearchStage()
+        ident = dict(SS.config_identity(cfg))
+        ident.update({"split_hash": "a" * 64, "contract_digest": "b" * 64, "n_train": 100,
+                      "n_sel": 10, "n_report": 5, "n_rows": 115, "n_shards": 1, "W": 128,
+                      "latent_kind": None,
+                      "d_theta": int(cfg.data["search"]["shape_anchors"]["d_theta"])})
+        st = {"status": "running", "jobs": [], "sub": {"identity": ident}, "resubmits": 0}
+        recd = _Rec(st)
+        tuner = _Tuner(["t_a", "t_b"])
+        CM.run_tuner = tuner
+        stage.start(cfg, st, recd)
+        r = stage.poll(cfg, st, recd)
+        CM.run_tuner = old_tuner
+        sub = st["sub"]
+        stage_ok = (r == "running" and sub.get("phase") == "rounds"
+                    and tuner.calls == ["costliest", "propose"]
+                    and [rr["trial_ids"] for rr in sub.get("rounds", [])] == [["t_a", "t_b"]]
+                    and sorted(role for role, _ in recd.submitted) == ["trial t_a", "trial t_b"]
+                    and any("search: budget gate passed" in ln for ln in recd.lines)
+                    and not any("stop request" in ln for ln in recd.lines))
+        if not stage_ok:
+            problems.insert(0, "the reset search did not propose round 0: poll %r, phase %r, fail %r, "
+                               "tuner %r, submitted %r, log %r"
+                            % (r, sub.get("phase"), sub.get("fail"), tuner.calls, recd.submitted,
+                               recd.lines))
+        else:
+            check(json.load(open(os.path.join(camp, "pipeline_rounds.json")))["ended_by"] is None,
+                  "the new rounds file is not open")
+        assert not problems, "\n".join(problems)
+        print("    listing: STOP_REQUEST.json set aside with the round; then round 0: %s"
+              % ", ".join(sub["rounds"][0]["trial_ids"]))
+    finally:
+        CM.run_tuner = old_tuner
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- runner ---
 
 def main():
@@ -335,8 +526,9 @@ def main():
     print("== %s" % os.path.basename(__file__))
     print("python %s | fake PBS %s" % (sys.version.split()[0], _FAKE))
     if MUTATION:
-        print("MUTATION=%s: the named piece is disabled; test_edge_cases and test_reference must "
-              "FAIL" % MUTATION)
+        print("MUTATION=%s: the named piece is disabled; %s must FAIL"
+              % (MUTATION, "test_stop_request" if MUTATION == "stop_left"
+                 else "test_edge_cases and test_reference"))
     results = []
     for name, func in checks:
         start = time.perf_counter()
