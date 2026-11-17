@@ -73,6 +73,19 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   blocks 24-28; 27 and 28, the comparisons and their figures, are wave W2,
   with the new `hpc/pipeline/tests/test_smoke_comparisons.py`]
 
+- LindDUP's three arms and the pipeline's standard (D-138..D-151; blocks
+  29-32, wave W3; added 2026-11-17): `hpc/pipeline/stages/runs.py`,
+  `stages/search_stop.py`, `stages/replicate.py`, the changes blocks 29-31
+  make to `pipeline.py`, `stages/synthetic.py`, `stages/search.py`,
+  `tools/search_report.py`, `search_reset.py`, `perrow_check.py`,
+  `purge_outputs.py`, `inputs_check.py` (block 32), `hpc/joint/stage2/joint_batches.py`,
+  `hpc/joint/stage3/run_joint_arms.py`, their tests
+  (`hpc/pipeline/tests/test_smoke_runs.py`, `test_smoke_stop.py`,
+  `hpc/joint/stage3/smoke_test_rep_pairs.py`), the contract's
+  `OPTIONAL_ROW_ARRAYS` in `hpc/joint/stage1/latent_bank.py`, config v11
+  (`config.py`, the three projects' files) and
+  `hpc/pipeline/projects/linddup/linddup_cohort_map.csv`
+
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
 
@@ -179,6 +192,26 @@ for every campaign, S-A1 included (D-122: its trials are scored on R0). The
 sequencer ticks the stages in this order, and every stage's submissions
 share `resources.max_cores` (D-099), so the free cores go to the earliest
 search (and its best fit) first.
+
+**A recorded data set with several searches (block 29; D-148 (1); added
+2026-11-17).** A recorded configuration whose `searches` is a list Q (v11,
+sec. 3.1) has S1-S6 as above, then, for each q in Q in its order:
+
+| s | name | dep(s) | done(s): the artefact of record |
+|---|---|---|---|
+| S7_q | `search_<q.name>` | S5, S6 | `<tune_root>/<q.name>/<q.campaign>/SEARCH_COMPLETE.json` |
+| S8_q | `best_fit_<q.name>` | S7_q | `<runs_root>/<q.name>/<dataset>_best/BEST_FIT_COMPLETE.json` |
+
+S7_q and S8_q are S7 and S8 run on q's view (`stages/runs.py` RunView:
+`paths.tune_root` and `paths.runs_root` joined with q.name,
+`search.campaign` = q.campaign), the synthetic kind's construction. Every
+stage's jobs count against `resources.max_cores` (D-099); the jobs of q's
+stages also count against q.max_cores when it is an integer (block 29), so
+each search keeps its own share (LindDUP: 148 cores each, D-141). With
+`searches` null the graph is the eight stages above (the single search of
+`search.campaign`, as before v11). A search stops by hand with
+`pipeline.py stop-search` (block 30): its best fit then starts on the best
+trial so far.
 
 ### 2.2 The resume rule
 
@@ -642,11 +675,12 @@ Claude's as the log records (D-085..D-090).
 
 | Key | Type | Constraint |
 |---|---|---|
-| `config_version` | int | 10 (v10, 2026-10-19 17:44, D-101: values only -- `search.gp_seed` 1, `resources.max_cores` 400 [2026-10-30, D-115: Giulia's `resources.max_cores` 300, a value under v10, the version unchanged]; v9, 2026-10-19: `resources.max_cores`, D-099; v8, 2026-10-18: the `driver` block, D-098; v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
+| `config_version` | int | 11 (v11, 2026-11-17, D-148: the keys `searches`, `replicate.pairs`, `replicate.group_key`, `real.cohort_map`, `bank.drop_partial_topologies` below) [v10's text follows] 10 (v10, 2026-10-19 17:44, D-101: values only -- `search.gp_seed` 1, `resources.max_cores` 400 [2026-10-30, D-115: Giulia's `resources.max_cores` 300, a value under v10, the version unchanged]; v9, 2026-10-19: `resources.max_cores`, D-099; v8, 2026-10-18: the `driver` block, D-098; v7, 2026-10-18: `search.resubmit_node_faults` and `best_fit.resubmit_node_faults`; v6, 2026-10-18: `bank.verify` and `bank.max_rerun_rounds`; v5, 2026-10-16: the two queue keys below) |
 | `dataset` | str | `[a-z0-9_]+`; the `<tag>` of the folder and of the artefact names |
 | `paths.{sbix_dir, sbi_dir, work_root, banks_root, runs_root, tune_root}` | str | absolute paths |
 | `envs.{extract, train}` | str | conda environment names |
 | `real.{cohort_config, cohort_tag, extract_root}` | str | `cohort_config` an absolute path |
+| `real.cohort_map` | str or null | v11 (D-148 (4)): an absolute path of the cohort map (Sbi-extractor block 9: one row per well of the manifest -- `out_dir`, `donor`, `rep_group`, `include`), written into the bank profile as `cohort_map`; null: no map (donor = well; rep_group = donor) |
 | `sim.{sim_main, campaign_glob, out_root, tools, plan_args, test_walltime, walltime, queue}` | str | walltimes `hh:mm:ss` |
 | `sim.{ncpus, concurrency}` | int | >= 1 |
 | `freeze.{out, campaigns, require_conn_rule}` | str | `out` relative to `paths.sbix_dir` |
@@ -658,8 +692,12 @@ Claude's as the log records (D-085..D-090).
 | `bank.{t_win_s, floor_hz, floor_rtol}` | float | > 0 |
 | `bank.verify.{ncpus}`, `bank.verify.{mem, walltime}` | int; str | >= 1; PBS memory, `hh:mm:ss` -- the verification job (v6) |
 | `bank.max_rerun_rounds` | int | >= 0 -- reruns of the array after a quarantine (v6) |
+| `bank.drop_partial_topologies` | bool | v11 (D-148 (5)): written into the bank profile; true drops whole every topology with fewer simulations than its task dispatched (Sbi-extractor block 10) |
 | `split.fractions` | [float, float, float] | each in (0, 1), sum 1 within 1e-9 |
-| `search.{campaign, arm}` | str | `campaign` in {S-A1, S-A2, S-A5, S-A25}; `arm` in the runner's arms |
+| `searches` | null or [object] | v11 (D-148 (1), block 29): null -- the single search of `search.campaign`; a list -- each item exactly {`name` `[A-Za-z0-9][A-Za-z0-9_-]*`, `campaign` among the campaigns below, `max_cores` an integer >= 1 or null}; the names unique, the campaigns unique; an integer `max_cores` at least the larger of `search.trial.ncpus` and `best_fit.ncpus` and at most `resources.max_cores` - `driver.ncpus`. With a list, `search.campaign` and `search.arm` are refused (each search names its campaign; the arm is the campaign's) |
+| `replicate.pairs` | str | v11 (D-148 (3), block 31): `within_group` (the standard: two different real windows of one group, within-well pairs allowed) or `cross_well` (block 14's: two rows of one group in two different wells) |
+| `replicate.group_key` | str | v11: the real bank's id array that names a row's group: `rep_group` (the standard; Sbi-extractor block 9), `donor`, `batch` or `well` |
+| `search.{campaign, arm}` | str | `campaign` in {S-A1, S-A2, S-A5, S-A25} [and S-A2-only, S-A5-only since block 26]; `arm` in the runner's arms; [v11] only with `searches` null |
 | `search.shape_anchors.{p, d_theta, embedding_dim}` | int | >= 1 |
 | `search.space_overrides` | object | axis -> [lo, hi] (numeric axes) or [levels] (categorical); axes must exist in the joint space (block 7) |
 | `search.flow.{conditioner_hidden_layers, num_bins}` | int | >= 1 |
@@ -690,7 +728,9 @@ Claude's as the log records (D-085..D-090).
 
 **The synthetic kind (block 15; added 2026-11-03).** `"kind": "synthetic"`
 selects this schema: every key above except `real.*`, `sim.*`, `freeze.*`,
-`bank.*`, `search.campaign`, `search.arm` and `paths.sbix_dir`, plus
+`bank.*`, `search.campaign`, `search.arm`, `paths.sbix_dir` and [v11]
+`searches` (it keeps `replicate.*`: synth.json pins `cross_well`, `donor`,
+the rule it ran with), plus
 
 | Key | Type | Constraint |
 |---|---|---|
@@ -802,7 +842,8 @@ fixture, not part of the pipeline.
   - D-062: Claude may push to this repository (branch `sci/pipeline`);
     Sbi-extractor and Astro-Neuron-Network only through the user's laptop,
     so the pipeline drives Sbi-extractor's committed tools without changing
-    them.
+    them. [2026-11-17, D-151: Claude pushes to Sbi-extractor directly
+    (branch `feat/real-arm-parity`); Astro-Neuron-Network unchanged.]
   - D-074, D-075, D-076, D-078: the bank -- all record tasks; the on-axis's
     declared box; a row kept iff its window's mean rate >= `bank.floor_hz`;
     donor = one network; the prior is the declared box (the unit box for
@@ -843,6 +884,18 @@ fixture, not part of the pipeline.
   - D-092: the bank tools' defaults (Sbi-extractor `specs/SPEC.md` sec. 8
     Q6-Q8, Q10-Q14, the empty-topology rule) stand; the pipeline's bank
     stage changes none of them.
+  - D-138..D-151 (LindDUP, 2026-11-16 and 17): the simulated arm is the
+    campaign `lcdup15_rho1300_neur_n01` (p = 14: 13 axes and conn_prob;
+    180 s), trained as it is; arms A1, A2 and A5 each searched and fitted
+    (block 29), 148 cores each, on intel, Giulia's budget; a search stopped
+    by hand (block 30) and no clock cap (`max_total_walltime_h` null);
+    topologies cut short dropped whole (Sbi-extractor block 10); the real
+    cohort's donor is its condition, an A5 pair two windows of one condition
+    x batch group drawn at random, within-well pairs allowed (block 31), the
+    five copied wells left out (the cohort map, Sbi-extractor block 9); the
+    term weights searched as now (D-149). D-148: these features are the
+    pipeline's standard; a new project gets `replicate` = within_group,
+    rep_group and a cohort map.
 - Every new flag of an existing runner or tuner (blocks 4-7) defaults to the
   behaviour at `9fcbc88`, so a call without the flag is unchanged
   (regression test per flag).
@@ -5206,6 +5259,349 @@ pins proposed by Claude; Confirmed: no]
   stop; the index `make_all` returns carries it without one (block 21's
   convention).
 
+### Block 29: several searches in one recorded project, each with its own core cap (added 2026-11-17; D-148 (1), D-140, D-141; wave W3)
+
+A recorded data set may search and fit several arms on one set of banks
+(D-140, D-148 (1): LindDUP's A1, A2 and A5), each search with its own core
+cap inside `resources.max_cores` (D-141: 148 cores per arm). [the user's
+call of 2026-11-17, D-148; the design (the views, the stage names, the
+group cap) Claude's, approved with the plan; Confirmed: yes 2026-11-17]
+
+- Modules: `hpc/pipeline/stages/runs.py` (`recorded_set_graph`,
+  `core_group_of`, and the run stages, moved here from `stages/synthetic.py`
+  or wrapped, as the implementer chooses; `RunView` and `search_views` are
+  the contract's and stay as committed), `hpc/pipeline/stages/synthetic.py`
+  (uses the run classes of runs.py; its graph, names and behaviour
+  unchanged), `hpc/pipeline/pipeline.py` (`cores_in_flight(state,
+  names=None)`; the Submitter's group cap; the per-search lines of `status`
+  and of the dry run -- not the `stop-search` parser and `cmd_stop_search`,
+  which are the contract's and stay), `hpc/pipeline/tools/search_report.py`
+  and `search_reset.py` (`--search <name>`), `hpc/pipeline/tools/
+  perrow_check.py` and `purge_outputs.py` (a clear refusal on a
+  configuration with a `searches` list), `hpc/pipeline/tests/
+  test_smoke_runs.py` (new). Not this block's: `config.py`,
+  `stages/__init__.py`, `stages/search.py`, `stages/best_fit.py`,
+  `stages/replicate.py`, `stages/search_stop.py` (the contract's and blocks
+  30-31's).
+- Configuration (sec. 3.1, v11; the contract): `searches` null or a list of
+  {`name`, `campaign`, `max_cores`}; with a list, `search.campaign` and
+  `search.arm` are refused.
+- Graph (sec. 2.1, "A recorded data set with several searches"): with a
+  list Q, S1-S6 as in the default graph, then for each q in Q in order
+  `search_<q.name>` (deps `sim_bank`, `real_bank`) and `best_fit_<q.name>`
+  (deps `search_<q.name>`); no stage named `search` or `best_fit`. A stage
+  of q runs S7's or S8's code on q's view (`runs.RunView`): `paths.
+  tune_root` and `paths.runs_root` joined with q.name, `search.campaign` =
+  q.campaign, so q's folders are `<tune_root>/<q.name>/<q.campaign>/` and
+  `<runs_root>/<q.name>/<dataset>_best/`, its log lines carry the stage's
+  name (as the synthetic kind's), and `common.shard_globs(view)` gives the
+  recorded banks of S5 and S6 -- the real one for every campaign but S-A1
+  (the rule of block 7, unchanged). With `searches` null the graph is the
+  eight stages, unchanged (regression).
+- The group cap: `core_group_of(stage)` = (q.max_cores, the names of q's
+  stages: `search_<q>`, `best_fit_<q>` and, on the synthetic kind,
+  `best_fit_alt_<q>` when it exists) for a stage of q with an integer
+  `max_cores`; None for every other stage, and for q with `max_cores` null
+  (every synthetic search, whose entries have no such key). The
+  sequencer's Submitter of a stage with a group (cap c, names G):
+  - `fits(n)` is true iff n fits under `resources.max_cores` as now (D-099)
+    AND n <= c - (the cores in flight of the jobs of the stages in G, counted
+    by `cores_in_flight(state, names=G)` exactly as `cores_in_flight`
+    counts the whole project's, a group of jobs `after` another counted
+    once);
+  - `check(n)` raises CapExceeded when n > c (such a job can never start),
+    naming the search and its `max_cores`, so the stage stops at its start
+    instead of waiting for ever;
+  - jobs of stages outside G never count against c; G's jobs always count
+    against `resources.max_cores`.
+  The search's throttle (`pbs.fits(trial_cores)`) and the best fit's need
+  no change: they ask `fits`.
+- Status and dry run: for a configuration with a searches list, after the
+  project's cores line, one line per search with a cap: `cores of search
+  <q>: at most <c> (searches[].max_cores); in flight <x> in <k> job(s)`, and
+  the search's stop line `search_stop.status_line(view)` when it returns
+  one (block 30; the stub raises until block 30 lands: call it inside a
+  try that prints nothing on NotImplementedError).
+- Tools: `search_report.py --config C --search NAME` reports search NAME of
+  a list configuration on its view (folders, ledger, trials), last line
+  unchanged (`SEARCH REPORT OK: ...`); on a list configuration without
+  `--search`, or with an unknown name, exit 2 with `REFUSED: this
+  configuration has the searches <names>: give --search <name>`; on a
+  configuration with `searches` null, `--search` is refused the same way.
+  `search_reset.py` takes `--search` by the same rule. `perrow_check.py` and
+  `purge_outputs.py` refuse a list configuration (exit 2, one `REFUSED:`
+  line naming the reason: not supported for several searches); their
+  behaviour on a null configuration is unchanged.
+- Test oracles (`tests/test_smoke_runs.py`, the fake PBS): T29a the graph --
+  a recorded configuration with the three searches A1 (S-A1), A2
+  (S-A2-only), A5 (S-A5-only) gives the 12 stages real_extraction ...
+  real_bank, search_A1, best_fit_A1, search_A2, best_fit_A2, search_A5,
+  best_fit_A5 in that order with the deps above; `searches` null gives the
+  eight stages (regression); the committed `linddup.json` gives the 12, and
+  its dry run exits 0. T29b the views -- each view's tune_root, runs_root,
+  campaign; `shard_globs` gives no real bank on A1's view and the real bank
+  on A2's and A5's. T29c the group cap -- searches capped at 148 with 48-core
+  jobs, `resources.max_cores` 444, driver 4: at every tick no search has more
+  than 3 trial jobs in flight, the project never more than 440 cores of
+  stage jobs, and each of the three searches holds a running trial while the
+  others hold theirs (none starves); with c = 40 < 48 the stage stops at its
+  start with CapExceeded naming the search; a search with max_cores null is
+  limited by the project's cap only. T29d end to end on the stand-in: a
+  recorded project with two searches (S-A1 and S-A2-only, small budgets)
+  runs to PIPELINE DONE; each search's SEARCH_COMPLETE.json and each best
+  fit's BEST_FIT_COMPLETE.json in its own folder. T29e the tools: the report
+  with and without `--search`; the refusals.
+- Regression: `test_smoke_pipeline.py`, `test_smoke_block1b.py`,
+  `test_smoke_synthetic.py` (T15, T18's graphs), `test_smoke_report.py`,
+  `test_smoke_reset.py`, `test_smoke_purge.py`, `test_smoke_perrow.py`
+  pass as at the contract commit.
+- Custom code: none.
+- Status: drafted.
+
+### Block 30: stop a search by hand (added 2026-11-17; D-148 (2), D-141, D-150; wave W3)
+
+The user watches the interim results and ends a search when it has done
+enough; its best fit then trains the best configuration found so far
+(D-141, D-150). [the user's call of 2026-11-17; the command, the file and
+the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
+
+- Modules: `hpc/pipeline/stages/search_stop.py` (the contract's stub; the
+  bodies), `hpc/pipeline/stages/search.py` (the poll honours a request),
+  `hpc/pipeline/tests/test_smoke_stop.py` (new). The parser of
+  `stop-search` and `cmd_stop_search` in `pipeline.py` are the contract's
+  (they call `search_stop.cli`); the lines of `stages/search.py` that call
+  `replicate.runner_extra` are the contract's and stay.
+- Command: `python3 hpc/pipeline/pipeline.py stop-search --config <cfg>
+  [--search <name>] [--kill-running] [--cancel]`; on any login node; it
+  writes or removes one file and submits nothing (D-098).
+- The request file: `<campaign folder>/STOP_REQUEST.json`, the campaign
+  folder being `<paths.tune_root>/<search.campaign>` of the search's view
+  (`runs.search_views`; the folder of its ledger and SEARCH_COMPLETE.json):
+  {"schema": "search_stop/1", "requested_utc": ISO 8601 UTC, "kill_running":
+  bool, "user": str, "host": str}; ASCII JSON, sorted keys, written to a
+  temporary file in the same folder then `os.replace`d.
+- The command's rules (exit 0 with its last line; exit 2 with `REFUSED:
+  <reason>` and nothing written):
+  - with a searches list, `--search` names one of its searches; with
+    `searches` null it is not given (the single search);
+  - the search has ended (its SEARCH_COMPLETE.json exists): refused, naming
+    its `ended_by`;
+  - the search has no completed trial yet (no record of status `ok` among
+    the records the stage reads as its ledger, `SearchStage`'s own reading):
+    refused -- "nothing to fit yet; stop the whole run with `stop` instead";
+  - a request already present is replaced (the line names the previous
+    one's time and kill_running);
+  - `--cancel`: removes the file when present and the search has not ended
+    (`STOP CANCELLED: ...`), refused otherwise; a trial already deleted by
+    the request stays killed.
+  - last line `STOP REQUESTED: search <name or the campaign> (<campaign>);
+    kill running: yes|no; the sequencer acts at its next tick (every
+    driver.poll_seconds)`.
+- The stage (stages/search.py), at every poll in the phase `rounds` while a
+  request stands:
+  - nothing is submitted: no waiting trial, no resubmission of any kind
+    (killed, node fault, hold, environment fault), no new round proposed;
+  - with kill_running: the last job of each running trial is deleted once
+    (`pbs.delete`; the trial records `stop_deleted`); when the job has
+    ended, the trial gets the stage's killed record with the reason
+    `stopped by the user (stop-search --kill-running)`, status `killed`,
+    and is not resubmitted;
+  - without kill_running: the running trials run to their end; a trial
+    whose job ends without its record is killed with the reason `ended
+    without a record after a stop request` and is not resubmitted;
+  - when no trial is running or under examination: every waiting trial
+    becomes `cancelled` (a terminal status, never submitted, counted in
+    `n_trials`), and the search finishes as at the clock cap: `_finish`
+    with ended_by `user_stop` -- finalists over the ledger, SEARCH_COMPLETE
+    .json with `"ended_by": "user_stop"` and `"stop_request"` (the file's
+    content); the best fit then starts as after any finished search;
+  - one log line when a request is first seen: `search: stop requested
+    <utc> (kill running: yes|no): no new trial; <n> running`.
+  In the phase `gate` (the budget probes) a request is acted on as above
+  once the phase ends; with no completed trial `_finish` fails as it does
+  today (the command refuses such a request, so only a hand-made file gets
+  there). Without a request the stage is unchanged (regression).
+- `status_line(view)`: None without a request; else `stop requested <utc>
+  (kill running: yes|no)`, with `; the search ended (user_stop)` once its
+  SEARCH_COMPLETE.json says so.
+- Test oracles (`tests/test_smoke_stop.py`, the fake PBS and the stand-in
+  runner): T30a the command -- each refusal (ended search, no completed
+  trial, `--search` missing or unknown on a list configuration, given on a
+  null one), the request's file and content, the replacement, `--cancel`;
+  nothing written on a refusal. T30b a search with trials ok, running and
+  waiting: after a request without kill, nothing new is submitted, the
+  running trials finish, the waiting ones become `cancelled`, SEARCH_COMPLETE
+  has `ended_by` `user_stop` and its finalist is the best ok trial, and the
+  best fit starts. T30c with `--kill-running`: the running trials' jobs are
+  deleted (the fake qdel records it), their records are killed with the
+  reason, none is resubmitted though `resubmit_killed` is true. T30d a
+  trial failing of a node fault after a request is not resubmitted. T30e a
+  configuration with a searches list: the request stops that search only;
+  the other searches go on.
+- Regression: `test_smoke_block7.py`, `test_smoke_identity.py`,
+  `test_smoke_finalist.py`, `test_smoke_report.py` pass as at the contract
+  commit.
+- Custom code: none.
+- Status: drafted.
+
+### Block 31: the replicate pair rule (added 2026-11-17; D-148 (3), D-146, D-147; wave W3)
+
+Arm A5's replicate pairs become two different real windows drawn at random
+within a group named by one of the real bank's id arrays, pairs within one
+well allowed (D-146, D-147); the pipeline passes the rule of the
+configuration (`replicate.*`) to every runner, and the new rule is the
+standard of a new project (D-148). [the user's calls of 2026-11-17, D-146,
+D-147, D-148; the sampler's construction Claude's; Confirmed: yes
+2026-11-17]
+
+- Modules: `hpc/joint/stage2/joint_batches.py` (the within-group sampler;
+  `ThreeStreamBatcher(..., rep_pairs="cross_well", rep_group=None)`; the
+  report lines), `hpc/joint/stage3/run_joint_arms.py` (the flags, the A5
+  refusal, the replicate diagnostic), `hpc/joint/stage3/
+  smoke_test_rep_pairs.py` (new), `hpc/pipeline/stages/replicate.py`
+  (`runner_extra`'s body). The shard contract's optional `rep_group` array
+  (`hpc/joint/stage1/latent_bank.py`, `OPTIONAL_ROW_ARRAYS`) is the
+  contract's and stays as committed.
+- Flags (run_joint_arms.py; the tuner passes them through `--runner-extra`):
+  `--rep-pairs {cross_well,within_group}`, default `cross_well`;
+  `--rep-group-key {donor,rep_group,batch,well}`, default `donor`. Without
+  the flags the runner is exactly the parent commit's (regression: block
+  14's rule).
+- Mathematics. Let R be the real rows that are not surrogates, g_i the
+  value of the KEY array at row i, and for each group h, n_h = |{i in R :
+  g_i = h}|.
+  - `within_group`: the pair set is P = {(i, j) : i, j in R, i < j, g_i =
+    g_j}, |P| = sum over h of n_h (n_h - 1) / 2; two rows of one well are in
+    P. Each pair the batcher draws is uniform on P: a group h with
+    probability w_h = [n_h (n_h - 1) / 2] / |P|, then two distinct rows of
+    h, uniform among its n_h (n_h - 1) / 2 unordered pairs. The b_rep pairs
+    of one step are independent draws, so one step may repeat a pair (with
+    |P| >> b_rep, rarely). P is never enumerated (its size grows as the
+    square of the groups' sizes); the draws use the batcher's replicate
+    generator (`g_rep`), so the checkpoint's state resumes the same
+    sequence.
+  - `cross_well`: block 14's rule (F-ab) with the KEY array in place of the
+    donor: P = {(i, j) : g_i = g_j, well_i != well_j}, enumerated, drawn as
+    now (b_rep distinct pairs per step). With KEY = donor it is block 14's
+    exactly.
+  - Under either rule |P| = 0 with lambda_rep > 0 stops the run (F-aa), the
+    message naming the rule and KEY.
+- The real bank must hold the KEY array when the real arm is loaded;
+  otherwise the run stops: `--rep-group-key <KEY>: the real bank has no
+  '<KEY>' array (a bank built before Sbi-extractor block 9 has no
+  rep_group)`. Without a real bank (S-A1's trials) the flags are accepted
+  and unused.
+- Report lines (the batcher's report): `replicate pairs  : <|P|>  (<rule>)`,
+  where <rule> is `two rows of one <KEY> group, any well` (within_group) or
+  `two wells of one <KEY> group` (cross_well); under within_group also
+  `replicate groups : <number of h with n_h >= 2> of <number of groups>`.
+- The replicate diagnostic (run_joint_arms, after training): under
+  `within_group` it scores at most 64 pairs of P drawn with a generator
+  seeded by `--seed`, spread over the groups (round robin over the groups
+  in increasing id, one fresh pair per group per turn, a group skipped once
+  it has no unscored pair), its record's `pair_kind` the rule's text, plus
+  `n_groups_scored`; under `cross_well`, block 14's diagnostic unchanged
+  (its fallback included).
+- `replicate.runner_extra(cfg, base="")`: `base` followed by `--rep-pairs
+  <replicate.pairs> --rep-group-key <replicate.group_key>`, one space
+  between items, no leading or trailing space; the stages already pass it
+  to every trial, budget probe and best-fit member (the contract).
+- Test oracles (`hpc/joint/stage3/smoke_test_rep_pairs.py`): T31a counts by
+  hand -- 12 rows: rows 0-5 in group 0 with rows 4 and 5 surrogates, rows
+  6-8 in group 1, row 9 in group 2, rows 10-11 in group 3: n = (4, 3, 1, 2),
+  |P| = 6 + 3 + 0 + 1 = 10, w = (0.6, 0.3, 0, 0.1), `replicate groups : 3 of
+  4`; in 100,000 draws no pair crosses a group, contains a surrogate or
+  repeats a row, and each group's frequency is within 0.01 of its w. T31b the
+  law -- the 30 wells of LindDUP's shape (groups of 5, 12, 12 and 1 wells,
+  54 windows per well: 9 subregions x 6 windows), 200,000 draws: each
+  group's frequency within 0.005 of w_h, the share of pairs within one well
+  within 0.005 of its exact value per group ((54 - 1) / (54 w - 1)), as
+  computed by `pair_mix.py` of 2026-11-17 (0.197, 0.082, 0.082, 1.000).
+  T31c regression -- `cross_well` with KEY donor equals block 14's pairs on
+  B14's example; the stage 2 suites pass. T31d determinism -- the same
+  seed gives the same pairs; a batcher saved with `state_dict` and restored
+  draws the same continuation. T31e the runner -- A5 to completion at 2
+  epochs of 3 steps on a small cohort bank whose shard carries `rep_group`,
+  under `--rep-pairs within_group --rep-group-key rep_group`, its report
+  line counting |P|; the refusal on a bank without `rep_group`; A1 and A5
+  without the flags unchanged (B14's runner tests pass). T31f
+  `runner_extra` on the committed configurations: linddup `--rep-pairs
+  within_group --rep-group-key rep_group`, giulia `... within_group ...
+  donor`, synth `... cross_well ... donor`, with and without `base`.
+- Custom code: the within-group sampler (no library draws a uniform pair
+  from a union of groups without enumerating it; checked:
+  `numpy.random.Generator.choice` over groups then over rows, which is what
+  it uses).
+- Status: drafted.
+
+### Block 32: the inputs check on configuration v11 (added 2026-11-17; D-148, D-143, D-145, D-142; wave W3)
+
+The inputs check (block 9) is the user's first command on davinci for a new
+campaign; on v11 it also checks the cohort map against the manifest, the
+topology folders a kill left without metadata, and the partial topologies.
+[the user's calls D-143, D-145, D-148; the rows Claude's, approved with the
+plan; Confirmed: yes 2026-11-17]
+
+- Modules: `hpc/pipeline/tools/inputs_check.py`, `hpc/pipeline/tests/
+  test_smoke_inputs_check.py` (its fixture moved from the MEAMA-like tree
+  to an lcdup15-like one: the committed `linddup.json` v11 describes the
+  campaign `lcdup15_rho1300_neur_n01`). Not this block's: `config.py`,
+  `linddup.json` and the cohort map (the contract's).
+- The fixture (the test's tree): a campaign `campaign_lcdup15_rho1300_neur_n01`
+  with tasks `sweep_cfd_task0000` and `sweep_cpu_task0001` (or the like), a
+  37-axis registry of which 13 are active, ln coordinates but one, the
+  on-axis `gbarA` with box [0.01, 10] in every task, `conn_rule` flat,
+  `conn_prob` the only topology axis, each topology holding K iteration
+  files with their `iter_<i>.json` (K = `_resolved_n_workers` x
+  `n_params_per_worker` of the task's job_args.json), `topology_meta.json`
+  in each topology folder; a cohort manifest whose wells have the
+  `out_dir` of the committed cohort map (or a small map of its own,
+  written by the test); the configuration derived from the committed
+  `linddup.json` as now (paths into the tree).
+- Rows added (each one line, as the others):
+  - `cohort map`: `real.cohort_map` null -- NOTE `no cohort map: donor =
+    well`. Else the file read by Sbi-extractor's `export_windows/
+    cohort_map.read_cohort_map(path, manifest)` imported from
+    `paths.sbix_dir` (Block 9; the rules in one place), against the
+    manifest the check reads: OK with `<n> wells, <k> excluded; <D>
+    donors; <G> pairing groups; included per class <class>:<count>, ...`;
+    FAIL with the error's text (a well without a row, a row of no well, a
+    bad value); FAIL when the module is absent or raises
+    NotImplementedError (`the Sbi-extractor checkout has no Block 9: pull
+    it`); NOTE when the manifest is absent (nothing to check against).
+  - `topology metadata`: the raw `topo_*` folders without
+    `topology_meta.json`: FAIL with their count and the first ten paths
+    relative to `sim.sim_main` -- "move them out of their sweep folder
+    before S2: the virtual MEA stops on the whole task (ANN reply
+    2026-11-17, sec. 2.2)"; OK when none.
+  - `partial topologies`: with `bank.drop_partial_topologies` true, by
+    Sbi-extractor Block 10's rule (K(t) from job_args; f(t, k) = the
+    topology's `iter_*.json` files + the non-blank lines of its
+    `_failures.jsonl`): NOTE `<n> partial topologies in <m> task(s),
+    <s> simulations: the bank plan drops them whole`; FAIL when a task's
+    job_args lacks a positive integer `_resolved_n_workers` or
+    `n_params_per_worker`, or when f(t, k) > K(t); with false: NOTE `not
+    checked (drop_partial_topologies false)`.
+  - `searches`: with a `searches` list, one NOTE naming each search, its
+    campaign and its cap, and the cores the caps add up to against
+    `resources.max_cores`.
+  The existing rows are unchanged; their reading of `stoa_gate_p` is the
+  configuration's (`bank.topology_axes`), not a name in the code.
+- Test oracles: T32a the consistent lcdup15-like tree: 0 FAIL, 0 WARN;
+  the counts; `topology axis conn_prob` OK; the `cohort map` row OK with its
+  counts (a fake `cohort_map` module in the test's Sbi-extractor tree
+  implementing Block 9's contract is allowed while the real one raises
+  NotImplementedError; with SBIX_CLONE at or after Block 9 the real one);
+  `partial topologies` NOTE with 0. T32b mutations, each making its named
+  row FAIL and no other: a manifest well missing from the map; a map row of
+  no well; a topology folder without `topology_meta.json`; a job_args
+  without `n_params_per_worker`; f(t, k) > K(t). T32c a partial topology (2
+  of K files): NOTE counting it, no FAIL. The suite's existing checks
+  (being written, reference, invariants, contract, determinism, edge
+  cases) moved to the new tree and passing.
+- Custom code: none.
+- Status: drafted.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
@@ -5228,6 +5624,9 @@ pins proposed by Claude; Confirmed: no]
 | `python3 hpc/pipeline/tests/test_smoke_theta_box.py` | block 11's amendment of 2026-11-14: theta inside the open box (the samplers, the builder, the record tool), the shard folder's race | numpy, scipy; the builder's environment | about a minute |
 | `qsub -q cpu -o $HOME/w1_checks.log -v W1_REPO=<checkout> <checkout>/hpc/pipeline/tests/run_w1_checks.pbs` | the cluster-side check of the wave W1 (2026-11-16): the three suites above and `test_smoke_pipeline.py`, `test_smoke_block7.py`, `test_smoke_synthetic.py` in one job on a compute node, from a checkout other than the running chain's; pass line `W1CHECK: ALL 6 SUITES PASSED` | davinci: the training environment (`W1_ENV`, default `sbi_env`); here: `W1_SKIP_CONDA=1 bash <script>` | about 15 minutes |
 | `python3 hpc/joint/stage4/smoke_test_joint_tune.py -k J37` | block 18's tuner check: `finalists --arm/--out` | numpy, scikit-optimize | seconds |
+| `python3 hpc/pipeline/pipeline.py stop-search --config <cfg> [--search <name>] [--kill-running] [--cancel]` | block 30: stop a search by hand (one file; the sequencer acts at its next tick) | a project's configuration | seconds |
+| `python3 hpc/pipeline/tests/test_smoke_runs.py`, `test_smoke_stop.py` | blocks 29 and 30 under the fake PBS | none for the config, graph and cap checks; the training environment for the end to end | minutes |
+| `python3 hpc/joint/stage3/smoke_test_rep_pairs.py` | block 31: the replicate pair rule and the runner's flags | the training environment (torch, sbi, zuko) | about a minute |
 | `bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what data [--dry-run]` | block 23: the data overview's job (`ev_dataview.py`): the windows, the eight statistics, theta and the PCA of the synthetic data set, nine figures | davinci (the tests: the reduced project under the fake PBS) | about a minute on 4,000 + 648 windows |
 
 ## 7. Not executable in the sandbox

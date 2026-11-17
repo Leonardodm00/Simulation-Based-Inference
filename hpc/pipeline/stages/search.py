@@ -65,6 +65,7 @@ import time
 
 from . import DEPS, Stage
 from . import common as CM
+from . import replicate as RP    # [block 31] the replicate flags
 
 ROUNDS_FILE = "pipeline_rounds.json"
 COMPLETE_FILE = "SEARCH_COMPLETE.json"
@@ -290,9 +291,10 @@ class SearchStage(Stage):
                        "--buffer-shards", str(int(d["loader"]["buffer_shards"])),
                        "--threads", str(int(s["trial"]["ncpus"])),
                        "--patience", "99",
-                       "--runner-extra", "--probe-steps %d --probe-val-rows %d"
-                       % (int(s["budget_gate"]["probe_steps"]),
-                          int(s["budget_gate"]["probe_val_rows"])),
+                       "--runner-extra", RP.runner_extra(
+                           cfg, "--probe-steps %d --probe-val-rows %d"
+                           % (int(s["budget_gate"]["probe_steps"]),
+                              int(s["budget_gate"]["probe_val_rows"]))),
                        "--argv-file", argv_file])
             if real:
                 args += ["--real-shards", real]
@@ -419,6 +421,10 @@ class SearchStage(Stage):
                    "--patience", "99"])
         if real:
             argv += ["--real-shards", real]
+        # [block 31, D-148 (3)] the replicate pair rule of the configuration
+        extra = RP.runner_extra(cfg)
+        if extra:
+            argv += ["--runner-extra", extra]
         # D-111: always --resume -- the runner continues from the run's checkpoint
         # when there is one and starts fresh otherwise, so a job that PBS runs
         # again continues where its first run stopped (`resume` names the

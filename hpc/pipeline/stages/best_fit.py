@@ -54,6 +54,7 @@ import tempfile
 
 from . import DEPS, Stage
 from . import common as CM
+from . import replicate as RP    # [block 31] the replicate flags
 
 COMPLETE_FILE = "BEST_FIT_COMPLETE.json"
 
@@ -302,7 +303,8 @@ class BestFitStage(Stage):
                 + ["--flow-hidden-layers", str(int(s["flow"]["conditioner_hidden_layers"])),
                    "--buffer-shards", str(int(d["loader"]["buffer_shards"])),
                    "--threads", str(int(b["ncpus"])),
-                   "--runner-extra", "--n-posterior-draws %d" % int(b["n_posterior_draws"]),
+                   "--runner-extra", RP.runner_extra(
+                       cfg, "--n-posterior-draws %d" % int(b["n_posterior_draws"])),
                    "--argv-file", argv_file])
         if real:
             args += ["--real-shards", real]

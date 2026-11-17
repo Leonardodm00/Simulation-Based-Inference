@@ -64,24 +64,8 @@ _SHARD_FILE = re.compile(r"^shard_([0-9]+)\.(npz|json)$")
 # A run's view of the configuration (block 15)
 # ---------------------------------------------------------------------------
 
-class RunView(C.Config):
-    """The configuration as one search of a synthetic data set sees it: a
-    copy of `base.data` with `paths.tune_root` and `paths.runs_root` joined
-    with run["name"], `search.campaign` = run["campaign"] and
-    `synthetic.run` = run; `base`'s path and sha256."""
-
-    def __init__(self, base, run):
-        if isinstance(base, RunView):
-            raise ValueError("RunView of a RunView (%s of %s)" % (run.get("name"), base.run["name"]))
-        data = copy.deepcopy(base.data)
-        paths = data["paths"]
-        paths["tune_root"] = os.path.join(paths["tune_root"], run["name"])
-        paths["runs_root"] = os.path.join(paths["runs_root"], run["name"])
-        data["search"]["campaign"] = run["campaign"]
-        data["synthetic"]["run"] = dict(run)
-        C.Config.__init__(self, data, base.path, base.sha256)
-        self.base = base
-        self.run = dict(run)
+# [block 29] RunView is stages/runs.py's (both kinds); imported here, as before
+from .runs import RunView   # noqa: E402
 
 
 class _StageLog(object):

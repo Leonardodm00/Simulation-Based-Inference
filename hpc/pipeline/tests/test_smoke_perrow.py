@@ -511,7 +511,7 @@ def test_contract():
         assert rc == 3 and "no per-row file was read" in out, (rc, out[-2000:])
         broken = os.path.join(root, "broken.json")
         with open(broken, "w") as fh:
-            fh.write('{"config_version": 10}')
+            fh.write('{"config_version": 11}')
         rc, out = run_cli(["--config", broken])
         assert rc == 2 and "does not load" in out, (rc, out[-2000:])
     finally:

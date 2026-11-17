@@ -167,7 +167,8 @@ def synthetic_config(root, sbix, sbi_dir, ds, tag="synth", bank_walltime="00:30:
                     "runs_root": os.path.join(root, "runs"),
                     "tune_root": os.path.join(root, "tune")}
     cfg["real"] = {"cohort_config": os.path.join(root, "cohort_config.json"), "cohort_tag": tag,
-                   "extract_root": ds["extract_root"]}
+                   "extract_root": ds["extract_root"],
+                   "cohort_map": None}         # v11 (D-148 (4)): no cohort map on the stand-in
     cfg["sim"].update({"sim_main": ds["sim_main"], "out_root": ds["out_root"],
                        "tools": os.path.join(root, "tools"), "queue": "test"})
     cfg["freeze"]["out"] = ds["freeze_out"]

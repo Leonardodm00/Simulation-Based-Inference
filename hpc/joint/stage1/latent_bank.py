@@ -38,6 +38,16 @@ ROW_ARRAYS = {
     "contaminated": (1, "b"),      # (n,) bool, from latent_gap (d)
 }
 
+# [SBI block 31 / Sbi-extractor block 9, D-148 (3), (4); contract commit 2026-11-17]
+# Per-row arrays a shard MAY carry; checked like ROW_ARRAYS when present. A
+# real bank built with Sbi-extractor's block 9 carries rep_group: the id of
+# the row's replicate pairing group (its cohort map's rep_group label; without
+# a map, the well). Every shard of one concatenation holds the same optional
+# arrays.
+OPTIONAL_ROW_ARRAYS = {
+    "rep_group": (1, "i"),
+}
+
 # Sidecar fields that enter the digest. Order is fixed here, not by dict order.
 CONTRACT_FIELDS = (
     "schema_version",
@@ -114,12 +124,14 @@ def check_arrays(arrays):
     missing = [k for k in ROW_ARRAYS if k not in arrays]
     if missing:
         raise ContractError("shard missing arrays: %r" % (missing,))
-    extra = [k for k in arrays if k not in ROW_ARRAYS]
+    extra = [k for k in arrays if k not in ROW_ARRAYS and k not in OPTIONAL_ROW_ARRAYS]
     if extra:
         raise ContractError("shard has unknown arrays: %r" % (extra,))
 
     n_rows = None
-    for name, (ndim, kind) in sorted(ROW_ARRAYS.items()):
+    specs = dict(ROW_ARRAYS)
+    specs.update((k, v) for k, v in OPTIONAL_ROW_ARRAYS.items() if k in arrays)
+    for name, (ndim, kind) in sorted(specs.items()):
         a = np.asarray(arrays[name])
         if a.ndim != ndim:
             raise ContractError("%s: expected ndim %d, got %d"
@@ -199,6 +211,9 @@ def concat_shards(paths):
         else:
             if sidecar["contract_digest"] != digest:
                 raise ContractError("shard %s has a different contract" % p)
+            if sorted(arrays) != sorted(all_arrays):
+                raise ContractError("shard %s holds the arrays %r, the first shard %r"
+                                    % (p, sorted(arrays), sorted(all_arrays)))
             for k in all_arrays:
                 all_arrays[k].append(arrays[k])
     merged = {k: np.concatenate(v, axis=0) for k, v in all_arrays.items()}

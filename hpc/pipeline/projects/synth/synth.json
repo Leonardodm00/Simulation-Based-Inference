@@ -1,6 +1,6 @@
 {
   "_comment": "The synthetic A2/A5 experiment's pipeline configuration, v4 (v1 2026-11-03; v2 2026-11-04, D-125: the trials' and the members' memory 96gb, was 32gb; v3 2026-11-11, D-126: the best fit of the other arm for the four searches with a term, `alt_best_fit`, block 18; v4 2026-11-13, D-132, the relaunch: `fragment_duty` class-bearing, `label_axes` 0-7 with `centre_scale` 0.562743, block 25, and one search per arm on the campaigns S-A2-only and S-A5-only with every alt_best_fit false, block 26; decisions D-118..D-123, D-125 and D-126 of claude/SBI_decisions_and_ideas_log.md, project knowledge; specs/SPEC.md secs. 1.1, 2.4, 2.5 and blocks 11-18; the roadmap specs/roadmap/synth.yaml, steps S4 and S6). A synthetic data set (\"kind\": \"synthetic\", block 15): both arms built by the bench generator, the simulated arm S on the whole parameter box and the synthetic 'real' cohorts R0 (pi = 0) and R3 (pi = 0.3), whose theta is recorded and withheld; five searches and their best fits under one command and one core cap (D-123). Values marked [Claude's] are not the user's: they are logistics proposed with this file and can change before the first submission (--dry-run first). Every key is required; a key starting with '_' documents the key after it and is ignored.",
-  "config_version": 10,
+  "config_version": 11,
   "kind": "synthetic",
   "dataset": "synth",
 
@@ -54,6 +54,9 @@
 
   "_split": "Giulia's (D-088): train / selection / report = 85 / 10 / 5 % of arm S's donors.",
   "split": {"fractions": [0.85, 0.10, 0.05]},
+
+  "_replicate": "v11 (D-148 (3), block 31): pinned to the rule synth was run with (block 14, F-ab): a replicate pair is two rows of one donor in two DIFFERENT wells. Its arm-R batches group 8 donors of different theta, so a batch-level group would be wrong here: the pipeline's standard (within_group) does not apply to this experiment.",
+  "replicate": {"pairs": "cross_well", "group_key": "donor"},
 
   "search": {
     "_shape_anchors": "The bench's theta width, 10 (the record job checks it on the bank); embedding_dim 64 as Giulia's and LindDUP's (D-123: the agreed space on the bench's anchors).",

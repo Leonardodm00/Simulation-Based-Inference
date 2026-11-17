@@ -27,15 +27,21 @@ import os
 import re
 
 __all__ = ["Config", "ConfigError", "load_config", "unhonoured_keys",
-           "SCHEMA", "SCHEMA_SYNTHETIC", "is_synthetic", "NEEDS_CODE", "CONFIG_VERSION"]
+           "SCHEMA", "SCHEMA_SYNTHETIC", "is_synthetic", "has_search_list", "NEEDS_CODE",
+           "CONFIG_VERSION"]
 
-CONFIG_VERSION = 10          # v10, 2026-10-19: D-101 (values only: gp_seed, max_cores)
+CONFIG_VERSION = 11          # v11, 2026-11-17: D-148 (searches, replicate.*, real.cohort_map,
+                             # bank.drop_partial_topologies); v10, 2026-10-19: D-101
 
 _WALLTIME = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
 _MEM = re.compile(r"^[0-9]+(kb|mb|gb|tb)$")
 _TAG = re.compile(r"^[a-z0-9_]+$")
 _CAMPAIGNS = ("S-A1", "S-A2", "S-A5", "S-A25", "S-A2-only", "S-A5-only")   # block 26: the last two
 _ARMS = ("A0", "A0s", "A1", "A2", "A2s", "A3", "A5", "A_ref", "shuffled")
+# [block 31, D-148 (3)] the replicate pair rule and the real-bank id fields that may name
+# its group (run_joint_arms.py --rep-pairs / --rep-group-key)
+_REP_PAIRS = ("within_group", "cross_well")
+_REP_GROUP_KEYS = ("rep_group", "donor", "batch", "well")
 
 
 class ConfigError(ValueError):
@@ -64,6 +70,7 @@ SCHEMA = (
     ("real.cohort_config", "abspath"),
     ("real.cohort_tag", "str"),
     ("real.extract_root", "abspath"),
+    ("real.cohort_map", "abspath_or_null"),          # v11, D-148 (4): Sbi-extractor block 9
     ("sim.sim_main", "abspath"),
     ("sim.campaign_glob", "str"),
     ("sim.out_root", "abspath"),
@@ -98,7 +105,11 @@ SCHEMA = (
     ("bank.verify.mem", "mem"),
     ("bank.verify.walltime", "walltime"),
     ("bank.max_rerun_rounds", "int>=0"),
+    ("bank.drop_partial_topologies", "bool"),        # v11, D-148 (5): Sbi-extractor block 10
     ("split.fractions", "fracs3"),
+    ("searches", "recorded_search_list_or_null"),    # v11, D-148 (1): block 29
+    ("replicate.pairs", "rep_pairs"),                # v11, D-148 (3): block 31
+    ("replicate.group_key", "rep_group_key"),
     ("search.campaign", "campaign"),
     ("search.arm", "arm"),
     ("search.shape_anchors.p", "int>=1"),
@@ -158,7 +169,7 @@ _NOT_SYNTHETIC = ("real.", "sim.", "freeze.", "bank.")
 SCHEMA_SYNTHETIC = tuple(
     (k, kind) for k, kind in SCHEMA
     if not k.startswith(_NOT_SYNTHETIC)
-    and k not in ("search.campaign", "search.arm", "paths.sbix_dir")) + (
+    and k not in ("search.campaign", "search.arm", "paths.sbix_dir", "searches")) + (
     ("kind", "synthetic_kind"),
     ("synthetic.builder.provider", "synthetic_provider"),
     ("synthetic.builder.fs", "float>0"),
@@ -187,6 +198,12 @@ _GAP_MODES = ("range_shift", "drift", "contamination")
 _BENCH_N_AXES = 10       # [block 25] the bench generator's axes (bench_burst_provider.BENCH_AXES)
 _REAL_KEYS = ("name", "seed", "donors_per_class", "n_windows", "pi", "gap_modes")
 _SEARCH_KEYS = ("name", "campaign", "real", "alt_best_fit")
+# [block 29, D-148 (1)] a recorded data set's searches (`searches`, a list): each
+# search has its campaign and its own core cap (null: the project's cap only)
+_RECORDED_SEARCH_KEYS = ("name", "campaign", "max_cores")
+# with a `searches` list the single search's campaign and arm go (each search has
+# its own campaign; the arm is the campaign's)
+_SINGLE_SEARCH_ONLY = ("search.campaign", "search.arm")
 
 # [block 18, D-126] the campaigns of two arms, A1 and the arm of the extra
 # term: a search of one of them may fit the best trial of the arm its
@@ -245,6 +262,20 @@ def _check_value(key, kind, v):
     elif kind == "abspath":
         if not (isinstance(v, str) and v.startswith("/")):
             return bad + "must be an absolute path (no '~'), got %r" % (v,)
+    elif kind == "abspath_or_null":
+        if v is not None and not (isinstance(v, str) and v.startswith("/")):
+            return bad + "must be an absolute path (no '~') or null, got %r" % (v,)
+    elif kind == "rep_pairs":
+        if v not in _REP_PAIRS:
+            return bad + "must be one of %s, got %r" % (", ".join(_REP_PAIRS), v)
+    elif kind == "rep_group_key":
+        if v not in _REP_GROUP_KEYS:
+            return bad + "must be one of %s (an id field of the real bank), got %r" % (
+                ", ".join(_REP_GROUP_KEYS), v)
+    elif kind == "recorded_search_list_or_null":
+        if v is None:
+            return None
+        return _check_list(bad, v, _RECORDED_SEARCH_KEYS, _check_recorded_search_item)
     elif kind == "relpath":
         if not (isinstance(v, str) and v and not v.startswith("/")):
             return bad + "must be a relative path, got %r" % (v,)
@@ -409,6 +440,62 @@ def _check_search_item(q):
     return None
 
 
+def _check_recorded_search_item(q):
+    """[block 29] One entry of a recorded data set's `searches`."""
+    if not (isinstance(q["name"], str) and _RUN_NAME.match(q["name"])):
+        return "name must match [A-Za-z0-9][A-Za-z0-9_-]*, got %r" % (q["name"],)
+    if q["campaign"] not in _CAMPAIGNS:
+        return "%s: campaign must be one of %s, got %r" % (q["name"], ", ".join(_CAMPAIGNS),
+                                                           q["campaign"])
+    if q["max_cores"] is not None and not (_is_int(q["max_cores"]) and q["max_cores"] >= 1):
+        return "%s: max_cores must be an integer >= 1 or null, got %r" % (q["name"], q["max_cores"])
+    return None
+
+
+def has_search_list(data):
+    """[block 29] True for a recorded configuration whose `searches` is a list
+    (several searches on one set of banks), False for null (the single search
+    of `search.campaign`, as before v11) and for a synthetic configuration."""
+    return (isinstance(data, dict) and not is_synthetic(data)
+            and isinstance(data.get("searches"), list))
+
+
+def _recorded_cross_checks(data, problems):
+    """[block 29] The rules between keys of a recorded configuration with a
+    `searches` list (sec. 3.1, v11): unique names, unique campaigns, and each
+    search's core cap able to hold its largest job and inside the project's."""
+    failed = set(p.split(":")[0] for p in problems)
+    if "searches" in failed:
+        return []
+    out = []
+    qs = data["searches"]
+    names = [q["name"] for q in qs]
+    dup = sorted(set(n for n in names if names.count(n) > 1))
+    if dup:
+        out.append("searches: the names must be unique, %s repeated" % ", ".join(dup))
+    camps = [q["campaign"] for q in qs]
+    dup = sorted(set(c for c in camps if camps.count(c) > 1))
+    if dup:
+        out.append("searches: two searches of one campaign on one set of banks search the "
+                   "same space twice (%s repeated)" % ", ".join(dup))
+    sized = ("search.trial.ncpus", "best_fit.ncpus")
+    if not any(k in failed for k in sized + ("resources.max_cores", "driver.ncpus")):
+        largest = max(int(_lookup(data, k)) for k in sized)
+        room = int(_lookup(data, "resources.max_cores")) - int(_lookup(data, "driver.ncpus"))
+        for q in qs:
+            c = q["max_cores"]
+            if c is None:
+                continue
+            if c < largest:
+                out.append("searches: %s: max_cores %d cannot hold its largest job (%d cores: "
+                           "search.trial.ncpus / best_fit.ncpus)" % (q["name"], c, largest))
+            if c > room:
+                out.append("searches: %s: max_cores %d exceeds what the project's jobs share "
+                           "(resources.max_cores less the sequencer's job: %d)"
+                           % (q["name"], c, room))
+    return out
+
+
 def _synthetic_cross_checks(data, problems):
     """[block 15] The rules between keys of a synthetic configuration, on the
     keys that passed their own checks (sec. 3.1, the synthetic kind)."""
@@ -542,6 +629,10 @@ def validate(data):
         return [_check_value("kind", "synthetic_kind", data["kind"])]
     synthetic = is_synthetic(data)
     schema = SCHEMA_SYNTHETIC if synthetic else SCHEMA
+    listed = has_search_list(data)
+    if listed:
+        # [block 29] with a searches list each search names its campaign
+        schema = tuple((k, kind) for k, kind in schema if k not in _SINGLE_SEARCH_ONLY)
     sized = _SIZED_JOBS_SYNTHETIC if synthetic else _SIZED_JOBS
     problems = []
     present = set(_walk(data))
@@ -561,7 +652,9 @@ def validate(data):
         if any(e.startswith(key + ".") for e in expected):
             continue
         problems.append("%s: unknown key (not in the schema%s)"
-                        % (key, " of the synthetic kind" if synthetic else ""))
+                        % (key, " of the synthetic kind" if synthetic else
+                           (" with a searches list: each search names its campaign"
+                            if listed and key in _SINGLE_SEARCH_ONLY else "")))
     named = ("resources.max_cores", "driver.ncpus") + sized
     if not any(p.split(":")[0] in named for p in problems):
         cap = int(_lookup(data, "resources.max_cores"))
@@ -572,6 +665,8 @@ def validate(data):
                             "and the largest job (%s %d)" % (cap, drv, key, size))
     if synthetic:
         problems.extend(_synthetic_cross_checks(data, problems))
+    if listed:
+        problems.extend(_recorded_cross_checks(data, problems))
     return problems
 
 

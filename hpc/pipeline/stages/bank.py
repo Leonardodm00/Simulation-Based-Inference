@@ -306,6 +306,10 @@ class BankPlanStage(_BankBase):
             "bootstrap_seed": int(b["bootstrap_seed"]),
             "bytes_sample_rows": int(b["bytes_sample_rows"]),
             "rows_per_shard": int(b["rows_per_shard"]),
+            # [v11, D-148 (4), (5)] Sbi-extractor blocks 9 and 10: the real bank's
+            # cohort map (null: donor = well) and the partial-topology rule
+            "cohort_map": d["real"]["cohort_map"],
+            "drop_partial_topologies": bool(b["drop_partial_topologies"]),
             "bank_root": os.path.join(d["paths"]["banks_root"], tag + "_sim"),
             "real_bank_root": os.path.join(d["paths"]["banks_root"], tag + "_real"),
             "plan_out": artefact_of("bank_plan", cfg)[1],

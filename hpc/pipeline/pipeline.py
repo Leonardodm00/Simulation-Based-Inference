@@ -1667,6 +1667,16 @@ def cmd_paths(args, graph=None, entry=None):
     return EXIT_OK
 
 
+def cmd_stop_search(args, graph=None, entry=None):
+    """[block 30] `stop-search`: stages/search_stop.py's command; it writes or
+    removes one file and submits nothing (D-098)."""
+    cfg = _load(args.config)
+    if cfg is None:
+        return EXIT_CONFIG
+    from stages import search_stop
+    return search_stop.cli(cfg, args.search, bool(args.kill_running), bool(args.cancel))
+
+
 def build_parser():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1702,6 +1712,14 @@ def build_parser():
     q.add_argument("--wait", type=float, default=300.0,
                    help="wait up to this many seconds for its lock to go (default 300)")
     common(sub.add_parser("paths"))
+    # [block 30, D-148 (2)] stop a search by hand: one file, read by the sequencer
+    q = common(sub.add_parser("stop-search", help="stop a search: no new trial; its best fit "
+                                                  "starts on the best trial so far (block 30)"))
+    q.add_argument("--search", default=None,
+                   help="the search's name (a configuration with a searches list)")
+    q.add_argument("--kill-running", action="store_true",
+                   help="delete the running trials' jobs too (default: they finish)")
+    q.add_argument("--cancel", action="store_true", help="withdraw a stop request")
     return ap
 
 
@@ -1710,7 +1728,8 @@ def main(argv=None, graph=None, entry=None):
     before the verb in the sequencer jobs' argv files (the tests)."""
     args = build_parser().parse_args(argv)
     return {"run": cmd_run, "submit": cmd_submit, "drive": cmd_drive, "status": cmd_status,
-            "stop": cmd_stop, "retire": cmd_retire, "paths": cmd_paths}[args.command](
+            "stop": cmd_stop, "retire": cmd_retire, "paths": cmd_paths,
+            "stop-search": cmd_stop_search}[args.command](
                 args, graph=graph, entry=entry)
 
 

@@ -14,6 +14,10 @@ A synthetic data set (block 15) has its own graph, built from its
 configuration by stages/synthetic.py: its banks, then a search and a best
 fit per entry of `synthetic.searches` (specs/SPEC.md sec. 2.1).
 
+A recorded data set whose `searches` is a list (block 29, config v11) has
+S1-S6, then a search and a best fit per entry of `searches`, built by
+stages/runs.py (specs/SPEC.md sec. 2.1).
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
@@ -147,6 +151,10 @@ class Stage(object):
     name = ""
     deps = ()
     max_resubmits = 0
+    # [block 29, D-148 (1)] None, or (cap, stage names): the cores of the jobs of
+    # those stages may not exceed cap (a search's own max_cores), inside
+    # resources.max_cores; set on a run's stages by stages/runs.py
+    core_group = None
 
     # -- the done-predicate -------------------------------------------------
 
@@ -230,6 +238,11 @@ def default_graph(cfg):
     if (cfg.data or {}).get("kind") == "synthetic":
         from .synthetic import synthetic_set_graph
         return synthetic_set_graph(cfg)
+    if isinstance((cfg.data or {}).get("searches"), list):
+        # [block 29, D-148 (1)] a recorded data set with several searches: S1-S6,
+        # then a search and a best fit per entry of `searches` (stages/runs.py)
+        from .runs import recorded_set_graph
+        return recorded_set_graph(cfg)
     graph = []
     for name in STAGE_ORDER:
         cls = BUILT.get(name)

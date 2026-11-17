@@ -375,7 +375,7 @@ def _job(jid, ncpus=None, cmd=None, after=None, finished=False):
 def test_known_answer():
     cfg = C.load_config(GIULIA)
     d = cfg.data
-    assert d["config_version"] == 10 and d["resources"] == {"max_cores": 300}, d.get("resources")
+    assert d["config_version"] == 11 and d["resources"] == {"max_cores": 300}, d.get("resources")
     assert d["driver"]["ncpus"] == 4
     assert P.stage_budget(cfg) == 296, "300 - 4, by hand (D-115; 396 under D-101, 196 under v9)"
     # the room of each sized job: floor(296 / 48) = 6 (6 x 48 = 288 <= 296 < 336)
@@ -709,7 +709,7 @@ def _edge_config():
     with open(GIULIA, "rb") as fh:
         base = C._strip_docs(json.loads(fh.read().decode("ascii")))
     cases = (("v8", lambda x: x.update(config_version=8),
-              "config_version: config_version must be 10, got 8"),
+              "config_version: config_version must be 11, got 8"),
              ("missing", lambda x: x.pop("resources"),
               "resources.max_cores: missing (every key is required)"),
              ("51", lambda x: x["resources"].update(max_cores=51),
