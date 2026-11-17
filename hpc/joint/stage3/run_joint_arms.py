@@ -57,7 +57,8 @@ import math                                                # noqa: E402
 import dsn_locate                                          # noqa: E402
 from latent_bank import ShardIndex, concat_shards          # noqa: E402
 from latent_sbi_simulator import LatentSBISpec, prior_log_prob  # noqa: E402
-from joint_batches import BatchSpec, ShardStream, ThreeStreamBatcher  # noqa: E402
+from joint_batches import (REP_PAIRS, BatchSpec, ShardStream,  # noqa: E402
+                           ThreeStreamBatcher, enumerate_donor_pairs)
 from joint_losses import ReplicateConsistencyLoss, box_prior_covariance  # noqa: E402
 from joint_model import build_joint_model                  # noqa: E402
 from joint_train import (StoppedAfterEpoch, TrainConfig, evaluate_npe,  # noqa: E402
@@ -69,6 +70,14 @@ from joint_diagnostics import (cluster_scores, effective_rank,  # noqa: E402
                                per_row_nll, replicate_report)
 
 ARMS = ("A0", "A0s", "A1", "A2", "A2s", "A3", "A5", "A_ref", "shuffled")
+
+# [block 31, D-148 (3)] the real bank's id arrays that may name a row's
+# replicate group (--rep-group-key); rep_group is the shard contract's
+# optional array (latent_bank.OPTIONAL_ROW_ARRAYS, Sbi-extractor block 9)
+REP_GROUP_KEYS = ("donor", "rep_group", "batch", "well")
+# [block 31] at most this many pairs are scored by the replicate diagnostic
+# (block 14's 64)
+N_DIAGNOSTIC_PAIRS = 64
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +319,19 @@ def build_parser():
                         "validation row, peak memory, the projected trial "
                         "time under --passes/--epochs); no record, exit 0")
     p.add_argument("--probe-val-rows", type=int, default=5000)
+    # [block 31, D-146..D-148] the replicate pair rule; both defaults are
+    # block 14's, so a call without them is unchanged (sec. 4). Without a
+    # real bank (S-A1's trials) they are accepted and unused.
+    p.add_argument("--rep-pairs", default="cross_well", choices=REP_PAIRS,
+                   help="[block 31] arm A5's replicate pairs: cross_well "
+                        "(default; block 14's F-ab: two rows of one group in "
+                        "two different wells) or within_group (two different "
+                        "real rows of one group, any well, drawn uniformly "
+                        "from the within-group pairs)")
+    p.add_argument("--rep-group-key", default="donor", choices=REP_GROUP_KEYS,
+                   help="[block 31] the real bank's id array that names a "
+                        "row's replicate group (default donor; rep_group is "
+                        "written by Sbi-extractor's block 9)")
     return p
 
 
@@ -400,6 +422,76 @@ def spread_pairs(pairs, donor_ids, k):
                     break
         depth += 1
     return pairs[np.asarray(out, dtype=np.int64)]
+
+
+def cross_well_diagnostic_pairs(group_ids, well_ids, k, unit="donor"):
+    """[block 14; block 31, amendment 2, D-152] The replicate diagnostic's
+    pairs under cross_well, grouped by the KEY array as the term is: the
+    term's pairs -- two rows of one group in two different wells -- and,
+    when no group has rows in two wells (a real bank whose group is its
+    well), every pair of rows of one group, as block 14 falls back; at most
+    k of them, round robin over the groups (spread_pairs). With the donor as
+    the group (unit "donor") these are block 14's calls and texts exactly.
+
+    group_ids, well_ids : (n,) the KEY array and the well array of the real rows
+    k : int, the most pairs; unit : the group's name in the text ("donor",
+        or "<KEY> group")
+    Returns ((m, 2) int64 rows, m <= k; pair_kind; the groups without a
+    pair, the D12 number of enumerate_donor_pairs)."""
+    pairs, n_single = enumerate_donor_pairs(group_ids, well_ids)
+    pair_kind = "two wells of one %s" % unit
+    if pairs.shape[0] == 0:
+        pairs, n_single = enumerate_donor_pairs(group_ids)
+        pair_kind = "rows of one well (no %s has two wells)" % unit
+    if pairs.shape[0] == 0:
+        return np.zeros((0, 2), dtype=np.int64), pair_kind, int(n_single)
+    return spread_pairs(pairs, group_ids, k), pair_kind, int(n_single)
+
+
+def spread_group_pairs(group_ids, k, rng):
+    """[block 31] The replicate diagnostic's pairs under within_group: at
+    most k pairs of P = {(i, j) : i < j, g_i = g_j}, spread over the groups
+    -- round robin over the groups in increasing id, one fresh pair per group
+    per turn (uniform among the group's pairs not yet taken), a group skipped
+    once it has no unscored pair. P is not enumerated: a fresh pair is two
+    distinct rows of the group drawn uniformly (Generator.choice without
+    replacement), drawn again while it is a pair already taken; a group stays
+    in the round while fewer than its n_h (n_h - 1) / 2 pairs are taken, so
+    the redraw always ends.
+
+    group_ids : (n,) the KEY value of each real row (all rows are in R: the
+        runner has no surrogate rows)
+    k : int, the most pairs; rng : numpy.random.Generator (seeded by --seed)
+    Returns ((m, 2) int64 rows, i < j, in the order taken; m = min(k, |P|);
+             the number of distinct groups among them)."""
+    g = np.asarray(group_ids).ravel()
+    _ids, inv = np.unique(g, return_inverse=True)
+    inv = np.asarray(inv).ravel()
+    members = [np.flatnonzero(inv == h) for h in range(_ids.size)]
+    cap = [m.size * (m.size - 1) // 2 for m in members]
+    taken = [set() for _ in members]
+    active = [h for h in range(len(members)) if cap[h] > 0]
+    out = []
+    while len(out) < k and active:
+        still = []
+        for h in active:
+            if len(out) >= k:
+                break
+            m = members[h]
+            while True:
+                a, b = (int(v) for v in rng.choice(m.size, size=2, replace=False))
+                pair = (min(a, b), max(a, b))
+                if pair not in taken[h]:
+                    break
+            taken[h].add(pair)
+            out.append((int(m[pair[0]]), int(m[pair[1]])))
+            if len(taken[h]) < cap[h]:
+                still.append(h)
+        active = still
+    n_groups = sum(1 for t in taken if t)
+    if not out:
+        return np.zeros((0, 2), dtype=np.int64), 0
+    return np.asarray(out, dtype=np.int64), int(n_groups)
 
 
 def metric_class_count(labels, source):
@@ -636,6 +728,13 @@ def main(argv=None):
     real = real_side = None
     if args.real_shards:
         real, real_side, _ = load_arm(args.real_shards)
+        # [block 31] the real bank must hold the KEY array when the real arm
+        # is loaded (the default, donor, is a contract array of every bank)
+        if args.rep_group_key not in real:
+            raise SystemExit(
+                "--rep-group-key %s: the real bank has no '%s' array (a bank "
+                "built before Sbi-extractor block 9 has no rep_group)"
+                % (args.rep_group_key, args.rep_group_key))
     needs_real = cfg_arm["dsn_domain"] == "real" or cfg_arm["lambda_rep"] > 0
     if needs_real and real is None:
         raise SystemExit("arm %s needs --real-shards" % args.arm)
@@ -852,13 +951,18 @@ def main(argv=None):
         model.freeze_encoder()          # weights AND eval mode, see joint_model
 
     # ---- batches and criteria ---------------------------------------------
-    real_x = real_cls = real_donor = real_well = None
+    real_x = real_cls = real_donor = real_well = real_group = None
     if real is not None:
         real_x = torch.as_tensor(np.asarray(real["x"]), dtype=torch.float32)
         real_cls = torch.as_tensor(np.asarray(real["cls"]), dtype=torch.long)
         real_donor = np.asarray(real["donor"])
         # [block 14, F-ab] a replicate pair is two wells of one donor
         real_well = np.asarray(real["well"])
+        # [block 31] the KEY array names a row's replicate group (with KEY
+        # donor, the same array as real_donor: block 14's pairs)
+        real_group = np.asarray(real[args.rep_group_key])
+    rep_kw = {"rep_pairs": args.rep_pairs, "rep_group": real_group,
+              "rep_group_key": args.rep_group_key}
 
     # The metric stream reads the SIMULATED arm for the *s arms (A0s, A2s),
     # with the generator's labels, and the real arm otherwise.
@@ -880,19 +984,30 @@ def main(argv=None):
             stream.theta = theta_stream
         batcher = ThreeStreamBatcher(None, None, real_x, real_cls, real_donor, None,
                                      spec_b, seed=args.seed, sim_stream=stream,
-                                     real_well=real_well)
+                                     real_well=real_well, **rep_kw)
     else:
         batcher = ThreeStreamBatcher(theta_tr, x_tr, real_x, real_cls, real_donor,
                                      None, spec_b, seed=args.seed,
-                                     real_well=real_well, **met_kw)
+                                     real_well=real_well, **dict(met_kw, **rep_kw))
     print(batcher.report())
     # [block 14, F-aa] arm A5 with no replicate pair would train as A1 with
-    # nothing to say so but the line above.
-    if cfg_arm["lambda_rep"] > 0 and batcher.pairs.shape[0] == 0:
+    # nothing to say so but the line above. [block 31] Under either rule;
+    # the message names the rule and the KEY.
+    if cfg_arm["lambda_rep"] > 0 and batcher.n_pairs == 0:
+        rule = "--rep-pairs %s --rep-group-key %s" % (args.rep_pairs, args.rep_group_key)
+        if args.rep_pairs == "within_group":
+            gs = batcher.group_sampler
+            raise SystemExit(
+                "arm %s has no replicate pair: no %s group of the real arm has "
+                "two rows (%d groups, each of one row; %s; F-aa)"
+                % (args.arm, args.rep_group_key,
+                   0 if gs is None else gs.n_groups, rule))
+        unit = ("donor" if args.rep_group_key == "donor"
+                else "%s group" % args.rep_group_key)
         raise SystemExit(
-            "arm %s has no replicate pair: no donor of the real arm has rows in "
-            "two different wells (%d donors without a pair; F-aa)"
-            % (args.arm, batcher.n_singleton_donors))
+            "arm %s has no replicate pair: no %s of the real arm has rows in "
+            "two different wells (%d %ss without a pair; %s; F-aa)"
+            % (args.arm, unit, batcher.n_singleton_donors, unit, rule))
 
     # Sigma0 spans all d_theta = 26 axes, kernel axes included. Decision, not
     # oversight: D17 closed as option (c) -- accept and record the kernel-axis
@@ -1035,29 +1150,51 @@ def main(argv=None):
                 for k, v in cluster_scores(z_rp, sim["cls"][rp],
                                            seed=args.seed).items()})
 
-    if real is not None:
-        from joint_batches import enumerate_donor_pairs
+    if real is not None and args.rep_pairs == "within_group":
+        # [block 31] at most 64 pairs of P (the term's pairs: two different
+        # rows of one KEY group, any well), drawn with a generator seeded by
+        # --seed and spread round robin over the groups in increasing id
+        take, n_groups_scored = spread_group_pairs(
+            real_group, N_DIAGNOSTIC_PAIRS, np.random.default_rng(args.seed))
+        if take.shape[0]:
+            rr = replicate_report(model, real_x[take[:, 0]],
+                                  real_x[take[:, 1]], Sigma0,
+                                  n_draws=args.n_posterior_draws)
+            rr["n_pairs"] = int(take.shape[0])
+            rr["pair_kind"] = batcher.pair_rule_text
+            rr["n_groups_scored"] = int(n_groups_scored)
+            rr["n_donors_scored"] = int(np.unique(np.asarray(real_donor)[take[:, 0]]).size)
+            rr["p_eff_gap"] = (None if p_eff_spec is None
+                               else float(rr["p_eff_mean"] - p_eff_spec))
+            rec["replicate"] = rr
+    elif real is not None:
         # [block 14, F-ab] pairs of two wells of one donor, as the term's;
         # the 64 the diagnostic scores are spread round-robin over the donors
         # (the first 64 in donor order would be one or two donors' pairs).
-        pairs, n_single = enumerate_donor_pairs(real_donor, real_well)
-        pair_kind = "two wells of one donor"
-        if pairs.shape[0] == 0:
-            # No donor has two wells (a real bank whose donor is its well):
-            # the diagnostic falls back to rows of one donor, as before block
-            # 14, and the record says which pairs it scored. The training
-            # term has no such fallback (F-aa, above).
-            pairs, n_single = enumerate_donor_pairs(real_donor)
-            pair_kind = "rows of one well (no donor has two wells)"
-        if pairs.shape[0]:
-            take = spread_pairs(pairs, real_donor, 64)
+        # When no donor has two wells (a real bank whose donor is its well)
+        # the diagnostic falls back to rows of one donor, as before block 14,
+        # and the record says which pairs it scored; the training term has
+        # no such fallback (F-aa, above).
+        # [block 31, amendment 2, D-152] grouped by the KEY array as the term
+        # is, so the pairs scored and the pairs trained follow one rule; with
+        # KEY donor this is block 14's diagnostic exactly (its pairs, texts
+        # and record fields). With another KEY the record names the groups
+        # scored, as under within_group.
+        by_donor = args.rep_group_key == "donor"
+        unit = "donor" if by_donor else "%s group" % args.rep_group_key
+        take, pair_kind, n_single = cross_well_diagnostic_pairs(
+            real_group, real_well, N_DIAGNOSTIC_PAIRS, unit)
+        if take.shape[0]:
             rr = replicate_report(model, real_x[take[:, 0]],
                                   real_x[take[:, 1]], Sigma0,
                                   n_draws=args.n_posterior_draws)
             rr["n_pairs"] = int(take.shape[0])
             rr["pair_kind"] = pair_kind
             rr["n_donors_scored"] = int(np.unique(np.asarray(real_donor)[take[:, 0]]).size)
-            rr["n_singleton_donors"] = int(n_single)
+            if by_donor:
+                rr["n_singleton_donors"] = int(n_single)
+            else:
+                rr["n_groups_scored"] = int(np.unique(np.asarray(real_group)[take[:, 0]]).size)
             rr["p_eff_gap"] = (None if p_eff_spec is None
                                else float(rr["p_eff_mean"] - p_eff_spec))
             rec["replicate"] = rr

@@ -21,7 +21,22 @@ def runner_extra(cfg, base=""):
     """`base` (a string of runner flags, possibly empty) followed by the
     replicate flags, whitespace-separated.
 
-    Contract placeholder (2026-11-17): returns `base` unchanged until block
-    31 lands, so that the runner, which does not know the flags before block
-    31, is called as before; block 31 replaces this body."""
-    return base
+    cfg : the configuration (config.Config or a run's view of it); reads
+        `replicate.pairs` and `replicate.group_key` (sec. 3.1, v11)
+    base : str
+    Returns `base`'s items, then `--rep-pairs <replicate.pairs>
+    --rep-group-key <replicate.group_key>`: one space between items, no
+    leading or trailing space (the tuner splits --runner-extra on
+    whitespace and appends the items to the runner's argv). A missing key
+    raises KeyError (config.Config.get); a value that is not one word
+    raises ValueError (the configuration's schema admits only the rule and
+    key names, so this guards a hand-built configuration)."""
+    vals = []
+    for key in ("replicate.pairs", "replicate.group_key"):
+        v = cfg.get(key)
+        if not isinstance(v, str) or v.split() != [v]:
+            raise ValueError("%s must be one word, got %r" % (key, v))
+        vals.append(v)
+    items = (base or "").split()
+    items += ["--rep-pairs", vals[0], "--rep-group-key", vals[1]]
+    return " ".join(items)
