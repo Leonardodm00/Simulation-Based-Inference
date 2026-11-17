@@ -13,6 +13,7 @@ Tags: `[LOG D-nnn]` the decision log on `main`; `[CODE SBI@ee8b382 file]` read i
 | 2026-11-17 | v7. The user's message of 11:51: the recordings' move ran (D-142 done; raw data at `LindaColloDUP/recordings/DATA_{C,P}`, symlinks at the old paths); the five copied wells are left out (D-145: 30 wells, 17 control, 13 DUP; how to exclude them is this chat's to build). Open: the A5 pair -- the user leans to pairs within a well across its subregions; Claude recommends within-well pairs (the same culture, so the same parameters); today's runner refuses within-well pairs for A5 (D-118 Status), so this needs a rule change and a decision. |
 | 2026-11-17 | v8. The user's messages of 12:11 and 12:17: the A5 pair is settled (D-146) -- two subregion windows of one batch, the batch being `Batch3` / `Batch4` within a condition (four groups: C-Batch3 5 wells, C-Batch4 12, P-Batch3 12, P-Batch4 1); within-well pairs are included, so the runner's refusal of them (D-118 Status) has to go. To build here: the pairing level as a configuration value (well, plate folder, batch), set to batch; and a check on the A1 fit before A5's search -- the summaries' distance over within-well pairs against across-well pairs of one batch (map sec. 4b). v7's open point on the pair is closed. |
 | 2026-11-17 | v9. The user's message of 12:24 (D-147): v8's check on the A1 fit before A5's search is dropped -- the three arms are searched and fitted side by side, A5 not waiting for A1; an A5 pair is two distinct windows drawn uniformly at random within its group (condition x batch; any well, subregion and 180 s). With 54 windows per well (9 subregions x 6 windows, the 6 assumed), about 8 % of the pairs fall inside one well in the 12-well groups, 20 % in C-Batch3, all in P-Batch4 (map sec. 4b). Sec. 5 and 7 updated. |
+| 2026-11-17 | v10. The build of D-148 is done, checked and pushed. SBI `sci/pipeline` `7ba708f` and Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`. Wave W3 (SBI blocks 29-32, Sbi-extractor Blocks 9-10) and the final checks' fix round are in new sec. 9. The davinci run sheet is SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms -- the first submission" (N1-N9). Sec. 5's open items are marked settled where D-148..D-150 settled them. Nothing has run on davinci yet. |
 
 ## 1. The task
 
@@ -119,9 +120,9 @@ Per arm `[LOG D-141; D-088, D-089, D-114]`: 50 random trials then 20 GP rounds o
 | Edge rows at p = 14 | 17.2 % if theta is uniform on its box | 1 - (1 - 2 x 0.0067)^14 `[reasoning]` |
 
 Open, to settle before launch:
-- `max_total_walltime_h` 400 ends a search at the cap, it does not pause it `[CODE SBI@ee8b382, SPEC block 7]`; the user expects to stop by hand, so the cap has to be raised well beyond the expected stop.
-- How the user ends a search early and starts its best fit on the trials finished so far: not read in the code.
-- Three arms under separate per-arm caps: one project with three searches (the synthetic kind's `searches`, with a shared cap) or three projects sharing one bank (each pipeline counts only its own jobs; three sequencers must not build the same bank at once). Not designed. [2026-11-17 12:24, D-147: no check gates A5; the three searches start together.]
+- [settled 2026-11-17: D-150, `max_total_walltime_h` null; a search ends after its 250 trials or by hand, block 30] `max_total_walltime_h` 400 ends a search at the cap, it does not pause it `[CODE SBI@ee8b382, SPEC block 7]`; the user expects to stop by hand, so the cap has to be raised well beyond the expected stop.
+- [settled 2026-11-17: block 30, `pipeline.py stop-search --search <A1|A2|A5> [--kill-running]`; the best fit then starts on the best trial so far] How the user ends a search early and starts its best fit on the trials finished so far: not read in the code.
+- [settled 2026-11-17: D-148 (1), one recorded project with a `searches` list, each search with its own `max_cores` (block 29); the banks are built once] Three arms under separate per-arm caps: one project with three searches (the synthetic kind's `searches`, with a shared cap) or three projects sharing one bank (each pipeline counts only its own jobs; three sequencers must not build the same bank at once). Not designed. [2026-11-17 12:24, D-147: no check gates A5; the three searches start together.]
 - The flow's edge-support call is still open in the log; no ruling is recorded for LindDUP's best fit (the 2026-10-29 ruling was Giulia's).
 - The LindDUP roadmap is still unconfirmed (the log's open call).
 
@@ -149,16 +150,66 @@ Numbers are `[BENCH]`; the full reading is D-136's Status and the user's documen
 - [confirmed 2026-11-17 11:14] `DATA_P/Batch4` wells A2-B3 are copies of `DATA_P/Batch3/SubBatch1`'s (map sec. 5). [decided 2026-11-17 11:51, D-145: left out.]
 - After the move (D-142): the raw recordings are at `LindaColloDUP/recordings/DATA_{C,P}`, with symlinks at the old paths; `real.extract_root` (`extracted_v2`) is unchanged.
 - The outputs of sec. 4: given 2026-11-17 (recorded there).
-- The final simulation count: the user said on 2026-11-17 10:17 that the campaign's arrays on `cfd` and `cpu` will be removed; after that, rebuild the campaign index (a job killed mid-write may leave a truncated file `[reasoning]`) and record the count as the snapshot LindDUP trains on. Not yet done.
+- The final simulation count: the user said on 2026-11-17 10:17 that the campaign's arrays on `cfd` and `cpu` will be removed; after that, rebuild the campaign index (a job killed mid-write may leave a truncated file `[reasoning]`) and record the count as the snapshot LindDUP trains on. Not yet done. [2026-11-17, v10: the run sheet's N4 counts the topology folders and simulation files, and N5 sets aside the folders without `topology_meta.json` and the `iter_*.npz` without their json -- unusable by the ANN reply's rule, possibly truncated by the kill, and a truncated one fails S2's re-detection of its whole task -- keeping the folders' times (D-112's 6 h). The bank plan then drops the partial topologies whole and records them (D-143); the count trained on is the plan's.]
 - The calls of sec. 5 (the clock, the three-arm layout, the edge support) and of sec. 6 (the term arms' ranking, the promotion stage).
 - The brief itself, attached to the pipeline chat.
+
+## 9. The build and the launch (2026-11-17, v10)
+
+### What was built (D-148; `[CODE]` at the hashes of the changelog row)
+
+| Repository | Block | What | Status |
+|---|---|---|---|
+| SBI | 29 | several searches in one recorded project (`searches`: name, campaign, max_cores), each with its own core cap; the run views; `search_report.py --search` | smoke-tested; final check below |
+| SBI | 30 (+30b) | `pipeline.py stop-search --search <q> [--kill-running] [--cancel]`: no new trial, then the best fit on the best trial so far; the report and the dry run follow a stop request | smoke-tested |
+| SBI | 31 | the replicate pair rule `replicate.pairs` within_group / cross_well, `replicate.group_key`; LindDUP within_group on `rep_group` (condition x batch) | smoke-tested |
+| SBI | 32 | the inputs check on config v11: cohort map, topology metadata, partial topologies, searches | smoke-tested |
+| SBI | 2 (amendment 4) | the bank's test task is the plan's first task with simulations | smoke-tested |
+| SBI | config v11 | `linddup.json` (lcdup15, three arms of 148 cores, within_group pairs, the cohort map, partial topologies dropped), `linddup_cohort_map.csv` (35 rows, 5 excluded); `giulia.json` and `synth.json` moved to v11 | in the contract |
+| Sbi-extractor | 9 | the cohort map of the real bank (donor, rep_group, wells left out; REAL_VERSION 2) | tested |
+| Sbi-extractor | 10 | partial topologies dropped whole (K(t) from job_args, f(t, k) = json files + failure lines) | tested |
+| Sbi-extractor | 7.4, 8 (amendments 2, 3) | WALLTIME=auto refuses a test task of 0 simulations; too-short traces counted (provenance `too_short`); an out_dir without `<class>/<root>/` refused; `cohort_map` must be absolute | smoke-tested |
+| Sbi-extractor | profile | `sim_reextract/profiles/linddup.sh` defaults on lcdup15; its suite's Q7-Q9 with them | 40 of 40 |
+
+### The final checks (independent Opus agents; reports in each repository's `specs/test_reports/`)
+
+- Sbi-extractor: 2026-11-17_1500 at db4b418, PASS WITH ISSUES: F1-F5 (a relative cohort_map, the re-detection suite's Q7-Q9, a test task emptied by the drop, too-short traces, an out_dir without a root), fixed by amendments 2-3 and f24f4cc; the second check 2026-11-17_1605 at 5b61d6c, PASS WITH ISSUES: three NOTEs, recorded.
+- SBI: 2026-11-17_1530 at a915950, PASS WITH ISSUES: F1 MAJOR (a reset left a stop request behind, so the reset search ended at once), F2-F3 (two suites broken by config v11 and block 31's parser), F4 (the README at v10), F5-F7 NOTEs, S1-S9; fixed by amendment 5 (blocks 30c, 31, the identity suite, config.py, the README); the second check 2026-11-17_1730 at 6c6c297, PASS WITH ISSUES: two NOTEs (value formats with a trailing newline, recorded; two run-sheet pass lines, corrected).
+- Each finding's decision is in its report's triage table. The fixes were made by implementer agents and gated before they were merged.
+- The changes to the science, all logged as `[orchestrator]` decisions: D-152, D-153 and D-154.
+- Everything else was plumbing.
+
+### On davinci
+
+Run the run sheet N1-N9 in SBI `hpc/pipeline/README.md`, one line at a time:
+- N1-N3: the code and its checks, in both repositories.
+- N4: the campaign check (read-only).
+- N5: the set-aside. This step is the user's call.
+- N6: the inputs check.
+- N7: the dry run.
+- N8: the submission.
+- N9: status, the per-arm reports and `stop-search`.
+
+The order of the stages, and what to expect at each:
+1. S1 is skipped.
+2. S2 re-detects the campaign: 815 tasks, 9 at once, 12 h of walltime each (an estimate).
+3. S3: the freeze, p = 14.
+4. S4-S6: the banks.
+5. The three searches start together, with 3 jobs of 48 cores each, and no clock cap.
+
+### Still open
+
+- The user's confirmations: Sbi-extractor Block 8's Q13 (the real ids, now with the cohort map) and Blocks 6.2-7.4's open questions (Q6-Q8, Q10-Q12, Q14). None blocks the run.
+- The flow's edge-support call, sec. 6's promotion stage, and a shared architecture across arms: as in secs. 5-6.
+- `HPC_PATHS.md` has no copy in the repository (the log's open call of 2026-11-13). The LindDUP paths are in this handoff's sec. 9, in `LINDDUP_RECORDINGS_MAP.md` and in the run sheet.
+- The LindDUP roadmap is unconfirmed.
 
 ## 8. Sources
 
 | What | Where |
 |---|---|
 | The decisions D-104..D-115 (LindDUP as built), D-136 (Status: synth v4's numbers), D-138..D-141 | `docs/project/SBI_decisions_and_ideas_log.md`, SBI `main` |
-| The configuration as it stands (v10) | `hpc/pipeline/projects/linddup/linddup.json`, SBI `sci/pipeline` `ee8b382` |
+| The configuration as it stands (v10) | `hpc/pipeline/projects/linddup/linddup.json`, SBI `sci/pipeline` `ee8b382` [v11 since 2026-11-17: `7ba708f`] |
 | Passes, epochs, steps; the search's rounds and clock | `specs/SPEC.md` sec. 2.3, blocks 6-7, SBI `sci/pipeline` |
 | The campaign | the user's `LindaColloDUP15_SBI_brief.md`; the ANN repository's `APPLY_LCDUP.txt` and SPEC blocks 4 and 11 (named by the brief, not read here) |
 | The bench scripts | `params_relations.py`, `tilt_check.py`, and the document's `scripts/` (with the user) |

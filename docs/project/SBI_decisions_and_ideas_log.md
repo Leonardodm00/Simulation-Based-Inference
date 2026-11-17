@@ -52,6 +52,7 @@
 | 2026-10-15 | v1.59. D-086 (the B5 chat, 11:44, `[user]`): `head_pool_ops` becomes a searched axis of the Giulia search (code 0 = mean, code 1 = mean, max and std per encoder stage), replacing for that search the space's fixed code 1 that no flag carried to the runner (F-b). Status lines: D-038 (its `head_pool_ops` fix takes the searched code in the Giulia search), D-085 (config v1 amended: `space_overrides` gains the axis). Index: D-086 added; D-085's cell. Open calls: D-038's open parts annotated; the F-s row's annotation of 2026-10-14 corrected (49-215 M parameters at depth 6, not 74-215 M; the error announced in the pipeline plan v1.2, sec. 4b). Read before this write (a full read to a file: v1.58 of 2026-10-14, unchanged). Next free number D-087. |
 | 2026-10-15 | v1.60. D-087 and D-088 (the B5 chat, 12:44, `[user]`). D-087: the joint loop's early-stopping margin, 1e-6 nats per row, stays as the code has it -- inert, no calibrated threshold for the NLL (the user's answer to Claude's report of 12:27 that no reason for the value is recorded). D-088: the user's values for the Giulia search and best fit -- the split 85/10/5 by donor, 48 cores per trial, one best-fit seed for now, 50 initial points, 20 GP rounds of 10, 20 epochs per trial; config v2 (`giulia.json`) sent. Status lines: D-085 (amended by D-088), D-086 (its open `n_initial_points` settled by D-088). Index: D-087, D-088 added; D-085's cell. Read before this write (a full read to a file: v1.59 of this morning, unchanged). Next free number D-089. |
 | 2026-10-15 | v1.61. D-089 (the B5 chat, 12:56, `[user]`): the finalist is fitted as an ensemble of M_ens = 10 independent (encoder, flow) pairs, combined as the uniform mixture -- the joint plan's Stage 4 ensemble (5 members, D7), never built in the joint driver (F-ap), at 10. Claude's reading, to confirm: the ten members share one donor split (D-088's "one seed"). Config v3 (`giulia.json`) sent; the build moves to a new chat, `claude/HANDOFF_2026-10-15_giulia_pipeline_build.md`. Status line: D-088 ((3) read with D-089). Index: D-089 added; D-088's cell. Read before this write (a full read to a file: v1.60 of 12:44, unchanged). Next free number D-090. |
+| 2026-11-17 | v1.150. No new decision. The build of D-148 is done, checked and pushed: SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`. Status lines of D-142..D-154. The final checks' fixes are plumbing, with no new decision: SBI amendment 4 (the bank's test task); Sbi-extractor amendments 2-3 (F1, F3, F4, F5); `cap_room`; the re-detection suite's Q7-Q9. The davinci run sheet is N1-N9 in SBI `hpc/pipeline/README.md`. The LindDUP handoff is now v10. |
 | 2026-11-17 | v1.149. One decision of the orchestrator during wave W3 (about 15:55 Europe/Rome): D-154 (block 30, amendment 3: a ledger record written before a stop's deletion is kept; the search report and the dry run follow the stop and the replicate flags -- a follow-up block 30b). Index: D-154 added. |
 | 2026-11-17 | v1.148. Two decisions of the orchestrator during wave W3 (the build of D-148; the results-commentary chat, about 15:30 Europe/Rome), each from an implementer's report and settled without the user under the coding directives (no. 7): D-152 (block 31: the batcher's `rep_group_key`, block 14's report texts kept under cross_well with KEY donor, the cross_well diagnostic grouped by KEY, T31b's within-well shares on 2,000,000 draws), D-153 (Sbi-extractor Block 9: a cohort-map row whose number of fields differs from the header's is refused; the LindDUP map's notes reworded without commas). Index: D-152, D-153 added. |
 | 2026-11-17 | v1.147. Four new decisions (the results-commentary chat, the user's message of 12:33 Europe/Rome and the card answered at about 13:05): D-148 (implement LindDUP's decisions and make the new features the pipeline's standard; the build plan approved), D-149 (A2's and A5's term weights searched as now, log10 lambda in [-3, 1], ranked on the simulated NLL), D-150 (no clock cap on LindDUP's searches: `max_total_walltime_h` null; the user stops a search by hand), D-151 (Claude pushes to Sbi-extractor directly; D-062's laptop route ends for that repository). Index: D-148..D-151 added; D-062's and D-141's cells annotated. |
@@ -331,18 +332,18 @@ point to where.
 | D-140 | 2026-11-16 | LindDUP searches and fits arms A2 and A5 as well as A1; A5's replicate pair is two wells of one donor | active; the well-to-donor map of the DUP15HD cohort not yet given; supersedes D-106's "A1 only" [2026-11-17: the user pointed to the `Deep_bio/` tree; it gives condition, batch, sub-batch, well and no donor -- `docs/project/LINDDUP_RECORDINGS_MAP.md` sec. 4; which unit is the donor still to be said] [2026-11-17 11:14: said -- the condition, D-144] [2026-11-17 12:17: the A5 pair is revised by D-146 -- subregions of one batch] |
 | D-141 | 2026-11-16 | LindDUP's three searches and best fits use Giulia's optimisation and training values; the user will look at interim results and may stop a search early and fit the best configurations reached; cores on the `intel` queue, 120 per arm proposed by the user | active; 148 cores per arm, three 48-core jobs beside the sequencer's 4 (the user, 18:29; v1.140); supersedes D-109's 200 on `cpu` [2026-11-17: the clock -- no cap, D-150] |
 | D-142 | 2026-11-17 | The DUP15HD recordings `DATA_C` / `DATA_P` move from `Deep_bio/` into the LindDUP project folder, `LindaColloDUP/recordings/`; symlinks stay at the old paths; `extracted_v2` stays | done 2026-11-17 (the user, 11:51: "This worked") |
-| D-143 | 2026-11-17 | In `lcdup15_rho1300_neur_n01`, a topology cut short by a kill is dropped whole | active; to build (the LindDUP pipeline chat) |
-| D-144 | 2026-11-17 | The donor of a DUP15HD well is its condition: two donors (control, DUP); batches, sub-batches and wells are replicates within a donor | active; to build (the LindDUP pipeline chat) [2026-11-17 12:17: the A5 pair is revised by D-146 -- subregions of one batch] |
-| D-145 | 2026-11-17 | The five wells of `DATA_P/Batch4` that are copies of `DATA_P/Batch3/SubBatch1`'s (A2, A3, B1, B2, B3) are left out of LindDUP's real data: 30 wells, 17 control and 13 DUP | active; to build (the LindDUP pipeline chat) |
-| D-146 | 2026-11-17 | An A5 replicate pair is two subregion windows of one batch (`Batch3` / `Batch4` within a condition: four groups), within-well pairs included; the pairing level is a configuration value (well, plate folder, batch) set to batch; before A5's search the A1 fit's summaries are compared within wells and across wells of a batch | active; to build (the LindDUP pipeline chat) [2026-11-17 12:24: the check dropped and the draw settled, D-147] |
-| D-147 | 2026-11-17 | No check gates A5: the three arms are searched and fitted side by side; an A5 pair is two distinct windows drawn uniformly at random within its group (any well, subregion, 180 s) | active; to build (the LindDUP pipeline chat) |
-| D-148 | 2026-11-17 | Implement LindDUP's decisions (D-138..D-147) and make the new features standard: several arms in one recorded project, each with its own core cap; a command that stops a search and starts its best fit; the A5 pair drawn at random within a group, within-well pairs allowed; a cohort map giving each recorded well its donor and pairing group and leaving wells out; partial topologies dropped whole. The pairing rule and the cohort map are what a new project gets by default; the build plan approved | active; to build (this chat, as orchestrator) |
-| D-149 | 2026-11-17 | A2's and A5's term weights searched as now: log10 lambda in [-3, 1], ranked on the simulated report NLL | active |
-| D-150 | 2026-11-17 | No clock cap on LindDUP's searches (`max_total_walltime_h` null): a search runs its 250 trials or until the user stops it | active |
-| D-151 | 2026-11-17 | Claude pushes to Sbi-extractor directly (supersedes D-062's laptop route for that repository) | active |
-| D-152 | 2026-11-17 | `[orchestrator]` Block 31 amendment 2: the batcher takes `rep_group_key`; under cross_well with KEY donor the report texts stay block 14's; the cross_well diagnostic groups by KEY as the term; T31b's within-well shares checked on 2,000,000 draws (tolerance 0.005) | active; SBI `sci/pipeline` 8ac4115 |
-| D-153 | 2026-11-17 | `[orchestrator]` Sbi-extractor Block 9 amendment 1: a cohort-map row with a number of fields other than the header's is refused; the LindDUP map's notes hold no comma | active; Sbi-extractor 3f6dd93, SBI f2f7203 |
-| D-154 | 2026-11-17 | `[orchestrator]` Block 30 amendment 3: under kill_running a ledger record written before the deletion is kept (never overwritten by a killed record); the search report's `next:` knows `cancelled` and a standing stop request; the dry run shows the runner's replicate flags (block 30b) | active; SBI `sci/pipeline` e1dad42 |
+| D-143 | 2026-11-17 | In `lcdup15_rho1300_neur_n01`, a topology cut short by a kill is dropped whole | active; to build (the LindDUP pipeline chat) [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-144 | 2026-11-17 | The donor of a DUP15HD well is its condition: two donors (control, DUP); batches, sub-batches and wells are replicates within a donor | active; to build (the LindDUP pipeline chat) [2026-11-17 12:17: the A5 pair is revised by D-146 -- subregions of one batch] [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-145 | 2026-11-17 | The five wells of `DATA_P/Batch4` that are copies of `DATA_P/Batch3/SubBatch1`'s (A2, A3, B1, B2, B3) are left out of LindDUP's real data: 30 wells, 17 control and 13 DUP | active; to build (the LindDUP pipeline chat) [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-146 | 2026-11-17 | An A5 replicate pair is two subregion windows of one batch (`Batch3` / `Batch4` within a condition: four groups), within-well pairs included; the pairing level is a configuration value (well, plate folder, batch) set to batch; before A5's search the A1 fit's summaries are compared within wells and across wells of a batch | active; to build (the LindDUP pipeline chat) [2026-11-17 12:24: the check dropped and the draw settled, D-147] [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-147 | 2026-11-17 | No check gates A5: the three arms are searched and fitted side by side; an A5 pair is two distinct windows drawn uniformly at random within its group (any well, subregion, 180 s) | active; to build (the LindDUP pipeline chat) [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-148 | 2026-11-17 | Implement LindDUP's decisions (D-138..D-147) and make the new features standard: several arms in one recorded project, each with its own core cap; a command that stops a search and starts its best fit; the A5 pair drawn at random within a group, within-well pairs allowed; a cohort map giving each recorded well its donor and pairing group and leaving wells out; partial topologies dropped whole. The pairing rule and the cohort map are what a new project gets by default; the build plan approved | active; to build (this chat, as orchestrator) [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-149 | 2026-11-17 | A2's and A5's term weights searched as now: log10 lambda in [-3, 1], ranked on the simulated report NLL | active [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-150 | 2026-11-17 | No clock cap on LindDUP's searches (`max_total_walltime_h` null): a search runs its 250 trials or until the user stops it | active [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-151 | 2026-11-17 | Claude pushes to Sbi-extractor directly (supersedes D-062's laptop route for that repository) | active [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-152 | 2026-11-17 | `[orchestrator]` Block 31 amendment 2: the batcher takes `rep_group_key`; under cross_well with KEY donor the report texts stay block 14's; the cross_well diagnostic groups by KEY as the term; T31b's within-well shares checked on 2,000,000 draws (tolerance 0.005) | active; SBI `sci/pipeline` 8ac4115 [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-153 | 2026-11-17 | `[orchestrator]` Sbi-extractor Block 9 amendment 1: a cohort-map row with a number of fields other than the header's is refused; the LindDUP map's notes hold no comma | active; Sbi-extractor 3f6dd93, SBI f2f7203 [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
+| D-154 | 2026-11-17 | `[orchestrator]` Block 30 amendment 3: under kill_running a ledger record written before the deletion is kept (never overwritten by a killed record); the search report's `next:` knows `cancelled` and a standing stop request; the dry run shows the runner's replicate flags (block 30b) | active; SBI `sci/pipeline` e1dad42 [2026-11-17: built and pushed, SBI 7ba708f, Sbi-extractor 0ff531d] |
 
 Ideas:
 
@@ -1943,7 +1944,7 @@ Ideas:
 - **Why:** such a topology keeps only its quickest runs, which lean towards quiet networks `[ANN-REPLY; reasoning]`.
 - **Does not decide:** on the same message, to Claude's two other points -- the split by topology and `conn_prob` having one value per topology -- the user: "No, do not worry" and "do not worry": no action asked; the pipeline's split is already by donor = one network (D-076, `linddup.json` `_split`).
 - **Sources:** `[user]` 2026-11-17 10:57.
-- **Status:** active; to build in the LindDUP pipeline chat.
+- **Status:** active; to build in the LindDUP pipeline chat. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -1955,7 +1956,7 @@ Ideas:
 - **Implies `[reasoning]`:** A5's pairs are A2's same-class pairs; a donor-cluster bootstrap on the real arm has 2 clusters, so its unit there has to be the well or the plate folder; a copy and its original (below) would be a pair at distance zero.
 - **Does not decide:** pairs across batches or within; whether the five copied wells (`DATA_P/Batch4` A2, A3, B1, B2, B3 = `DATA_P/Batch3/SubBatch1`'s, `[CLUSTER, the user's paste of 11:14]`) leave the bank.
 - **Sources:** `[user]` 2026-11-17 11:14.
-- **Status:** active; to build in the LindDUP pipeline chat.
+- **Status:** active; to build in the LindDUP pipeline chat. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -1966,7 +1967,7 @@ Ideas:
 - **Why:** the copies would weigh double in the DUP class, and a copy paired with its original is a replicate pair at distance zero.
 - **Does not decide:** which of the two folders is the true home of the five recordings; whether other `Batch4` recordings exist elsewhere.
 - **Sources:** `[user]` 2026-11-17 11:51; the `cmp` output of 11:14.
-- **Status:** active; to build in the LindDUP pipeline chat.
+- **Status:** active; to build in the LindDUP pipeline chat. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -1979,7 +1980,7 @@ Ideas:
 - **Supersedes:** D-140's "two wells of one donor" as the pair; D-144's reading "any two wells of one condition" (the donor stays the condition).
 - **Does not decide:** the check's threshold; whether simultaneous windows of two subregions and windows at different times are both drawn; the donor-level statistics on the real arm.
 - **Sources:** `[user]` 2026-11-17 11:51, 12:11, 12:17.
-- **Status:** active; to build in the LindDUP pipeline chat. [2026-11-17 12:24: the check of the Statement is dropped and the draw settled -- D-147.]
+- **Status:** active; to build in the LindDUP pipeline chat. [2026-11-17 12:24: the check of the Statement is dropped and the draw settled -- D-147.] [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -1991,7 +1992,7 @@ Ideas:
 - **Implies:** with 9 subregions per well (all 35 extracted wells, `[CLUSTER, the listing of 10:57]`) and 6 non-overlapping 180-s windows per subregion (assumed; the bank's stride not read), a well gives n_w = 54 windows and a group of w wells W = 54 w; a pair falls inside one well with probability (n_w - 1) / (W - 1) -- C-Batch3 0.197, C-Batch4 and P-Batch3 0.082, P-Batch4 1 -- and inside one well in the same 180 s with probability 8 / (W - 1) -- 0.030, 0.012, 0.151 `[verified by running it: exact count against 200,000 Monte Carlo draws, seed 0, within 0.005; pair_mix.py, delivered to the user]`. In the two 12-well groups about 92 % of A5's pairs join different wells.
 - **Does not decide:** weighting the draw towards within-well pairs (the user's "especially" of 11:51) -- not asked; the draw is uniform as recorded.
 - **Sources:** `[user]` 2026-11-17 12:24.
-- **Status:** active; to build in the LindDUP pipeline chat.
+- **Status:** active; to build in the LindDUP pipeline chat. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -2001,7 +2002,7 @@ Ideas:
 - **Decision (the user's words):** "Perfect implement everything and make it standard (will be the default for other runs in other projects) THen the submission"; on the plan card: "Yes, start the build".
 - **Statement (Claude's reading, as put on the plan of 12:50 and approved):** five blocks, built by parallel implementers and checked by an independent tester: (1) a recorded project may hold several searches (arms) on one shared set of banks, each with its own core cap within `resources.max_cores`; (2) a command stops a search -- no new trial; running trials finish, or are killed on request -- and its best fit starts on the best trial so far; (3) the A5 replicate pair is two distinct real windows drawn at random within a group named by a real-bank id field, within-well pairs allowed (D-146, D-147); (4) a cohort map gives each recorded well its donor and its pairing group and can leave wells out (here D-144, D-146, D-145); (5) a topology with fewer simulations than its task dispatched is dropped whole (D-143). "Standard": the features are generic; the pairing rule and the cohort map are what a new project's configuration gets by default; Giulia's configuration moves to v11 without changing what it ran; the synthetic project pins its old rule (two wells of one donor, F-ab), since its batches mix donors of different theta. Then `linddup.json` v11, the final check, and the davinci run sheet. Not included: the promotion stage, a ceiling on saturated windows, any change to the flow's edge support, the posteriors and report command.
 - **Sources:** `[user]` 2026-11-17 12:33 and the card.
-- **Status:** active; the build starts 2026-11-17.
+- **Status:** active; the build started 2026-11-17. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -2010,7 +2011,7 @@ Ideas:
 - **Binds:** `linddup.json`'s searches of arms A2 and A5 (`S-A2-only`, `S-A5-only`).
 - **Statement:** log10 lambda_dsn and log10 lambda_rep keep the joint space's range [-3, 1]; trials are ranked on the simulated report NLL, as in every search. On the synthetic bench this ranking chose log10 lambda between -2.81 and -1.90 (D-136 Status), so A2 and A5 may end close to A1; the user knows this and keeps the search unchanged.
 - **Sources:** `[user]` the card.
-- **Status:** active.
+- **Status:** active. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -2019,7 +2020,7 @@ Ideas:
 - **Binds:** `search.max_total_walltime_h` of `linddup.json` (null) for each of its searches.
 - **Statement:** a search runs its 50 + 20 x 10 trials, or until the user stops it with the stop command (D-148 (2)); D-090's 400 h does not apply to LindDUP.
 - **Sources:** `[user]` the card.
-- **Status:** active.
+- **Status:** active. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -2028,7 +2029,7 @@ Ideas:
 - **Binds:** how changes reach Sbi-extractor (branch `feat/real-arm-parity`); supersedes D-062's laptop route for that repository (Astro-Neuron-Network unchanged).
 - **Statement:** the session was given push access to Sbi-extractor on 2026-11-17; Claude commits and pushes there as on SBI's `sci/pipeline`; the user pulls on davinci.
 - **Sources:** `[user]` the card.
-- **Status:** active.
+- **Status:** active. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -2039,7 +2040,7 @@ Ideas:
 - **Now:** `ThreeStreamBatcher(..., rep_group_key="donor")`; with KEY donor the cross_well texts are block 14's unchanged (`two wells of one donor`), other KEYs `two wells of one <KEY> group`; under cross_well the diagnostic groups by the KEY array as the term does (KEY donor: block 14's bit for bit); the within-well shares on 2,000,000 draws within 0.005, the group frequencies on 200,000 draws within 0.005.
 - **Why (evidence):** the default's output must stay the parent commit's (the regression rule, sec. 4) and block 14's runner check asserts `replicate pairs  : 48  (two wells of one donor)` (`smoke_test_blocks_11_14.py:339`); the report lines print the KEY's name; a diagnostic scoring other pairs than those trained would mislead; at 200,000 draws the 5-well group receives about 15,900, so its share's binomial SD is sqrt(0.197 x 0.803 / 15,900) = 0.0032 and 0.005 is 1.6 SD -- 38 of 300 seeds failed `[the implementer's run]`; at 2,000,000 draws 5.0 SD, 0 of 60 seeds failed.
 - **Approach unchanged:** the pair law (D-146, D-147) and the defaults are as decided.
-- **Status:** active.
+- **Status:** active. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -2049,7 +2050,7 @@ Ideas:
 - **Was:** the fields of a row beyond the header's last column ignored (csv.DictReader's behaviour), a short row read with empty trailing columns.
 - **Now:** a row whose number of fields differs from the header's is refused, naming the line and both counts; a free-text field holding a comma must be quoted. The five excluded rows of the LindDUP map read "(cmp of every electrode file on 2026-11-17; D-145)", without the comma that made six fields under five columns.
 - **Why (evidence):** the committed map (88c32e5) had 6 fields on lines 32-36 under a 5-column header `[the implementer's run: csv.reader field counts {5, 6}]`; an unquoted comma in a column before a required one would shift values silently.
-- **Status:** active.
+- **Status:** active. [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
@@ -2060,7 +2061,7 @@ Ideas:
 - **Now:** a job that wrote its ledger record (ok or failed) before the deletion took effect keeps that record; a killed record never overwrites one. The search report reads a `cancelled` trial as never submitted and predicts no submission while a stop request stands, and prints the request; the dry run's argv lines show the replicate flags the submitted argv carries (follow-up block 30b, by block 30's implementer).
 - **Why (evidence):** the literal clause would destroy a finished trial's record in a race between `qdel` and the runner's last write; `search_report.py`'s `next_action` read a cancelled trial as "queued again" `[the implementer's reading of the merged code]`; the dry run's member line ended at `--n-posterior-draws 512` while the submitted argv carried the replicate flags `[block 31's implementer]`.
 - **Approach unchanged:** the stop's rules and the pair rule are as decided (D-148, D-147).
-- **Status:** active; 30b in progress.
+- **Status:** active; 30b built (merged into `sci/pipeline`). [2026-11-17: built, checked and pushed -- SBI `sci/pipeline` `7ba708f`, Sbi-extractor `feat/real-arm-parity` `0ff531d` `[GITHUB 2026-11-17, ls-remote]`; the final checks: Sbi-extractor 2026-11-17_1500 PASS WITH ISSUES (five findings, fixed) and 2026-11-17_1605 PASS WITH ISSUES (three NOTEs); SBI 2026-11-17_1530 PASS WITH ISSUES (F1 MAJOR, fixed) and 2026-11-17_1730 PASS WITH ISSUES (two NOTEs). Not run on davinci; the run sheet is N1-N9 of SBI `hpc/pipeline/README.md`, "LindDUP: lcdup15 and its three arms".]
 
 ---
 
