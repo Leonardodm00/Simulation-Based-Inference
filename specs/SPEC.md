@@ -5455,8 +5455,9 @@ D-147, D-148; the sampler's construction Claude's; Confirmed: yes
 2026-11-17]
 
 - Modules: `hpc/joint/stage2/joint_batches.py` (the within-group sampler;
-  `ThreeStreamBatcher(..., rep_pairs="cross_well", rep_group=None)`; the
-  report lines), `hpc/joint/stage3/run_joint_arms.py` (the flags, the A5
+  `ThreeStreamBatcher(..., rep_pairs="cross_well", rep_group=None,
+  rep_group_key="donor")` [amendment 2, 2026-11-17: the KEY's name, which
+  the report lines print]; the report lines), `hpc/joint/stage3/run_joint_arms.py` (the flags, the A5
   refusal, the replicate diagnostic), `hpc/joint/stage3/
   smoke_test_rep_pairs.py` (new), `hpc/pipeline/stages/replicate.py`
   (`runner_extra`'s body). The shard contract's optional `rep_group` array
@@ -5495,13 +5496,21 @@ D-147, D-148; the sampler's construction Claude's; Confirmed: yes
   where <rule> is `two rows of one <KEY> group, any well` (within_group) or
   `two wells of one <KEY> group` (cross_well); under within_group also
   `replicate groups : <number of h with n_h >= 2> of <number of groups>`.
+  [amendment 2, 2026-11-17, D-152: under cross_well with KEY donor the
+  texts are block 14's unchanged (`two wells of one donor`, the singleton
+  donors line), since the default's output must stay the parent commit's
+  and block 14's runner check reads it; `two wells of one <KEY> group`
+  holds for any other KEY.]
 - The replicate diagnostic (run_joint_arms, after training): under
   `within_group` it scores at most 64 pairs of P drawn with a generator
   seeded by `--seed`, spread over the groups (round robin over the groups
   in increasing id, one fresh pair per group per turn, a group skipped once
   it has no unscored pair), its record's `pair_kind` the rule's text, plus
   `n_groups_scored`; under `cross_well`, block 14's diagnostic unchanged
-  (its fallback included).
+  (its fallback included). [amendment 2, 2026-11-17, D-152: under
+  cross_well the diagnostic groups by the KEY array as the term does --
+  with KEY donor exactly block 14's diagnostic -- so the pairs scored and
+  the pairs trained follow one rule.]
 - `replicate.runner_extra(cfg, base="")`: `base` followed by `--rep-pairs
   <replicate.pairs> --rep-group-key <replicate.group_key>`, one space
   between items, no leading or trailing space; the stages already pass it
@@ -5517,6 +5526,12 @@ D-147, D-148; the sampler's construction Claude's; Confirmed: yes
   group's frequency within 0.005 of w_h, the share of pairs within one well
   within 0.005 of its exact value per group ((54 - 1) / (54 w - 1)), as
   computed by `pair_mix.py` of 2026-11-17 (0.197, 0.082, 0.082, 1.000).
+  [amendment 2, 2026-11-17, D-152: the group frequencies on 200,000 draws
+  within 0.005, the within-well shares on 2,000,000 draws within 0.005. At
+  200,000 draws the 5-well group gets about 15,900 of them, so its share's
+  binomial SD is sqrt(0.197 x 0.803 / 15,900) = 0.0032 and 0.005 is 1.6 SD
+  (12.7 % of seeds fail, measured by the implementer); at 2,000,000 it is
+  5.0 SD.]
   T31c regression -- `cross_well` with KEY donor equals block 14's pairs on
   B14's example; the stage 2 suites pass. T31d determinism -- the same
   seed gives the same pairs; a batcher saved with `state_dict` and restored
