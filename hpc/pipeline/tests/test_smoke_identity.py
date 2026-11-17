@@ -32,10 +32,13 @@ Checks (SPEC block 7, amendment (j), "Test oracles")
                         record's split_hash is the identity's (checked
                         inside it, at each step); here: same_value is
                         symmetric and the refusal a pure function
-    test_contract       for giulia.json, linddup.json and every run view of
-                        synth.json, the K_cfg part of the identity as
-                        `_identity` writes it (through a JSON round trip, as
-                        the state file holds it) compares equal to the file
+    test_contract       for every search of giulia.json, linddup.json and
+                        synth.json (each run view of linddup.json's
+                        `searches` and of synth.json's), the K_cfg part of
+                        the identity as `_identity` writes it (through a
+                        JSON round trip, as the state file holds it)
+                        compares equal to the file; one identity per search
+                        view of each file (stages/runs.py search_views)
     test_determinism    no randomness in the comparison: skipped
     test_edge_cases     the change accepted before the stage has started
                         (the start refuses a folder of another identity as
@@ -50,6 +53,7 @@ Run
 Pure ASCII, LF only.
 """
 
+import collections
 import copy
 import glob
 import json
@@ -72,6 +76,7 @@ for _p in (_PIPE, _HERE):
 import config as C                      # noqa: E402
 import stages as S                      # noqa: E402
 import stages.common as CM              # noqa: E402
+import stages.runs as RN                # noqa: E402
 import stages.search as SS              # noqa: E402
 
 PROJECTS = os.path.join(_PIPE, "projects")
@@ -424,9 +429,13 @@ def test_invariants():
 def test_contract():
     tmp = tempfile.mkdtemp(prefix="pipeline_ident_contract_")
     try:
-        seen = []
+        seen, views = [], []
         for path in (GIULIA, LINDDUP, SYNTH):
             cfg = C.load_config(path, synthetic_ok=True)
+            # the file's searches as the pipeline lists them (block 29, stages/runs.py
+            # search_views): the single search of a file whose `searches` is null, a run
+            # view per entry of `searches` (linddup.json v11) or `synthetic.searches`
+            views.extend((os.path.basename(path), n) for n, _v in RN.search_views(cfg))
             pairs = _search_stages(cfg)
             assert pairs, path
             if path == SYNTH:
@@ -441,8 +450,10 @@ def test_contract():
                 for k in SS.K_CFG:
                     assert SS.same_value(ident[k], SS.config_identity(view)[k]), (path, k)
                 seen.append((os.path.basename(path), stage.name, ident["campaign"]))
-        assert len(seen) == 2 + len(C.load_config(SYNTH, synthetic_ok=True)
-                                    .data["synthetic"]["searches"]), seen
+        # the count: one identity per search view of each file [the final check's F2,
+        # 2026-11-17: the count was the files' of before v11, one search in linddup.json]
+        assert collections.Counter(f for f, _s, _c in seen) == \
+            collections.Counter(f for f, _n in views), (seen, views)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
