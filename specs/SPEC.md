@@ -1407,7 +1407,8 @@ fixture, not part of the pipeline.
   cohort_manifest_<cohort_tag>/cohort_manifest.json` when it exists, else
   S1's artefact); the launcher's variables PROFILE, ENV_NAME = `envs.
   extract`, QUEUE = `bank.queue`, CONCURRENCY = `bank.concurrency`,
-  WALLTIME = `bank.walltime` (the array), TEST_INDEX 0, SBI_HPC_DIR =
+  WALLTIME = `bank.walltime` (the array), TEST_INDEX 0 (since amendment 4:
+  the plan's first task with simulations), SBI_HPC_DIR =
   `<sbi_dir>/hpc`. [contract amendment 4, 2026-11-17, Sbi-extractor's final
   check F3 (report 2026-11-17_1500 there): TEST_INDEX is the plan's first
   task that holds simulations -- the smallest index i of the plan's
@@ -1427,6 +1428,7 @@ fixture, not part of the pipeline.
 - Rules: S4 runs `plan` on the login node and needs the pass line `BANK
   PLAN OK` (the tool writes the plan and its .sha256); S5 is the chain line
   BC as phases -- `test` (skipped when `<bank_root>/tasks/task_0000.json`
+  -- since amendment 4 `task_<iiii>.json` of the test task --
   carries this plan's sha256 and a `finished` time), passed when that
   marker appears after the job (its log line `TASK <i> OK` is reported
   with it), then `array` (the array and its gate, recorded from the
@@ -1533,8 +1535,23 @@ fixture, not part of the pipeline.
   `REFUSED` lines stop the run. The stage does not resubmit failed tasks:
   the gate names them, and `--retry sim_bank` reruns the array, whose
   finished elements skip on their markers (the launcher's rule).
-- Status: [Reopened 2026-11-17 by contract amendment 4 (the test task):
-  drafted until implemented and checked.] Before: smoke-tested 2026-10-16 (7 pass, 1 skip, about 30 s; the Sbi-
+- Status: [Reopened 2026-11-17 by contract amendment 4 (the test task);
+  smoke-tested again 2026-11-17 (merged 03a0085): `test_smoke_block2.py` 15
+  of 16 pass, 1 skip, its new `test_test_task` (a plan [0, 5, 3]: test and
+  array with TEST_INDEX 1, `bank_test_1.log`, `bank test task 1`, the skip
+  rule on task_0001.json; plans [0, 0, 0], [], a non-integer n_iters, no
+  `tasks`, not JSON, absent: the stage stops before any launcher call; [3,
+  5, 2]: every argument as before; through the sequencer: STOP, exit 3, 0
+  jobs; end to end on the stand-in with task 0's topologies partial: `TASK
+  1 OK`, `WALLTIME=auto: test task 1 read 10 simulations`, VERIFIED), also
+  against Sbi-extractor 5935eb0, whose launcher refuses a test task of 0
+  simulations; twelve mutants caught; on the unchanged fixture the run's
+  lines identical to the parent's; block1c 7/1, inputs check 8 of 9
+  `[SANDBOX 2026-11-17]`. Accepted deviations: the read's problem worded
+  `the bank plan <path> cannot be read: <problem>`; the stop in start, after
+  D-099's check, through the stage's failure (STOP, exit 3); a state
+  without `test_index` (written before) polls task 0's marker; the dry
+  run's test line always prints the placeholder.] Before: smoke-tested 2026-10-16 (7 pass, 1 skip, about 30 s; the Sbi-
   extractor bank suite untouched). The first davinci run (10:35) passed
   the cluster check, the block-1 test and the dry run; it found the
   profile defect above and that the Giulia banks had never been built
