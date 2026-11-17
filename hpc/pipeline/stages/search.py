@@ -53,6 +53,19 @@ another search refused:
     finish     `finalists --top-k 1`, then the artefact of record
                `SEARCH_COMPLETE.json`
 
+A search stopped by hand (block 30; D-148 (2)): while the campaign folder
+holds a STOP_REQUEST.json (`pipeline.py stop-search`, stages/search_stop.py)
+the poll of the phase rounds submits nothing -- no waiting trial, no
+resubmission of any kind (killed, node fault, hold, environment fault) --
+and proposes no round; with kill_running the last job of each running trial
+is deleted once (`stop_deleted`) and the trial recorded killed when it ends;
+a job that ends without its record is killed, not resubmitted; once no
+trial is running or under examination the waiting trials become
+`cancelled` and the search finishes as at the clock cap, ended_by
+`user_stop`, the request's content in SEARCH_COMPLETE.json. A request
+standing at the gate's end proposes no round 0. Without a request nothing
+changes.
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
@@ -66,10 +79,16 @@ import time
 from . import DEPS, Stage
 from . import common as CM
 from . import replicate as RP    # [block 31] the replicate flags
+from . import search_stop as SST   # [block 30] a search stopped by hand
 
 ROUNDS_FILE = "pipeline_rounds.json"
 COMPLETE_FILE = "SEARCH_COMPLETE.json"
-TERMINAL = ("ok", "failed", "killed")
+# [block 30] `cancelled`: a waiting trial when a stopped search finishes (never
+# submitted after the request; terminal)
+TERMINAL = ("ok", "failed", "killed", "cancelled")
+# [block 30] the reasons of the killed records of a stopped search
+STOP_KILLED = "stopped by the user (stop-search --kill-running)"
+STOP_ENDED = "ended without a record after a stop request"
 
 _PROBE_LINE = re.compile(r"^PROBE OK:")
 
@@ -134,6 +153,35 @@ def identity_refusal(ident, cfg):
             "search first"
             % "; ".join("%s: search %s, configuration %s" % (k, _show(old), _show(new))
                         for k, old, new in diffs))
+
+
+def completed_trials(cfg):
+    """[block 30] The ids of the trials whose ledger record is ok, read from
+    the campaign folder as the stage reads a trial's record: `trials/<id>.
+    json` (the ledger's `*.json`; records set aside as `.json.<suffix><k>`
+    are out of it) through common.try_read_json, the status
+    `str(rec.get("status", "ok"))` (a record without one is ok); a record
+    that cannot be read is not ok. The stop command's test, which runs
+    without the sequencer's state."""
+    ledger = SearchStage()._dirs(cfg)["ledger"]
+    out = []
+    for p in sorted(glob.glob(os.path.join(glob.escape(ledger), "*.json"))):
+        rec, _ = CM.try_read_json(p)
+        if rec is not None and str(rec.get("status", "ok")) == "ok":
+            out.append(os.path.basename(p)[:-len(".json")])
+    return out
+
+
+def _delete_job(pbs, job_id):
+    """[block 30] pbs.delete: the recorder's own when it has one, else the
+    scheduler adapter's (`pbs.py` delete, sec. 3.3: qdel; False for a job
+    already finished). True when the scheduler accepted the deletion. A
+    scheduler that cannot be asked raises SchedulerError: the sequencer
+    retries the poll at its next tick, and the deletion with it."""
+    fn = getattr(pbs, "delete", None)
+    if not callable(fn):
+        fn = CM.PBS.delete
+    return bool(fn(job_id))
 
 
 class SearchStage(Stage):
@@ -554,12 +602,15 @@ class SearchStage(Stage):
         if os.path.isfile(pend):
             os.remove(pend)
 
-    def _finish_trial_job(self, cfg, st, pbs, tid, job, log):
+    def _finish_trial_job(self, cfg, st, pbs, tid, job, log, stop=None):
         """The trial's last job ended: ok / failed from its record, or a
         kill: resubmit with --resume, or record it killed. A record that
         cannot be read is read again for RECORD_GRACE_S, then set aside and
         taken as no record; a trial with no pending spec left cannot be
-        resubmitted and is recorded killed (amended 2026-10-19)."""
+        resubmitted and is recorded killed (amended 2026-10-19). [block 30]
+        Without a record, a job deleted by a stop request (`stop_deleted`),
+        or any job while a request stands (`stop`, the request), is not
+        resubmitted in any way: the trial is recorded killed (_kill_stopped)."""
         s = cfg.data["search"]
         tr = st["sub"]["trials"][tid]
         rp = self._record_path(cfg, tid)
@@ -587,6 +638,12 @@ class SearchStage(Stage):
             log("search: trial %s %s%s" % (tid[:12], tr["status"],
                                            (" nll %.6f" % tr["nll"]) if tr.get("nll") is not None
                                            else ""))
+            return
+        if tr.get("stop_deleted") or stop is not None:
+            # [block 30] a stop request: no resubmission of any kind (killed, hold,
+            # environment fault); a trial whose job the request deleted stays
+            # killed even when the request has been withdrawn since
+            self._kill_stopped(cfg, st, tid, job, log)
             return
         if CM.held_off_node(job):
             # D-102: the job started on a listed host, held its slot and exited:
@@ -631,6 +688,82 @@ class SearchStage(Stage):
         self._write_killed_record(cfg, st, tid, why)
         tr["status"] = "killed"
         log("search: trial %s recorded killed after %d resubmission(s)" % (tid[:12], tr["resubmits"]))
+
+    # -------------------------------------- a stop by hand (block 30) ---
+
+    def _stop_request(self, cfg, st, log):
+        """The stop request standing for this search (search_stop.
+        read_request on the view), or None. A request is logged once, when
+        it is first seen (a request replacing it is a new one); its
+        withdrawal (stop-search --cancel) once, when it is first missed."""
+        sub = st["sub"]
+        req = SST.read_request(cfg)
+        seen = sub.get("stop_seen")
+        if req is None:
+            if seen:
+                log("search: the stop request of %s was withdrawn (stop-search --cancel): trials "
+                    "are submitted again" % (seen.get("requested_utc") or "?"))
+                sub.pop("stop_seen", None)
+            return None
+        kill = SST.kills_running(req)
+        key = {"requested_utc": req.get("requested_utc"), "kill_running": kill}
+        if seen != key:
+            if req.get("problem"):
+                log("search: the stop request %s cannot be read (%s): taken as a request without "
+                    "kill_running" % (SST.request_path(cfg), req["problem"]))
+            n = sum(1 for tr in sub.get("trials", {}).values() if tr.get("status") == "running")
+            log("search: stop requested %s (kill running: %s): no new trial; %d running"
+                % (req.get("requested_utc") or "?", "yes" if kill else "no", n))
+            sub["stop_seen"] = key
+        return req
+
+    def _kill_stopped(self, cfg, st, tid, job, log):
+        """A trial whose last job ended without a record under a stop
+        request: the stage's killed record, with the reason of the stop --
+        its job deleted by the request (kill_running), or ended on its own
+        -- and no resubmission."""
+        tr = st["sub"]["trials"][tid]
+        why = STOP_KILLED if tr.get("stop_deleted") else STOP_ENDED
+        self._write_killed_record(cfg, st, tid, "killed: %s (last job %s exit %s)"
+                                  % (why, job["id"], job.get("exit_status")))
+        tr["status"] = "killed"
+        tr.pop("nll", None)
+        log("search: trial %s %s (job %s exit %s): recorded killed, not resubmitted"
+            % (tid[:12], why, job["id"], job.get("exit_status")))
+
+    def _poll_stopped(self, cfg, st, pbs, req, by_id, log_path, log):
+        """A poll of the phase rounds while a stop request stands (the trials
+        whose job ended already decided): nothing is submitted and no round
+        is proposed. With kill_running the last job of each running trial is
+        deleted once (`stop_deleted`). Once no trial is running or under
+        examination, every waiting trial becomes `cancelled` and the search
+        finishes as at the clock cap: _finish with ended_by user_stop."""
+        trials = st["sub"].get("trials", {})
+        if SST.kills_running(req):
+            for tid, tr in sorted(trials.items()):
+                if tr.get("status") != "running" or not tr.get("jobs") or tr.get("stop_deleted"):
+                    continue
+                jid = tr["jobs"][-1]
+                job = by_id.get(jid)
+                if job is not None and job.get("finished"):
+                    continue       # it ended on its own: its record is being read again
+                accepted = _delete_job(pbs, jid)
+                tr["stop_deleted"] = {"job": jid, "utc": CM.utc_now(), "accepted": accepted}
+                log("search: trial %s: its job %s %s (stop-search --kill-running)"
+                    % (tid[:12], jid, "deleted" if accepted
+                       else "not deleted: the scheduler had it ended already"))
+        if any(tr.get("status") in ("running", "examining") for tr in trials.values()):
+            return "running"
+        cancelled = 0
+        for tid, tr in sorted(trials.items()):
+            if tr.get("status") == "waiting":
+                tr["status"] = "cancelled"
+                cancelled += 1
+        log("search: no trial running after the stop request of %s: %d waiting trial(s) "
+            "cancelled; the search finishes (user_stop)" % (req.get("requested_utc") or "?",
+                                                            cancelled))
+        self._finish(cfg, st, "user_stop", log_path, log, stop_request=req)
+        return "finished"
 
     # ---------------------------------------- the avoid list (D-102) ---
 
@@ -847,11 +980,15 @@ class SearchStage(Stage):
             c[tr["status"]] = c.get(tr["status"], 0) + 1
         return c
 
-    def _finish(self, cfg, st, ended_by, log_path, log):
-        """finalists --top-k 1, then SEARCH_COMPLETE.json."""
+    def _finish(self, cfg, st, ended_by, log_path, log, stop_request=None):
+        """finalists --top-k 1, then SEARCH_COMPLETE.json. [block 30] ended_by
+        `user_stop`: the stop request's content as `stop_request`, and the
+        cancelled trials counted in `n_trials` (0 when none)."""
         sub = st["sub"]
         dirs = self._dirs(cfg)
         counts = self._counts(st)
+        if ended_by == "user_stop":
+            counts.setdefault("cancelled", 0)
         sub["ended_by"] = ended_by
         self._save_rounds_file(cfg, st)
         if counts["ok"] == 0:
@@ -882,12 +1019,16 @@ class SearchStage(Stage):
                             "config": best["config"]},
                "identity": sub["identity"], "gate": sub.get("gate"),
                "rounds_file": dirs["rounds_file"], "config_sha256": cfg.sha256}
+        if ended_by == "user_stop":
+            rec["stop_request"] = stop_request         # [block 30] the file's content
         CM.write_json(dirs["complete"], rec)
         sub["phase"] = "complete"
-        log("search: SEARCH COMPLETE (%s): %d round(s), %d ok / %d failed / %d killed, "
+        log("search: SEARCH COMPLETE (%s): %d round(s), %d ok / %d failed / %d killed%s, "
             "finalist %s nll %.6f" % (ended_by, len(sub["rounds"]), counts["ok"],
-                                      counts["failed"], counts["killed"], best["trial_id"][:12],
-                                      best["nll_rank_split"]))
+                                      counts["failed"], counts["killed"],
+                                      (" / %d cancelled" % counts["cancelled"])
+                                      if ended_by == "user_stop" else "",
+                                      best["trial_id"][:12], best["nll_rank_split"]))
 
     # -------------------------------------------------------- interface ---
 
@@ -905,13 +1046,20 @@ class SearchStage(Stage):
             raise RuntimeError(refusal)
         self._rounds_file(cfg, st, pbs.log)
         self._refresh_from_ledger(cfg, st, pbs.log)
+        if sub.get("ended_by") == "user_stop":
+            # [block 30] a finish by hand that did not complete: the request decides
+            # at the next poll (still there: the search finishes again; withdrawn:
+            # it goes on), not the folder
+            sub["ended_by"] = None
+            self._save_rounds_file(cfg, st)
         if sub.get("ended_by"):
             # the folder says the search ended; only the finish is missing
             sub["phase"] = "finishing"
             return
         if sub.get("gate") and sub["gate"].get("verdict", {}) and sub["gate"]["verdict"].get("ok"):
             sub["phase"] = "rounds"
-            if not sub["rounds"]:
+            # [block 30] no round is proposed while a stop request stands
+            if not sub["rounds"] and SST.read_request(cfg) is None:
                 self._start_round(cfg, st, 0, log_path)
             return
         self._start_gate(cfg, st, pbs, log_path)
@@ -968,17 +1116,23 @@ class SearchStage(Stage):
                 % (verdict["worst_projected_x_safety_h"] / verdict["safety_factor"],
                    verdict["safety_factor"], verdict["worst_projected_x_safety_h"],
                    s["trial"]["walltime"], verdict["worst_maxrss_gb"], s["trial"]["mem"]))
-            self._start_round(cfg, st, 0, log_path)
+            if SST.read_request(cfg) is None:
+                self._start_round(cfg, st, 0, log_path)
+            else:
+                # [block 30] a stop request at the gate's end: no round is proposed
+                sub["phase"] = "rounds"
             phase = "rounds"
 
         if phase == "rounds":
+            # [block 30] a stop request (stop-search), read once per poll
+            stop = self._stop_request(cfg, st, log)
             # trials whose job ended
             for tid, tr in sorted(sub["trials"].items()):
                 if tr["status"] != "running" or not tr["jobs"]:
                     continue
                 job = by_id.get(tr["jobs"][-1])
                 if job is not None and job.get("finished"):
-                    self._finish_trial_job(cfg, st, pbs, tid, job, log)
+                    self._finish_trial_job(cfg, st, pbs, tid, job, log, stop=stop)
             if sub.get("env_stop"):
                 # D-111's guard: environment faults on many nodes in a row
                 sub["phase"] = "failed"
@@ -990,6 +1144,15 @@ class SearchStage(Stage):
                 self._sweep_failed(cfg, st, log)
             # D-102: a host cleared from the avoid list by hand is counted again from now
             CM.sync_avoid_list(sub, CM.avoid_file(cfg), log, self.name)
+            if stop is not None:
+                # [block 30] nothing submitted, no round proposed; the search finishes
+                # (user_stop) once nothing runs
+                return self._poll_stopped(cfg, st, pbs, stop, by_id, log_path, log)
+            if not sub.get("rounds"):
+                # [block 30] round 0 was not proposed while a stop request stood, and
+                # the request has been withdrawn since
+                self._start_round(cfg, st, 0, log_path)
+                return "running"
             # the throttle: fill the free slots with waiting trials, earliest round first
             # (a revived trial of an earlier round after a --retry comes first)
             running = sum(1 for tr in sub["trials"].values() if tr["status"] == "running")
