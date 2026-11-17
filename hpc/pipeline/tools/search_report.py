@@ -39,6 +39,19 @@ without --search or with a name it does not list (on one whose `searches`
 is null, --search is refused the same way). Writes nothing: every file is
 opened for reading; the scheduler is only queried.
 
+[block 30, amendment 3, D-154] A search stopped by hand (`pipeline.py
+stop-search`): the header ends with the request's line
+(`search_stop.status_line`, `stop requested <utc> (kill running: yes|no)`)
+while the search's STOP_REQUEST.json stands. A trial `cancelled` reads
+`next: nothing (cancelled by the stop request; never submitted)`; while the
+request stands no trial's `next:` predicts a submission or a resubmission:
+it reads `next: nothing (a stop request stands: ...)` with what the stage
+does instead -- under kill_running the job deleted, a trial whose job ends
+without a record recorded killed, a node fault queued but never submitted
+(cancelled once no trial runs), a waiting trial cancelled. A trial whose
+job a request deleted stays killed after the request is withdrawn
+(`stop_deleted` in the state).
+
 Stdlib only. Pure ASCII, LF only; Python 3.6 syntax.
 """
 
@@ -61,9 +74,10 @@ import pbs as PBS                       # noqa: E402
 import state as ST                      # noqa: E402
 import stages.common as CM              # noqa: E402
 import stages.runs as R                 # noqa: E402  (block 29: --search)
-from stages.search import SearchStage   # noqa: E402
+import stages.search_stop as SST        # noqa: E402  (block 30: a stop request)
+from stages.search import SearchStage, STOP_ENDED, STOP_KILLED   # noqa: E402
 
-STATUS_ORDER = ("examining", "running", "waiting", "failed", "killed", "ok")
+STATUS_ORDER = ("examining", "running", "waiting", "failed", "killed", "cancelled", "ok")
 
 _RUN_ARGV_EXIT = re.compile(r"^RUN_ARGV EXIT: ([0-9]+)\s*$", re.M)
 _ERRORISH = re.compile(r"(Error|Exception|Traceback|Killed|killed|exceeded|Bus error|"
@@ -135,9 +149,10 @@ def traceback_tail(text, n=12):
     return keep[-n:] if starts else keep[-8:]
 
 
-def trial_facts(cfg, stage, tid, tr, jobs, qstat=None):
+def trial_facts(cfg, stage, tid, tr, jobs, qstat=None, stop=None):
     """Everything on disk (and, with qstat -- {job id: its record} -- in the
-    scheduler) about one trial."""
+    scheduler) about one trial. [block 30] `stop`: the search's stop request
+    (search_stop.read_request), or None."""
     dirs = stage._dirs(cfg)
     f = {"tid": tid, "status": str(tr.get("status", "?")), "round": tr.get("round"),
          "jobs": list(tr.get("jobs", [])), "resubmits": int(tr.get("resubmits", 0) or 0),
@@ -145,7 +160,8 @@ def trial_facts(cfg, stage, tid, tr, jobs, qstat=None):
          "resume_next": bool(tr.get("resume_next")),
          "unreadable_since": tr.get("record_unreadable_since"),
          "node_faults_before": len(tr.get("node_faults", [])),
-         "unreadable_before": len(tr.get("unreadable_records", []))}
+         "unreadable_before": len(tr.get("unreadable_records", [])),
+         "stop": stop, "stop_deleted": tr.get("stop_deleted")}
     last = f["jobs"][-1] if f["jobs"] else None
     j = jobs.get(last) if last else None
     f["last_job"] = last
@@ -297,11 +313,119 @@ def _after_no_record(cfg, f, at_job_end):
     return "recorded killed (no resubmission left after %d)" % r
 
 
-def next_action(cfg, f):
-    """What the stage's next poll does with the trial."""
+def _killed_by_stop(f):
+    """What the stage records for a trial whose job ended without a record
+    under a stop request, or whose job a request deleted (stages/search.py
+    _kill_stopped)."""
+    return "recorded killed (%s), not resubmitted" % (STOP_KILLED if f.get("stop_deleted")
+                                                     else STOP_ENDED)
+
+
+def _next_deleted(cfg, f):
+    """[block 30] A running trial whose job a stop request deleted
+    (`stop_deleted`), the request withdrawn since: it stays killed -- a job
+    that ends without a record is not resubmitted; a record written before
+    the deletion decides as any record (D-154): None, the rules without a
+    request."""
+    ended = job_ended(f)
+    if not ended:
+        return ("nothing until its job %s ends (deleted by a stop request%s); then its record "
+                "decides, and without one the trial is %s"
+                % (f["last_job"], ("; the scheduler: %s" % f["qstat"][0]) if ended is False else "",
+                   _killed_by_stop(f)))
+    if f["record_exists"] and f["record"] is None:
+        return ("its record cannot be read: read again for %d s, then set aside as .unreadable%d; "
+                "then %s" % (int(CM.RECORD_GRACE_S), f["unreadable_before"] + 1, _killed_by_stop(f)))
+    if f["record"] is not None:
+        return None
+    return "ended without a record (its job deleted by a stop request): " + _killed_by_stop(f)
+
+
+def _next_stopped(cfg, f):
+    """[block 30, amendment 3, D-154] What the next poll does while the
+    search's stop request stands (f["stop"]): it submits and resubmits
+    nothing (stages/search.py _poll_stopped, _kill_stopped), so a trial the
+    rules without a request would submit or resubmit reads `nothing (a stop
+    request stands: ...)` with what the stage does instead; None for an
+    outcome that submits nothing anyway (a final status, a record that
+    decides), which reads as without a request."""
     s = cfg.data["search"]
     mx = int(s["trial"]["max_resubmits"])
     st = f["status"]
+    head = "nothing (a stop request stands: "
+    if st in ("ok", "killed", "?") or \
+            (st == "failed" and (f["fault_checked"] or not s["resubmit_node_faults"])):
+        return None
+    if st == "waiting":
+        return head + "never submitted; cancelled once no trial runs or is examined)"
+    queued = ("queued (%d of %d) but never submitted: cancelled once no trial runs"
+              % (f["resubmits"] + 1, mx))
+    at_job_end = (st == "running")
+    if at_job_end:
+        ended = job_ended(f)
+        if not ended:
+            sched = (" (the scheduler: %s)" % f["qstat"][0]) if ended is False else ""
+            kill = SST.kills_running(f["stop"])
+            if f.get("stop_deleted"):
+                what = "its job %s%s was deleted (kill running)" % (f["last_job"], sched)
+            elif kill:
+                what = "its job %s%s is deleted at the next poll (kill running)" % (f["last_job"], sched)
+            else:
+                what = "its job %s%s runs to its end" % (f["last_job"], sched)
+            return head + ("%s; then its record decides, and without one the trial is recorded "
+                           "killed (%s), not resubmitted)"
+                           % (what, STOP_KILLED if (kill or f.get("stop_deleted")) else STOP_ENDED))
+    if f["record_exists"] and f["record"] is None:
+        if at_job_end:
+            then = _killed_by_stop(f)
+        elif f["pending"] and f["resubmits"] < mx:
+            then = queued
+        else:
+            then = "recorded killed (%s)" % ("no pending spec to resubmit from" if not f["pending"]
+                                             else "no resubmission left after %d" % f["resubmits"])
+        return head + "its record cannot be read: read again for %d s, then set aside as " \
+                      ".unreadable%d; then %s)" % (int(CM.RECORD_GRACE_S), f["unreadable_before"] + 1,
+                                                   then)
+    rec = f["record"]
+    if rec is not None:
+        if str(rec.get("status", "ok")) == "failed" and s["resubmit_node_faults"]:
+            # a node fault heals into a queued trial only with a configuration to
+            # run and a resubmission left; else it is final or killed, as always
+            if not ((f["pending"] or rec.get("config")) and f["resubmits"] < mx):
+                return None
+            if f["node_fault"]:
+                return head + "NODE FAULT: record set aside, the trial %s)" % queued
+            if f["log_exit"] is None:
+                return head + ("examined: waits up to %d s for its log's RUN_ARGV EXIT line, then "
+                               "final unless that log shows a node fault, then %s)"
+                               % (int(CM.LOG_GRACE_S), queued))
+        return None
+    if at_job_end:
+        return head + "its job ended without a record: %s)" % _killed_by_stop(f)
+    return head + "no ledger record any more: %s)" % (
+        "queued but never submitted: cancelled once no trial runs" if f["pending"]
+        else "left failed (no pending spec)")
+
+
+def next_action(cfg, f):
+    """What the stage's next poll does with the trial. [block 30, amendment
+    3, D-154] A trial `cancelled` does nothing more; while the search's stop
+    request stands (f["stop"]) _next_stopped, and for a running trial whose
+    job a request deleted (f["stop_deleted"]) _next_deleted, where they
+    differ from the rules below."""
+    s = cfg.data["search"]
+    mx = int(s["trial"]["max_resubmits"])
+    st = f["status"]
+    if st == "cancelled":
+        return "nothing (cancelled by the stop request; never submitted)"
+    if f.get("stop") is not None:
+        stopped = _next_stopped(cfg, f)
+        if stopped is not None:
+            return stopped
+    elif f.get("stop_deleted") and st == "running":
+        deleted = _next_deleted(cfg, f)
+        if deleted is not None:
+            return deleted
     if st in ("ok", "killed"):
         return "final (%s)" % st
     if st == "failed" and (f["fault_checked"] or not s["resubmit_node_faults"]):
@@ -582,6 +706,11 @@ def main(argv=None):
         print("state %s: the search stage %s, phase %s, round %s"
               % (ST.State.path_of(state.work_root), rec.get("status"),
                  (rec.get("sub") or {}).get("phase"), (rec.get("sub") or {}).get("round")))
+    # [block 30, amendment 3] the search's stop request (stop-search), read only
+    stop = SST.read_request(cfg)
+    stop_line = SST.status_line(cfg) if stop is not None else None
+    if stop_line:
+        print(stop_line)
     if not trials:
         trials = ledger_only_trials(stage, cfg)
     qstat = None
@@ -596,7 +725,7 @@ def main(argv=None):
     for tid, tr in sorted(trials.items()):
         if args.trial and not tid.startswith(args.trial):
             continue
-        facts.append(trial_facts(cfg, stage, tid, tr, jobs, qstat=qstat))
+        facts.append(trial_facts(cfg, stage, tid, tr, jobs, qstat=qstat, stop=stop))
     facts.sort(key=lambda f: (_order_key(f["status"]), f["round"] if f["round"] is not None else -1,
                               f["tid"]))
     if args.trial:

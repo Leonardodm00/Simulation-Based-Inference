@@ -1226,6 +1226,14 @@ class SearchStage(Stage):
         sim, real = CM.shard_globs(cfg)
         ident = (st or {}).get("sub", {}).get("identity")
         refusal = identity_refusal(ident, cfg) if ident else None
+        # [block 30, amendment 3] the --runner-extra text the submitted argv carries
+        # (the replicate flags of block 31 included): a probe's (appended to its
+        # runner's argv by the tuner's `argv`) and a trial's (the tuner's
+        # `evaluate` option, given only when not empty)
+        probe_extra = RP.runner_extra(cfg, "--probe-steps %d --probe-val-rows %d"
+                                      % (int(s["budget_gate"]["probe_steps"]),
+                                         int(s["budget_gate"]["probe_val_rows"])))
+        trial_extra = RP.runner_extra(cfg)
         lines = ["identity: %s --sim-shards %s --split-fracs %s --split-seed %d (envs.train, login node)"
                  % (p["split_tool"], sim, " ".join(str(f) for f in d["split"]["fractions"]),
                     int(s["train_seed"])),
@@ -1236,6 +1244,16 @@ class SearchStage(Stage):
                     s["trial"]["walltime"], s["trial"]["mem"]),
                  "    " + line_of("gate_b<B>", os.path.join(dirs["jobs"], "gate_b<B>.log"),
                                   os.path.join(dirs["jobs"], "gate_b<B>.argv")),
+                 "    argv: %s %s --arm <the costliest configuration's arm> --sim-shards %s%s "
+                 "--out-dir %s --seed %d --split-fracs %s --epochs %d --passes %g --patience 99 "
+                 "--buffer-shards %d --threads %d --flow-hidden-layers %d <the costliest "
+                 "configuration's axes> %s"
+                 % (CM.E.python_in_env(), p["runner"], sim, (" --real-shards " + real) if real else "",
+                    os.path.join(dirs["gate"], "b<B>"), int(s["train_seed"]),
+                    " ".join(str(f) for f in d["split"]["fractions"]), int(s["trial"]["epochs"]),
+                    float(s["trial"]["passes"]), int(d["loader"]["buffer_shards"]),
+                    int(s["trial"]["ncpus"]), int(s["flow"]["conditioner_hidden_layers"]),
+                    probe_extra),
                  "rounds: round 0 = %d random configurations, then %d GP round(s) of %d "
                  "(%d trials in all), at most %d trial jobs at once, each:"
                  % (int(s["n_initial_points"]), int(s["gp_rounds"]), int(s["trials_per_round"]),
@@ -1250,13 +1268,15 @@ class SearchStage(Stage):
                  "    argv: %s %s evaluate --campaign %s --results-dir %s --pending-id <trial> "
                  "--sim-shards %s%s --out-dir %s --epochs %d --passes %g --split-fracs %s "
                  "--flow-hidden-layers %d --buffer-shards %d --threads %d --patience 99 "
-                 "--space-overrides ... [--resume on a resubmission, at most %d]"
+                 "--space-overrides ...%s [--resume on a resubmission, at most %d]"
                  % (CM.E.python_in_env(), p["tuner"], s["campaign"], d["paths"]["tune_root"], sim,
                     (" --real-shards " + real) if real else "", dirs["runs"],
                     int(s["trial"]["epochs"]), float(s["trial"]["passes"]),
                     " ".join(str(f) for f in d["split"]["fractions"]),
                     int(s["flow"]["conditioner_hidden_layers"]), int(d["loader"]["buffer_shards"]),
-                    int(s["trial"]["ncpus"]), int(s["trial"]["max_resubmits"])),
+                    int(s["trial"]["ncpus"]),
+                    (" --runner-extra '%s'" % trial_extra) if trial_extra else "",
+                    int(s["trial"]["max_resubmits"])),
                  "node faults (D-096): %s; checkpoints whose zip CRCs fail are moved aside "
                  "before a submission (D-097)"
                  % ("a trial failed of SIGBUS or a file-system error is queued again with --resume "

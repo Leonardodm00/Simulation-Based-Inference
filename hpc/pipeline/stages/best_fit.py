@@ -667,13 +667,16 @@ class BestFitStage(Stage):
                 "    argv: %s %s --arm <finalist's arm> --sim-shards %s%s --out-dir %s/member_seed<k> "
                 "--seed <k> --split-seed %d --split-fracs %s --epochs %d --passes %g --patience %d "
                 "--buffer-shards %d --threads %d --flow-hidden-layers %d <the finalist's axes> "
-                "--n-posterior-draws %d [--resume on a resubmission, at most %d]"
+                "%s [--resume on a resubmission, at most %d]"
                 % (CM.E.python_in_env(), p["runner"], sim, (" --real-shards " + real) if real else "",
                    dirs["root"], int(b["split_seed"]),
                    " ".join(str(f) for f in d["split"]["fractions"]), int(b["epochs"]),
                    float(b["passes"]), int(b["patience_epochs"]), int(d["loader"]["buffer_shards"]),
                    int(b["ncpus"]), int(d["search"]["flow"]["conditioner_hidden_layers"]),
-                   int(b["n_posterior_draws"]), int(b["max_resubmits"])),
+                   # [block 30, amendment 3] the --runner-extra text the member's argv carries,
+                   # appended last by the tuner's `argv` (the replicate flags of block 31)
+                   RP.runner_extra(cfg, "--n-posterior-draws %d" % int(b["n_posterior_draws"])),
+                   int(b["max_resubmits"])),
                 "node faults (D-096): %s; checkpoints whose zip CRCs fail are moved aside "
                 "before a submission (D-097)"
                 % ("a member failed of SIGBUS or a file-system error is resubmitted with --resume "

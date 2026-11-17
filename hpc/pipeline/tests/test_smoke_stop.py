@@ -64,6 +64,14 @@ Checks (specs/SPEC.md block 30, "Test oracles" T30a-T30e)
                         on a fresh state (the request still there: it
                         finishes again; withdrawn: it goes on); a request
                         file that cannot be read stops without killing
+    test_dry_run_extra  [amendment 3, D-154] the dry run's lines that describe
+                        a probe's, a trial's and a member's argv show the
+                        --runner-extra text the submission carries -- the
+                        value the stage hands the tuner's `argv` (a probe, a
+                        member) and the trial's own argv -- with
+                        replicate.runner_extra as it is in this branch and
+                        as a stand-in that adds block 31's flags (so the
+                        lines follow the function, not literal flags)
     test_convergence    not a discretisation: skipped
     test_determinism    no randomness in the pipeline's part: skipped
 
@@ -1112,6 +1120,98 @@ def _edge_unreadable(root):
         len(_lines_with(rec, "search: stop requested ? (kill running: no): no new trial; 1 running")) == 1, \
         rec.joined()
     return rec
+
+
+class _ArgvTuner(object):
+    """common.run_tuner for test_dry_run_extra: `costliest` writes two
+    costliest files (batch sizes 16 and 32), every call is kept."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, cfg, args, log_path=None, timeout=None):
+        self.calls.append(list(args))
+        if args[0] == "costliest":
+            out = args[args.index("--out-dir") + 1]
+            for b in (16, 32):
+                _write(os.path.join(out, "costliest_b%d.json" % b), {"config": {}})
+        return ""
+
+
+def _extra_of(argv):
+    """The value after --runner-extra in an argv, or None."""
+    argv = list(argv)
+    return argv[argv.index("--runner-extra") + 1] if "--runner-extra" in argv else None
+
+
+def test_dry_run_extra():
+    import stages.replicate as RP
+    from stages.best_fit import BestFitStage
+    root = _tmp()
+    try:
+        cfg = _cfg_copy(GIULIA, root, "rec.json")
+        s, b = cfg.data["search"], cfg.data["best_fit"]
+        probe_base = "--probe-steps %d --probe-val-rows %d" % (
+            int(s["budget_gate"]["probe_steps"]), int(s["budget_gate"]["probe_val_rows"]))
+        member_base = "--n-posterior-draws %d" % int(b["n_posterior_draws"])
+
+        def stand_in(c, base=""):
+            # block 31's flags, as its runner_extra appends them (a stand-in)
+            return (base + " --rep-pairs %s --rep-group-key %s"
+                    % (c.data["replicate"]["pairs"], c.data["replicate"]["group_key"])).strip()
+
+        shown = []
+        for label, fn in (("this branch", RP.runner_extra), ("block 31 stand-in", stand_in)):
+            with _patched(RP, "runner_extra", fn):
+                want_probe = RP.runner_extra(cfg, probe_base)
+                want_trial = RP.runner_extra(cfg)
+                want_member = RP.runner_extra(cfg, member_base)
+                lines = SS.SearchStage().dry_run(cfg, None)
+                bf_lines = BestFitStage().dry_run(cfg, {"sub": {}})
+                # the dry run: the probe's argv line under the gate's qsub line, the
+                # trial's (the tuner's evaluate), the member's (the runner's)
+                gi = [i for i, ln in enumerate(lines) if ln.startswith("    qsub -N gate_b<B> ")]
+                assert len(gi) == 1, lines
+                pl = lines[gi[0] + 1]
+                assert pl.startswith("    argv: ") and pl.endswith(" " + want_probe), (label, pl)
+                tl = [ln for ln in lines if ln.startswith("    argv: ") and " evaluate " in ln]
+                assert len(tl) == 1, lines
+                if want_trial:
+                    assert (" --runner-extra '%s' [--resume" % want_trial) in tl[0], (label, tl[0])
+                else:
+                    assert "--runner-extra" not in tl[0], (label, tl[0])
+                ml = [ln for ln in bf_lines if ln.startswith("    argv: ")]
+                assert len(ml) == 1 and (" %s [--resume" % want_member) in ml[0], (label, ml)
+                # what the submission carries: the trial's argv; the probe's and the member's
+                # --runner-extra handed to the tuner's `argv`
+                stage = SS.SearchStage()
+                assert _extra_of(stage._trial_argv(cfg, {"sub": {"identity": _identity(cfg)}}, "t_x",
+                                                   False)) == (want_trial or None), label
+                tuner = _ArgvTuner()
+                gate_dir = stage._dirs(cfg)["gate"]
+                if os.path.isdir(gate_dir):
+                    shutil.rmtree(gate_dir)
+                st = {"status": "running", "jobs": [], "sub": {"identity": _identity(cfg)}}
+                with _patched(CM, "run_tuner", tuner):
+                    stage._start_gate(cfg, st, _Rec(st), os.path.join(root, "login.log"))
+                probes = [c for c in tuner.calls if c[0] == "argv"]
+                assert len(probes) == 2 and all(_extra_of(c) == want_probe for c in probes), \
+                    (label, [_extra_of(c) for c in probes])
+                bstage = BestFitStage()
+                bst = {"sub": {"members": {"1": {"jobs": []}},
+                               "finalist": {"identity": _identity(cfg),
+                                            "config_file": os.path.join(root, "finalist.json")}}}
+                tuner = _ArgvTuner()
+                with _patched(CM, "run_tuner", tuner):
+                    bstage._member_argv_file(cfg, bst, 1, False, os.path.join(root, "login.log"))
+                assert len(tuner.calls) == 1 and tuner.calls[0][0] == "argv" and \
+                    _extra_of(tuner.calls[0]) == want_member, (label, tuner.calls)
+                shown.append("%s: probe '%s', trial '%s', member '%s'"
+                             % (label, want_probe, want_trial, want_member))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    for ln in shown:
+        print("    " + ln)
 
 
 def test_edge_cases():

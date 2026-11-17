@@ -34,6 +34,21 @@ Checks
                         cause) and the knobs, failed against ok and open
     test_edge_cases     no state file: the ledger's trials, status `?`; a
                         configuration that does not load: exit 2
+    test_stop_request   [block 30, amendment 3, D-154] the report after a
+                        stop request (the same folder, a trial `cancelled`
+                        added): a cancelled trial reads `next: nothing
+                        (cancelled by the stop request; never submitted)`;
+                        while STOP_REQUEST.json stands no `next:` (nor the
+                        next-poll summary) predicts a submission or a
+                        resubmission -- each trial's text by hand, without
+                        and with kill_running, and for a trial whose job the
+                        request deleted (`stop_deleted`) -- and the request's
+                        status_line follows the header; the request withdrawn,
+                        the deleted trial stays killed and every other
+                        `next:` is as without a request; `; the search ended
+                        (user_stop)` once SEARCH_COMPLETE.json says so;
+                        --search on a list configuration reads that search's
+                        request only; the CLI with a request writes nothing
     MUTATION=classify   (environment) failure_cause disabled: the known
                         answer must FAIL
 
@@ -462,6 +477,167 @@ def test_edge_cases():
             fh.write("{}")
         rc, out = _report(["--config", bad])
         assert rc == 2 and out.startswith("SEARCH REPORT: the configuration "), out
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+# -- block 30, amendment 3 (D-154): the report after a stop request ---------
+
+LINDDUP = os.path.join(_PIPE, "projects", "linddup", "linddup.json")
+# the words by which the rules without a request predict a submission or a
+# resubmission (next_action, _after_no_record); `not resubmitted` and `never
+# submitted` are the stop's
+SUBMITS = ("submitted again", "resubmitted with", "queued again", "waits for a slot")
+KILLED = "stopped by the user (stop-search --kill-running)"
+ENDED = "ended without a record after a stop request"
+
+
+def _stop_file(folder, kill, utc):
+    """STOP_REQUEST.json as `pipeline.py stop-search` writes it."""
+    p = os.path.join(folder, "STOP_REQUEST.json")
+    with open(p, "w") as fh:
+        json.dump({"schema": "search_stop/1", "requested_utc": utc, "kill_running": bool(kill),
+                   "user": "someone", "host": "login9"}, fh, indent=1, sort_keys=True)
+    return p
+
+
+def _nexts(out, ids):
+    return dict((n, _line(out, ids[n]).split(" | next: ", 1)[1]) for n in ids)
+
+
+def _poll_summary(out):
+    """The next-poll summary's lines (after `the next poll, by the stage's rules:`)."""
+    lines = out.splitlines()
+    i = lines.index("the next poll, by the stage's rules:")
+    return [ln for ln in lines[i + 1:] if ln.startswith("  ")]
+
+
+def test_stop_request():
+    root = tempfile.mkdtemp(prefix="report_stop_")
+    try:
+        path, ids, camp = _campaign(root)
+        cfg = C.load_config(path)
+        # a trial cancelled by a stop: never submitted, its pending spec kept
+        ids["canc"] = _tid("canc")
+        with open(os.path.join(camp, "pending", ids["canc"] + ".json"), "w") as fh:
+            json.dump({"trial_id": ids["canc"], "config": {"lr": 0.001, "block_family": 1}}, fh)
+        st = ST.State.load(cfg.data["paths"]["work_root"])
+        trials = st.data["stages"]["search"]["sub"]["trials"]
+        trials[ids["canc"]] = {"round": 0, "jobs": [], "resubmits": 0, "status": "cancelled"}
+        st.save()
+        run_job = "1851307.pbsserver01"
+        # (a) without a request: no stop line; the cancelled trial does nothing more; the
+        # trials the rules submit or resubmit say so (the known answer's texts)
+        rc, out = _report(["--config", path])
+        assert rc == 0 and "stop requested" not in out, out
+        plain = _nexts(out, ids)
+        assert plain["canc"] == "nothing (cancelled by the stop request; never submitted)", plain["canc"]
+        for n in ("wait", "empty", "sigbus"):
+            assert any(w in plain[n] for w in SUBMITS), (n, plain[n])
+        # (b) a request without kill_running: its line after the header; no `next:` and no
+        # summary line predicts a submission or a resubmission; each text by hand
+        _stop_file(camp, False, "2026-11-17T08:00:00Z")
+        rc, out = _report(["--config", path])
+        assert rc == 0, out
+        lines = out.splitlines()
+        assert "stop requested 2026-11-17T08:00:00Z (kill running: no)" in lines, out
+        i = lines.index("stop requested 2026-11-17T08:00:00Z (kill running: no)")
+        assert lines[i - 1].startswith("state ") and lines[i + 1].startswith("trial "), lines[:i + 2]
+        got = _nexts(out, ids)
+        for n, text in sorted(got.items()):
+            for w in SUBMITS:
+                assert w not in text, (n, w, text)
+        for ln in _poll_summary(out):
+            for w in SUBMITS:
+                assert w not in ln, (w, ln)
+        unread = ("nothing (a stop request stands: its record cannot be read: read again for %d s, "
+                  "then set aside as .unreadable1; then recorded killed (%s), not resubmitted)"
+                  % (int(CM.RECORD_GRACE_S), ENDED))
+        want = {
+            "ok": "marked ok nll 0.250000",
+            "sigbus": "nothing (a stop request stands: NODE FAULT: record set aside, the trial queued "
+                      "(1 of 2) but never submitted: cancelled once no trial runs)",
+            "value1": "final failure: not a node fault", "value2": "final failure: not a node fault",
+            "oom": "final (failed)",
+            "empty": unread, "nulnopend": unread,
+            "run": "nothing (a stop request stands: its job %s runs to its end; then its record "
+                   "decides, and without one the trial is recorded killed (%s), not resubmitted)"
+                   % (run_job, ENDED),
+            "wait": "nothing (a stop request stands: never submitted; cancelled once no trial runs "
+                    "or is examined)",
+            "canc": "nothing (cancelled by the stop request; never submitted)"}
+        for n, w in sorted(want.items()):
+            assert got[n] == w, (n, got[n], w)
+        assert out.rstrip().endswith("SEARCH REPORT OK: 10 trial(s) read; nothing was written"), out
+        # (c) kill_running: the running trial's job deleted at the next poll; once deleted
+        # (`stop_deleted`, the stage's record), the same with `was deleted`
+        _stop_file(camp, True, "2026-11-17T08:05:00Z")
+        rc, out = _report(["--config", path])
+        assert "stop requested 2026-11-17T08:05:00Z (kill running: yes)" in out.splitlines(), out
+        assert _nexts(out, ids)["run"] == (
+            "nothing (a stop request stands: its job %s is deleted at the next poll (kill running); "
+            "then its record decides, and without one the trial is recorded killed (%s), not "
+            "resubmitted)" % (run_job, KILLED)), _nexts(out, ids)["run"]
+        st = ST.State.load(cfg.data["paths"]["work_root"])
+        st.data["stages"]["search"]["sub"]["trials"][ids["run"]]["stop_deleted"] = {
+            "job": run_job, "utc": "2026-11-17T08:05:30Z", "accepted": True}
+        st.save()
+        rc, out = _report(["--config", path])
+        killed = _nexts(out, ids)
+        assert killed["run"] == (
+            "nothing (a stop request stands: its job %s was deleted (kill running); then its record "
+            "decides, and without one the trial is recorded killed (%s), not resubmitted)"
+            % (run_job, KILLED)), killed["run"]
+        for n in ids:
+            if n != "run":
+                assert killed[n] == got[n], (n, killed[n], got[n])
+        # (d) the request withdrawn (--cancel): the deleted trial stays killed; every other
+        # trial's `next:` as without a request
+        os.remove(os.path.join(camp, "STOP_REQUEST.json"))
+        rc, out = _report(["--config", path])
+        assert "stop requested" not in out
+        back = _nexts(out, ids)
+        assert back["run"] == ("nothing until its job %s ends (deleted by a stop request); then its "
+                               "record decides, and without one the trial is recorded killed (%s), "
+                               "not resubmitted" % (run_job, KILLED)), back["run"]
+        for n in ids:
+            if n != "run":
+                assert back[n] == plain[n], (n, back[n], plain[n])
+        # (e) the search ended by the stop: the line says so
+        _stop_file(camp, False, "2026-11-17T08:00:00Z")
+        with open(os.path.join(camp, "SEARCH_COMPLETE.json"), "w") as fh:
+            json.dump({"ended_by": "user_stop"}, fh)
+        rc, out = _report(["--config", path])
+        assert ("stop requested 2026-11-17T08:00:00Z (kill running: no); the search ended (user_stop)"
+                in out.splitlines()), out
+        # (f) the CLI with a request standing writes nothing
+        before = _snapshot(root)
+        time.sleep(0.05)
+        proc = subprocess.run([sys.executable, TOOL, "--config", path], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, universal_newlines=True, timeout=120)
+        assert proc.returncode == 0 and "the search ended (user_stop)" in proc.stdout, proc.stdout
+        assert _snapshot(root) == before, "the report wrote"
+        # (g) --search on a list configuration: that search's request only
+        lroot = os.path.join(root, "list")
+        os.makedirs(lroot)
+        with open(LINDDUP, "rb") as fh:
+            ld = C._strip_docs(json.loads(fh.read().decode("ascii")))
+        for k in ("work_root", "runs_root", "tune_root", "banks_root"):
+            ld["paths"][k] = os.path.join(lroot, k)
+        lpath = os.path.join(lroot, "list.json")
+        with open(lpath, "w") as fh:
+            json.dump(ld, fh, indent=1, sort_keys=True)
+        tune = ld["paths"]["tune_root"]
+        for q, c in (("A1", "S-A1"), ("A2", "S-A2-only")):
+            os.makedirs(os.path.join(tune, q, c, "pending"))
+            with open(os.path.join(tune, q, c, "pending", _tid(q) + ".json"), "w") as fh:
+                json.dump({"trial_id": _tid(q), "config": {"lr": 0.001}}, fh)
+        _stop_file(os.path.join(tune, "A2", "S-A2-only"), True, "2026-11-17T09:00:00Z")
+        rc, out = _report(["--config", lpath, "--search", "A2"])
+        assert rc == 0 and "stop requested 2026-11-17T09:00:00Z (kill running: yes)" in out.splitlines(), out
+        rc, out = _report(["--config", lpath, "--search", "A1"])
+        assert rc == 0 and "stop requested" not in out, out
+        print("    " + "\n    ".join(ln[:200] for ln in (want["sigbus"], want["run"], back["run"])))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
