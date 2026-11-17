@@ -1132,7 +1132,7 @@ cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { mo
 #     ALL 40 CHECKS PASSED                          (the re-detection launcher, LindDUP's profile included)
 cd ~/repos/Sbi-extractor && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin feat/real-arm-parity && git log --oneline -1 && export SBI_HPC_DIR=~/SBI/hpc && source env.sh && python3 export_windows/smoke_test_cohort_map.py 2>&1 | tail -1 && python3 export_windows/smoke_test_partial_topologies.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_plan.py 2>&1 | tail -1 && python3 export_windows/smoke_test_bank_export.py 2>&1 | tail -1 && ANN_TOOLS=~/ANN/MEA_analysis python3 sim_reextract/smoke_test_sim_reextract.py 2>&1 | tail -1
 
-# N3. the wave's suites under the fake PBS, in sbi_env (two of them train a small network; about 8 min in all);
+# N3. the wave's suites under the fake PBS, in sbi_env (three of them train a small network; about 9 min in all);
 #     pass lines, one per suite:
 #     ...test_smoke_runs.py: -- 5 pass, 0 fail, 0 error, 0 todo, 1 skip        (several searches and their caps)
 #     ...test_smoke_stop.py: -- 6 pass, 0 fail, 0 error, 0 todo, 2 skip        (stop-search)
@@ -1140,7 +1140,9 @@ cd ~/repos/Sbi-extractor && eval "$(conda shell.bash hook)" && conda activate sb
 #     ...test_smoke_inputs_check.py: 8 of 9 checks pass in <s> s               (the inputs check on v11)
 #     ...test_smoke_block2.py: 15 of 16 checks pass in <s> s                                   (the bank stages, the test task)
 #     ...smoke_test_rep_pairs.py: -- 12 pass, 0 fail, 0 error, 0 todo, 1 skip  (the replicate pair rule)
-cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && export SBIX_CLONE=/davinci-1/home/ldellamea/repos/Sbi-extractor && for t in hpc/pipeline/tests/test_smoke_runs.py hpc/pipeline/tests/test_smoke_stop.py hpc/pipeline/tests/test_smoke_report.py hpc/pipeline/tests/test_smoke_inputs_check.py hpc/pipeline/tests/test_smoke_block2.py hpc/joint/stage3/smoke_test_rep_pairs.py; do echo "$t: $(python3 $t 2>&1 | tail -1)"; done
+#     ...test_smoke_reset.py: -- 6 pass, 0 fail, 0 error, 1 skip               (the reset sets a stop request aside)
+#     ...test_smoke_identity.py: 5 of 7 checks pass in <s> s                   (a search's identity on v11's views)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && export SBIX_CLONE=/davinci-1/home/ldellamea/repos/Sbi-extractor && for t in hpc/pipeline/tests/test_smoke_runs.py hpc/pipeline/tests/test_smoke_stop.py hpc/pipeline/tests/test_smoke_report.py hpc/pipeline/tests/test_smoke_inputs_check.py hpc/pipeline/tests/test_smoke_block2.py hpc/joint/stage3/smoke_test_rep_pairs.py hpc/pipeline/tests/test_smoke_reset.py hpc/pipeline/tests/test_smoke_identity.py; do echo "$t: $(python3 $t 2>&1 | tail -1)"; done
 
 # N4. the campaign, read-only: no LindDUP job left; the topology folders without topology_meta.json (the
 #     virtual MEA stops on a whole task that holds one: the Neuro-astro network project's reply, sec. 2.2) and
