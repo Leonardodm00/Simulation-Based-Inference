@@ -6,6 +6,7 @@
 | 2026-11-17 | v2. The user's message of 11:14: the donor is the condition (D-144; sec. 4, the donor column filled: `C`, `P`); the `cmp` check of sec. 5 run on davinci `[CLUSTER, the user's paste]`: `DATA_P/Batch4` wells A2, A3, B1, B2, B3 are byte-for-byte copies of `DATA_P/Batch3/SubBatch1`'s, A1 shares no file with it. The move of sec. 2 not reported run. |
 | 2026-11-17 | v3. The user's message of 11:51: the move of sec. 2 ran ("This worked"; output not pasted), so the recordings are at `LindaColloDUP/recordings/`; the five copies are left out of the real data (D-145): 30 wells, 17 control, 13 DUP. |
 | 2026-11-17 | v4. The user's messages of 12:11 and 12:17: an A5 replicate pair is two subregions of one batch, the batch being `Batch3` / `Batch4` within a condition (D-146; new sec. 4b; the CSV gains `pair_group` and `in_real_data`). |
+| 2026-11-17 | v5. The user's message of 12:24: the check before A5's search is dropped, the three arms run side by side; an A5 pair is drawn at random within its group (D-147). Sec. 4b: the check marked corrected; the draw and the share of within-well pairs it gives added (computed, formula given). |
 
 Machine-readable copy of sec. 3: `docs/project/linddup_recordings_map.csv` (same rows, same columns, plus the paths).
 
@@ -113,7 +114,18 @@ An A5 replicate pair is two subregion windows of the same batch, the batch being
 | P-Batch3 | 12 | P-B3-S1, P-B3-S2 |
 | P-Batch4 | 1 | P-B4 (well A1 only: its pairs are within the well) |
 
-The level is to be a configuration value (well, plate folder, batch), set to batch. Before A5's search, on the A1 fit (no replicate term): compare the summaries' distance over pairs of subregions of one well with that over pairs from different wells of one batch; if the second is clearly larger, wells of a batch are not exchangeable and the level goes back to the user `[Claude's proposal, accepted: "Go on then"]`.
+The level is to be a configuration value (well, plate folder, batch), set to batch. Before A5's search, on the A1 fit (no replicate term): compare the summaries' distance over pairs of subregions of one well with that over pairs from different wells of one batch; if the second is clearly larger, wells of a batch are not exchangeable and the level goes back to the user `[Claude's proposal, accepted: "Go on then"]`. [corrected 2026-11-17 12:24: the check is dropped -- the user: "drop this just run all the arms" (D-147). No comparison gates A5; the three arms run side by side.]
+
+**The draw (D-147).** An A5 pair is two distinct windows drawn uniformly at random among all the real windows of one group: any well, any subregion, any 180 s. Every extracted well holds 9 subregions (`trace_subregion_00..08`, all 35 folders `[CLUSTER, the listing]`); assuming 6 non-overlapping windows of 180 s per subregion (1200 s; the bank's stride not read), a well gives n_w = 54 windows and a group of w wells W = 54 w. The share of pairs inside one well is (n_w - 1) / (W - 1); inside one well and the same 180 s (simultaneous subregions), (9 - 1) / (W - 1):
+
+| group | wells w | windows W | pairs inside one well | of which in the same 180 s |
+|---|---|---|---|---|
+| C-Batch3 | 5 | 270 | 0.197 | 0.030 |
+| C-Batch4 | 12 | 648 | 0.082 | 0.012 |
+| P-Batch3 | 12 | 648 | 0.082 | 0.012 |
+| P-Batch4 | 1 | 54 | 1.000 | 0.151 |
+
+`[verified by running it, 2026-11-17: exact count against 200,000 Monte Carlo draws, seed 0, agreement within 0.005; the script pair_mix.py was delivered to the user, not committed]`. So in the two large groups about 92 % of A5's pairs join different wells. Weighting the draw towards within-well pairs was not asked.
 
 ## 5. `DATA_P/Batch4` against `DATA_P/Batch3/SubBatch1`: five copies (run 2026-11-17)
 
