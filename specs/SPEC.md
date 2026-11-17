@@ -694,7 +694,7 @@ Claude's as the log records (D-085..D-090).
 | `bank.max_rerun_rounds` | int | >= 0 -- reruns of the array after a quarantine (v6) |
 | `bank.drop_partial_topologies` | bool | v11 (D-148 (5)): written into the bank profile; true drops whole every topology with fewer simulations than its task dispatched (Sbi-extractor block 10) |
 | `split.fractions` | [float, float, float] | each in (0, 1), sum 1 within 1e-9 |
-| `searches` | null or [object] | v11 (D-148 (1), block 29): null -- the single search of `search.campaign`; a list -- each item exactly {`name` `[A-Za-z0-9][A-Za-z0-9_-]*`, `campaign` among the campaigns below, `max_cores` an integer >= 1 or null}; the names unique, the campaigns unique; an integer `max_cores` at least the larger of `search.trial.ncpus` and `best_fit.ncpus` and at most `resources.max_cores` - `driver.ncpus`. With a list, `search.campaign` and `search.arm` are refused (each search names its campaign; the arm is the campaign's). [amendment 5, 2026-11-17, the final check's S1 and F5: a list is non-empty (an empty list is refused); every name rule of the configuration -- `name` here, `synthetic.searches[].name`, `synthetic.real[].name`, the dataset tag, the label axes -- matches the whole string (`\Z`, not `$`, so a trailing newline is refused)] |
+| `searches` | null or [object] | v11 (D-148 (1), block 29): null -- the single search of `search.campaign`; a list -- each item exactly {`name` `[A-Za-z0-9][A-Za-z0-9_-]*`, `campaign` among the campaigns below, `max_cores` an integer >= 1 or null}; the names unique, the campaigns unique; an integer `max_cores` at least the larger of `search.trial.ncpus` and `best_fit.ncpus` and at most `resources.max_cores` - `driver.ncpus`. With a list, `search.campaign` and `search.arm` are refused (each search names its campaign; the arm is the campaign's). [amendment 5, 2026-11-17, the final check's S1 and F5: a list is non-empty (an empty list is refused); every name rule of the configuration -- `name` here, `synthetic.searches[].name`, `synthetic.real[].name`, the dataset tag, the axis names of `search.space_overrides` -- matches the whole string (`\Z`, not `$`, so a trailing newline is refused) [corrected 2026-11-17, the second final check's S1: "the label axes" named no string rule]. The value formats (`hh:mm:ss`, PBS memory, the queue and environment names) still end in `$`: a value with a trailing newline loads (the second final check's F1, a NOTE; a JSON value needs an explicit \n), a known gap left to the next change of config.py] |
 | `replicate.pairs` | str | v11 (D-148 (3), block 31): `within_group` (the standard: two different real windows of one group, within-well pairs allowed) or `cross_well` (block 14's: two rows of one group in two different wells) |
 | `replicate.group_key` | str | v11: the real bank's id array that names a row's group: `rep_group` (the standard; Sbi-extractor block 9), `donor`, `batch` or `well` |
 | `search.{campaign, arm}` | str | `campaign` in {S-A1, S-A2, S-A5, S-A25} [and S-A2-only, S-A5-only since block 26]; `arm` in the runner's arms; [v11] only with `searches` null |
@@ -1420,7 +1420,10 @@ fixture, not part of the pipeline.
   when `<bank_root>/tasks/task_<iiii>.json` carries this plan's sha256 and
   a `finished` time; the test log is `bank_test_<i>.log`; the record names
   `bank test task <i>`; the dry run, which runs before the plan exists,
-  prints `TEST_INDEX=<the plan's first task with simulations>`. A plan
+  prints `TEST_INDEX=<the plan's first task with simulations>`. [The
+  second final check's S4, accepted: `tasks` is read up to the first task
+  with simulations; a malformed task after it is left to the launcher and
+  the plan's own checks.] A plan
   that cannot be read, or holds no such task, stops the stage with
   `the bank plan <path> has no task with simulations` (or the read's
   problem) before any job. With every task holding simulations, i = 0 and
@@ -2743,7 +2746,9 @@ fixture, not part of the pipeline.
     The listing: the campaign's `trials`, `pending`, `runs`, `jobs`,
     `pipeline_rounds.json`, `finalists.json`, `SEARCH_COMPLETE.json` (those
     present, with their sizes) [and, amendment 5, `STOP_REQUEST.json`
-    (block 30) when present], `gate` and `bank_split.json` kept, the
+    (block 30) when present; the CODE digests the items' sizes, so a
+    request replaced by one of the same size between the listing and
+    `--confirm` keeps the CODE -- accepted, the second final check's S3], `gate` and `bank_split.json` kept, the
     ledger's counts, the trial jobs the state records that the scheduler
     reports not finished, and `CODE <8 hex>` -- the first 8 hex digits of
     the sha256 of the listing's items, live jobs and ledger counts, so that

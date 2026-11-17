@@ -1163,9 +1163,9 @@ cd /davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_final
 #     cohort map (OK: 35 wells, 5 excluded; 2 donors; 4 pairing groups; included per class control:17,
 #     pathological:13), topology metadata (OK: every topology folder (<n>) holds topology_meta.json), partial
 #     topologies (NOTE: <n> partial topologies in <m> task(s), <s> simulations: the bank plan drops them whole),
-#     searches (NOTE: 3 search(es): A1: S-A1, max_cores 148; A2: S-A2-only, ...; A5: S-A5-only, ...; the caps
-#     add up to 444 cores against resources.max_cores 444 (the sequencer's job takes 4 of them) -- each arm
-#     runs 3 jobs of 48, 432 cores in all), being written (OK: no task changed within 6 h ...: S2 plans all
+#     searches (NOTE "3 search(es): A1: S-A1, max_cores 148; A2: S-A2-only, max_cores 148; A5: S-A5-only,
+#     max_cores 148; the caps add up to 444 cores against resources.max_cores 444 (the sequencer's job takes 4 of
+#     them)" -- so each arm runs 3 jobs of 48, 432 cores in all), being written (OK: no task changed within 6 h ...: S2 plans all
 #     <n>; a NOTE names tasks touched in the last 6 h, which S2's first round would leave out), and the task and
 #     simulation counts. Paste it whole.
 cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/inputs_check.py --project linddup --json ~/inputs_check_linddup.json 2>&1 | tee ~/inputs_check_linddup.txt
@@ -1174,8 +1174,9 @@ cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && pyth
 #     real_extraction: would be skipped; sim_redetection: would run (the array at CONCURRENCY 9 of 48 cores);
 #     six "cores (block 29, D-141): the jobs of search_<q>, best_fit_<q> share at most 148 cores ... at most 3
 #     job(s) of 48 cores at once"; three "at most 3 trial(s) at once" and three "at most 3 member(s) at once";
-#     nine argv lines ending in "--rep-pairs within_group --rep-group-key rep_group" (the probes', the trials',
-#     the members'); "cores: at most 444 at once"; "cores of search A1|A2|A5: at most 148"; "the sequencer: PBS
+#     nine argv lines carrying "--rep-pairs within_group --rep-group-key rep_group" (the three probes' end with
+#     them; the trials' and the members' go on with "[--resume ...]"); "cores: at most 444 at once"; "cores of
+#     search A1|A2|A5: at most 148"; "the sequencer: PBS
 #     jobs named pl_linddup on queue intel"
 cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --dry-run 2>&1 | tee ~/pipeline_linddup_dry.log | grep -E "REFUSE|STOP|FAILED|would|sequencer|cores|exit|rep-pairs" ; echo "exit ${PIPESTATUS[0]}"
 
