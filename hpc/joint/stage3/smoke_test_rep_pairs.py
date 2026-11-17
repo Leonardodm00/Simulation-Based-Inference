@@ -39,6 +39,12 @@ Checks (SPEC's T31a-T31f; the template's oracle kinds in brackets)
                                and its diagnostic), within_group on donor, the
                                refusal without rep_group, F-aa under
                                within_group, the flags without a real bank
+    test_t31e_cross_well_key   [reference, contract] amendment 2 (D-152): under
+                               cross_well the diagnostic groups by the KEY as
+                               the term does -- with KEY batch its pairs are two
+                               wells of one batch group (the selection on the
+                               bank's arrays and the runner's record); with
+                               KEY donor block 14's calls exactly
     test_t31e_parent_runner    [reference] A1 and A5 without the flags, and A5
                                with `--rep-pairs cross_well --rep-group-key
                                donor`, against the parent commit's runner: L,
@@ -59,7 +65,8 @@ Run
         Prints the environment and a PASS / FAIL / ERROR / TODO / SKIP table,
         then the full message of every failure. Exit code 1 if any check
         failed, errored or is still TODO. About two to three minutes at one
-        thread (the runner checks start the runner 13 times). Needs the
+        thread (the runner checks start the runner 23 times, 7 of them
+        B14's own checks). Needs the
         training environment (numpy, torch, sbi, zuko; the in-repo hpc/dsn)
         for the batcher and runner checks; T31f needs only the stdlib
         pipeline. The parent-commit checks need git and commit 88c32e5 in
@@ -301,16 +308,21 @@ def runner_banks():
     wells x 2 windows, seed 1; a cohort arm R, 3 classes x 4 donors x 2
     wells x 2 windows = 48 rows, seed 2, without rep_group; R_rg, R with
     rep_group = cls except the last row, alone in group 99 (groups of 16,
-    16, 15 and 1 rows); R_single, R with every row its own group."""
+    16, 15 and 1 rows); R_single, R with every row its own group; R_onewell,
+    B14's cohort of one well per donor (12 donors x 1 well x 2 windows, seed
+    3), where block 14's diagnostic falls back to rows of one well."""
     if "rb" in _SHARED:
         return _SHARED["rb"]
     root = os.path.join(tmp_root(), "banks")
-    S, R, RG, R1 = (os.path.join(root, n) for n in ("S", "R", "R_rg", "R_single"))
+    S, R, RG, R1, RW = (os.path.join(root, n)
+                        for n in ("S", "R", "R_rg", "R_single", "R_onewell"))
     build(S, ["--arm", "S", "--prior", "box", "--n-traces", "80", "--n-classes", "3",
               "--seed", "1"] + REF)
     build(R, ["--arm", "R", "--n-classes", "3", "--donors-per-class", "4", "--n-traces",
               "24", "--class-centres", "regular", "--centre-scale", "0.6",
               "--seed", "2"] + REF)
+    build(RW, ["--arm", "R", "--n-classes", "3", "--donors-per-class", "4", "--n-traces",
+               "12", "--wells-per-donor", "1", "--n-per-theta", "1", "--seed", "3"] + REF)
 
     def cls_but_last(m):
         g = np.asarray(m["cls"], dtype=np.int64).copy()
@@ -320,7 +332,7 @@ def runner_banks():
     with_rep_group(R, R1, lambda m: np.arange(m["x"].shape[0], dtype=np.int64))
     _SHARED["rb"] = dict(S=os.path.join(S, "*.npz"), R=os.path.join(R, "*.npz"),
                          RG=os.path.join(RG, "*.npz"), R1=os.path.join(R1, "*.npz"),
-                         rg=rg, merged=merged, root=root)
+                         RW=os.path.join(RW, "*.npz"), rg=rg, merged=merged, root=root)
     return _SHARED["rb"]
 
 
@@ -439,13 +451,12 @@ def test_t31b_law():
     check_close("t31b_group_freq", freq, w_exact, rtol=0, atol=0.005)
 
     # The share of pairs inside one well, per group, within 0.005 of
-    # (54 - 1) / (54 w - 1). [ISSUE reported to the orchestrator, block 31:
-    # at the SPEC's 200,000 draws the 5-well group receives about 15,900
-    # draws, the share's binomial SD there is sqrt(0.197 * 0.803 / 15,900) =
-    # 0.0032 and 0.005 is 1.6 SD -- a correct sampler fails 11 % of seeds
-    # (measured: 38 of 300 seeds). With 2,000,000 draws the 5-well group's
-    # SD is 0.0010 and 0.005 is 5.0 SD (the 12-well groups' 17 SD; the 1-well
-    # group's share is exactly 1).]
+    # (54 - 1) / (54 w - 1), on 2,000,000 draws [SPEC amendment 2, D-152]:
+    # at 200,000 draws the 5-well group receives about 15,900 draws, the
+    # share's binomial SD there is sqrt(0.197 * 0.803 / 15,900) = 0.0032 and
+    # 0.005 would be 1.6 SD -- a correct sampler failed 38 of 300 seeds. With
+    # 2,000,000 draws the 5-well group's SD is 0.0010 and 0.005 is 5.0 SD (the
+    # 12-well groups' 17 SD; the 1-well group's share is exactly 1).
     d2 = np.concatenate([d] + [b.draw_within_pairs(100000) for _ in range(18)], axis=0)
     assert d2.shape[0] == 2000000
     g2 = group[d2[:, 0]]
@@ -649,31 +660,98 @@ def test_t31e_runner():
     assert "replicate" not in rec and rec["endpoint_primary"] == "simulated (arm R absent)", rec.keys()
 
 
+def test_t31e_cross_well_key():
+    """T31e, SPEC amendment 2 (D-152): under cross_well the replicate
+    diagnostic groups by the KEY array as the term does. The cohort bank:
+    12 donors x 2 wells x 2 windows; batch 0 = donors 0-7, 32 rows in 16
+    wells; batch 1 = donors 8-11, 16 rows in 8 wells. KEY batch: the term's
+    pairs are C(32, 2) - 16 + C(16, 2) - 8 = 480 + 112 = 592 (the pairs
+    inside one well removed), and every pair the diagnostic scores is two
+    wells of one batch group; KEY donor: block 14's calls exactly."""
+    _need_sbi()
+    from joint_batches import enumerate_donor_pairs
+    from run_joint_arms import cross_well_diagnostic_pairs, spread_pairs
+    B = runner_banks()
+    m = B["merged"]
+    don, wel, bat = (np.asarray(m[k]) for k in ("donor", "well", "batch"))
+    # the bank's design, by hand
+    assert np.unique(bat).tolist() == [0, 1], np.unique(bat)
+    assert (bat == 0).sum() == 32 and np.unique(wel[bat == 0]).size == 16
+    assert (bat == 1).sum() == 16 and np.unique(wel[bat == 1]).size == 8
+    P = enumerate_donor_pairs(bat, wel)[0]
+    assert P.shape[0] == 480 + 112 == 592, P.shape
+    # the diagnostic's selection on the bank's arrays (the runner's call)
+    take, kind, n1 = cross_well_diagnostic_pairs(bat, wel, 64, "batch group")
+    assert kind == "two wells of one batch group" and n1 == 0, (kind, n1)
+    assert take.shape == (64, 2), take.shape
+    assert np.all(bat[take[:, 0]] == bat[take[:, 1]]), "a scored pair crosses a batch"
+    assert np.all(wel[take[:, 0]] != wel[take[:, 1]]), "a scored pair is inside one well"
+    assert set(map(tuple, take.tolist())) <= set(map(tuple, P.tolist()))
+    assert len(set(map(tuple, take.tolist()))) == 64            # no pair twice
+    assert np.bincount(bat[take[:, 0]]).tolist() == [32, 32]   # round robin over 2 groups
+    assert np.any(don[take[:, 0]] != don[take[:, 1]])          # pairs the donor rule has not
+    # KEY donor: block 14's calls exactly (enumerate by donor and well, spread)
+    t14, k14, n14 = cross_well_diagnostic_pairs(don, wel, 64, "donor")
+    p14, s14 = enumerate_donor_pairs(don, wel)
+    assert_array_equal(t14, spread_pairs(p14, don, 64))
+    assert k14 == "two wells of one donor" and n14 == s14 == 0
+    # the fallback when no group has two wells: rows of one group, by the KEY
+    tw, kw, nw = cross_well_diagnostic_pairs(wel, wel, 64, "well group")
+    assert kw == "rows of one well (no well group has two wells)", kw
+    assert tw.shape == (24, 2) and np.all(wel[tw[:, 0]] == wel[tw[:, 1]])  # 24 wells x C(2, 2)
+    one = np.repeat(np.arange(12), 2)              # every donor its own well (block 14's case)
+    tf, kf, nf = cross_well_diagnostic_pairs(one, one, 64, "donor")
+    assert kf == "rows of one well (no donor has two wells)" and tf.shape == (12, 2) and nf == 0
+    # the runner: A5 under cross_well with KEY batch
+    runs = os.path.join(tmp_root(), "runs_e_batch")
+    rc, txt = run_arm("A5", B["S"], B["R"], runs, ["--rep-group-key", "batch"])
+    assert rc == 0, txt[-2000:]
+    assert "replicate pairs  : 592  (two wells of one batch group)" in txt, txt[-2500:]
+    assert "singleton groups : 0" in txt, txt[-2500:]
+    rep = read_record(runs, "A5")["replicate"]
+    assert rep["pair_kind"] == "two wells of one batch group", rep["pair_kind"]
+    assert rep["n_pairs"] == 64 and len(rep["T"]) == 64, rep["n_pairs"]
+    assert rep["n_groups_scored"] == int(np.unique(bat[take[:, 0]]).size) == 2, rep
+    assert rep["n_donors_scored"] == int(np.unique(don[take[:, 0]]).size), rep
+    assert "n_singleton_donors" not in rep, sorted(rep)
+
+
 def test_t31e_parent_runner():
     """T31e: A1 and A5 without the flags, and A5 with the defaults given
     explicitly, against the parent commit's runner on the same banks, one
     thread: the record's L, history, endpoint and replicate block bit for
-    bit."""
+    bit; and A1 on B14's one-well-per-donor cohort, where block 14's
+    diagnostic falls back to rows of one well (SPEC amendment 2: with KEY
+    donor the diagnostic is block 14's bit for bit, its fallback included)."""
     _need_sbi()
     why = _parent_available()
     if why:
         raise unittest.SkipTest(why)
     B = runner_banks()
     old_runner = os.path.join(parent_tree(), "hpc", "joint", "stage3", "run_joint_arms.py")
-    for arm, extra in (("A1", ()), ("A5", ()),
-                       ("A5", ("--rep-pairs", "cross_well", "--rep-group-key", "donor"))):
-        tag = "%s_%s" % (arm, "explicit" if extra else "default")
+    for arm, extra, bank, want in (
+            ("A1", (), "R", "48  (two wells of one donor)"),
+            ("A5", (), "R", "48  (two wells of one donor)"),
+            ("A5", ("--rep-pairs", "cross_well", "--rep-group-key", "donor"), "R",
+             "48  (two wells of one donor)"),
+            ("A1", (), "RW", "0  (two wells of one donor)")):
+        tag = "%s_%s_%s" % (arm, "explicit" if extra else "default", bank)
         new_dir = os.path.join(tmp_root(), "par_new_" + tag)
         old_dir = os.path.join(tmp_root(), "par_old_" + tag)
-        rc, txt = run_arm(arm, B["S"], B["R"], new_dir, extra)
+        rc, txt = run_arm(arm, B["S"], B[bank], new_dir, extra)
         assert rc == 0, (tag, txt[-1500:])
-        rc0, txt0 = run_arm(arm, B["S"], B["R"], old_dir, (), runner=old_runner)
+        rc0, txt0 = run_arm(arm, B["S"], B[bank], old_dir, (), runner=old_runner)
         assert rc0 == 0, (tag, txt0[-1500:])
         a, o = read_record(new_dir, arm), read_record(old_dir, arm)
         assert comparable(a) == comparable(o), (tag, comparable(a)[:600], comparable(o)[:600])
         line = [ln for ln in txt.splitlines() if ln.startswith("replicate pairs")]
         line0 = [ln for ln in txt0.splitlines() if ln.startswith("replicate pairs")]
-        assert line == line0 == ["replicate pairs  : 48  (two wells of one donor)"], (line, line0)
+        assert line == line0 == ["replicate pairs  : " + want], (line, line0)
+        if bank == "RW":
+            # block 14's fallback: 12 within-well pairs over the 12 donors
+            rep = a["replicate"]
+            assert rep["pair_kind"] == "rows of one well (no donor has two wells)", rep
+            assert rep["n_pairs"] == 12 and rep["n_donors_scored"] == 12, rep
         _SHARED.setdefault("parent", []).append("%s L %.12g" % (tag, a["L"]))
 
 
