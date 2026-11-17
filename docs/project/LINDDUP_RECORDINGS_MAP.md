@@ -3,6 +3,7 @@
 | Date | Change |
 |---|---|
 | 2026-11-17 | v1. Written from the user's `ls -R` of `Deep_bio/` (pasted 10:57 Europe/Rome) `[CLUSTER, the user's paste]`. The move of sec. 2 is handed to the user as commands; NOT yet run when this was written. The donor column is empty: the folder tree does not name a donor (sec. 4). |
+| 2026-11-17 | v2. The user's message of 11:14: the donor is the condition (D-144; sec. 4, the donor column filled: `C`, `P`); the `cmp` check of sec. 5 run on davinci `[CLUSTER, the user's paste]`: `DATA_P/Batch4` wells A2, A3, B1, B2, B3 are byte-for-byte copies of `DATA_P/Batch3/SubBatch1`'s, A1 shares no file with it. The move of sec. 2 not reported run. |
 
 Machine-readable copy of sec. 3: `docs/project/linddup_recordings_map.csv` (same rows, same columns, plus the paths).
 
@@ -53,62 +54,69 @@ If the two `stat` numbers differ, the folders are on different filesystems and `
 
 | well_id | condition | batch | sub-batch | plate folder | well | n files | note | donor |
 |---|---|---|---|---|---|---|---|---|
-| C-B3-A1 | control | Batch3 | - | C-B3 | A1 | 2292 |  | not given |
-| C-B3-A2 | control | Batch3 | - | C-B3 | A2 | 1760 |  | not given |
-| C-B3-A3 | control | Batch3 | - | C-B3 | A3 | 2109 |  | not given |
-| C-B3-B1 | control | Batch3 | - | C-B3 | B1 | 2294 |  | not given |
-| C-B3-B2 | control | Batch3 | - | C-B3 | B2 | 2299 |  | not given |
-| C-B4-S1-A1 | control | Batch4 | SubBatch1 | C-B4-S1 | A1 | 2272 |  | not given |
-| C-B4-S1-A2 | control | Batch4 | SubBatch1 | C-B4-S1 | A2 | 2296 |  | not given |
-| C-B4-S1-A3 | control | Batch4 | SubBatch1 | C-B4-S1 | A3 | 2299 |  | not given |
-| C-B4-S1-B1 | control | Batch4 | SubBatch1 | C-B4-S1 | B1 | 2291 |  | not given |
-| C-B4-S1-B2 | control | Batch4 | SubBatch1 | C-B4-S1 | B2 | 2296 |  | not given |
-| C-B4-S1-B3 | control | Batch4 | SubBatch1 | C-B4-S1 | B3 | 2275 |  | not given |
-| C-B4-S2-A1 | control | Batch4 | SubBatch2 | C-B4-S2 | A1 | 2292 |  | not given |
-| C-B4-S2-A2 | control | Batch4 | SubBatch2 | C-B4-S2 | A2 | 2275 |  | not given |
-| C-B4-S2-A3 | control | Batch4 | SubBatch2 | C-B4-S2 | A3 | 1724 |  | not given |
-| C-B4-S2-B1 | control | Batch4 | SubBatch2 | C-B4-S2 | B1 | 2285 |  | not given |
-| C-B4-S2-B2 | control | Batch4 | SubBatch2 | C-B4-S2 | B2 | 2292 |  | not given |
-| C-B4-S2-B3 | control | Batch4 | SubBatch2 | C-B4-S2 | B3 | 2050 |  | not given |
-| P-B3-S1-A1 | DUP | Batch3 | SubBatch1 | P-B3-S1 | A1 | 2287 |  | not given |
-| P-B3-S1-A2 | DUP | Batch3 | SubBatch1 | P-B3-S1 | A2 | 2281 |  | not given |
-| P-B3-S1-A3 | DUP | Batch3 | SubBatch1 | P-B3-S1 | A3 | 2285 |  | not given |
-| P-B3-S1-B1 | DUP | Batch3 | SubBatch1 | P-B3-S1 | B1 | 2286 |  | not given |
-| P-B3-S1-B2 | DUP | Batch3 | SubBatch1 | P-B3-S1 | B2 | 2297 |  | not given |
-| P-B3-S1-B3 | DUP | Batch3 | SubBatch1 | P-B3-S1 | B3 | 2273 |  | not given |
-| P-B3-S2-A1 | DUP | Batch3 | SubBatch2 | P-B3-S2 | A1 | 2283 |  | not given |
-| P-B3-S2-A2 | DUP | Batch3 | SubBatch2 | P-B3-S2 | A2 | 2263 |  | not given |
-| P-B3-S2-A3 | DUP | Batch3 | SubBatch2 | P-B3-S2 | A3 | 2286 |  | not given |
-| P-B3-S2-B1 | DUP | Batch3 | SubBatch2 | P-B3-S2 | B1 | 2255 |  | not given |
-| P-B3-S2-B2 | DUP | Batch3 | SubBatch2 | P-B3-S2 | B2 | 2273 |  | not given |
-| P-B3-S2-B3 | DUP | Batch3 | SubBatch2 | P-B3-S2 | B3 | 2274 |  | not given |
-| P-B4-A1 | DUP | Batch4 | - | P-B4 | A1 | 2286 | 33 names differ from P-B3-S1-A1 | not given |
-| P-B4-A2 | DUP | Batch4 | - | P-B4 | A2 | 2281 | names identical to P-B3-S1-A2 | not given |
-| P-B4-A3 | DUP | Batch4 | - | P-B4 | A3 | 2285 | names identical to P-B3-S1-A3 | not given |
-| P-B4-B1 | DUP | Batch4 | - | P-B4 | B1 | 2286 | names identical to P-B3-S1-B1 | not given |
-| P-B4-B2 | DUP | Batch4 | - | P-B4 | B2 | 2297 | names identical to P-B3-S1-B2 | not given |
-| P-B4-B3 | DUP | Batch4 | - | P-B4 | B3 | 2273 | names identical to P-B3-S1-B3 | not given |
+| C-B3-A1 | control | Batch3 | - | C-B3 | A1 | 2292 |  | C |
+| C-B3-A2 | control | Batch3 | - | C-B3 | A2 | 1760 |  | C |
+| C-B3-A3 | control | Batch3 | - | C-B3 | A3 | 2109 |  | C |
+| C-B3-B1 | control | Batch3 | - | C-B3 | B1 | 2294 |  | C |
+| C-B3-B2 | control | Batch3 | - | C-B3 | B2 | 2299 |  | C |
+| C-B4-S1-A1 | control | Batch4 | SubBatch1 | C-B4-S1 | A1 | 2272 |  | C |
+| C-B4-S1-A2 | control | Batch4 | SubBatch1 | C-B4-S1 | A2 | 2296 |  | C |
+| C-B4-S1-A3 | control | Batch4 | SubBatch1 | C-B4-S1 | A3 | 2299 |  | C |
+| C-B4-S1-B1 | control | Batch4 | SubBatch1 | C-B4-S1 | B1 | 2291 |  | C |
+| C-B4-S1-B2 | control | Batch4 | SubBatch1 | C-B4-S1 | B2 | 2296 |  | C |
+| C-B4-S1-B3 | control | Batch4 | SubBatch1 | C-B4-S1 | B3 | 2275 |  | C |
+| C-B4-S2-A1 | control | Batch4 | SubBatch2 | C-B4-S2 | A1 | 2292 |  | C |
+| C-B4-S2-A2 | control | Batch4 | SubBatch2 | C-B4-S2 | A2 | 2275 |  | C |
+| C-B4-S2-A3 | control | Batch4 | SubBatch2 | C-B4-S2 | A3 | 1724 |  | C |
+| C-B4-S2-B1 | control | Batch4 | SubBatch2 | C-B4-S2 | B1 | 2285 |  | C |
+| C-B4-S2-B2 | control | Batch4 | SubBatch2 | C-B4-S2 | B2 | 2292 |  | C |
+| C-B4-S2-B3 | control | Batch4 | SubBatch2 | C-B4-S2 | B3 | 2050 |  | C |
+| P-B3-S1-A1 | DUP | Batch3 | SubBatch1 | P-B3-S1 | A1 | 2287 |  | P |
+| P-B3-S1-A2 | DUP | Batch3 | SubBatch1 | P-B3-S1 | A2 | 2281 |  | P |
+| P-B3-S1-A3 | DUP | Batch3 | SubBatch1 | P-B3-S1 | A3 | 2285 |  | P |
+| P-B3-S1-B1 | DUP | Batch3 | SubBatch1 | P-B3-S1 | B1 | 2286 |  | P |
+| P-B3-S1-B2 | DUP | Batch3 | SubBatch1 | P-B3-S1 | B2 | 2297 |  | P |
+| P-B3-S1-B3 | DUP | Batch3 | SubBatch1 | P-B3-S1 | B3 | 2273 |  | P |
+| P-B3-S2-A1 | DUP | Batch3 | SubBatch2 | P-B3-S2 | A1 | 2283 |  | P |
+| P-B3-S2-A2 | DUP | Batch3 | SubBatch2 | P-B3-S2 | A2 | 2263 |  | P |
+| P-B3-S2-A3 | DUP | Batch3 | SubBatch2 | P-B3-S2 | A3 | 2286 |  | P |
+| P-B3-S2-B1 | DUP | Batch3 | SubBatch2 | P-B3-S2 | B1 | 2255 |  | P |
+| P-B3-S2-B2 | DUP | Batch3 | SubBatch2 | P-B3-S2 | B2 | 2273 |  | P |
+| P-B3-S2-B3 | DUP | Batch3 | SubBatch2 | P-B3-S2 | B3 | 2274 |  | P |
+| P-B4-A1 | DUP | Batch4 | - | P-B4 | A1 | 2286 | no file identical to P-B3-S1-A1 | P |
+| P-B4-A2 | DUP | Batch4 | - | P-B4 | A2 | 2281 | copy of (all files identical) P-B3-S1-A2 | P |
+| P-B4-A3 | DUP | Batch4 | - | P-B4 | A3 | 2285 | copy of (all files identical) P-B3-S1-A3 | P |
+| P-B4-B1 | DUP | Batch4 | - | P-B4 | B1 | 2286 | copy of (all files identical) P-B3-S1-B1 | P |
+| P-B4-B2 | DUP | Batch4 | - | P-B4 | B2 | 2297 | copy of (all files identical) P-B3-S1-B2 | P |
+| P-B4-B3 | DUP | Batch4 | - | P-B4 | B3 | 2273 | copy of (all files identical) P-B3-S1-B3 | P |
 
-## 4. What is not in the tree: the donor
+## 4. The donor (D-144)
 
-The tree gives condition, batch, sub-batch and well position. It does not name a donor, a line or clone, a plating date or the age at recording. The pipeline's real bank today takes the well as the donor, and arm A5 refuses such a bank (log, D-118 Status). A5 (D-140: a pair is two wells of one donor) therefore needs the `donor` column filled. Three readings the tree allows, none confirmed:
+The tree gives condition, batch, sub-batch and well position; it names no donor, line, plating date or age at recording. The user, 2026-11-17 11:14: "We assume as donor the conditions which is then subdivided in batches and wells which should differ by the biological variability" (spelling corrected). So there are two donors, `C` (17 wells) and `P` (18 wells), and batches, sub-batches and wells are replicates within a donor. An A5 pair (D-140) is any two wells of one condition.
 
-| reading | donors | same-donor pairs it gives |
+Consequences `[reasoning]`, for the LindDUP pipeline chat:
+
+- A5's pairs are then exactly the same-class pairs of A2's labels: the replicate term pulls together what the DSN term's positives pull together. The two arms differ on the real windows only in A2's push between classes.
+- Any statistic that resamples real donors (a donor-cluster bootstrap) has 2 clusters and cannot give an interval; on the real arm the resampling unit has to be the well or the plate folder.
+- Wells of one plate folder are likely closer than wells of different batches; whether pairs are drawn across batches or within is not decided.
+
+## 5. `DATA_P/Batch4` against `DATA_P/Batch3/SubBatch1`: five copies (run 2026-11-17)
+
+Output of the `cmp` loop on davinci `[CLUSTER, the user's paste of 11:14]`:
+
+| well | files in `Batch4` | identical in content to `Batch3/SubBatch1` |
 |---|---|---|
-| donor = plate folder | 6 | wells of one plate |
-| donor = condition x batch | 4 | wells of one batch, across its sub-batches |
-| donor = condition | 2 | every pair of wells of one condition |
+| A1 | 2286 | 0 |
+| A2 | 2281 | 2281 |
+| A3 | 2285 | 2285 |
+| B1 | 2286 | 2286 |
+| B2 | 2297 | 2297 |
+| B3 | 2273 | 2273 |
 
-Open, the user's call.
+So P-B4-A2, -A3, -B1, -B2, -B3 are the same recordings as P-B3-S1-A2, -A3, -B1, -B2, -B3; P-B4-A1 is a different recording from P-B3-S1-A1. The DUP class holds 13 distinct recordings (18 - 5), the cohort 30 (35 - 5). `extracted_v2` and its manifest (`c925c5106137fe82`, 35 wells) hold the five twice. Not decided: whether the five copies are left out of the banks (Claude's recommendation: leave them out; a copy paired with its original is a replicate pair of distance zero, and the five weigh double in the class statistics), and where the real `Batch4` wells A2-B3 are, if they exist.
 
-## 5. Open: `DATA_P/Batch4` against `DATA_P/Batch3/SubBatch1`
-
-For wells A2, A3, B1, B2, B3 the two folders hold exactly the same set of electrode file names (0 names differ); for A1, 33 names differ. Among all other pairs of the 35 wells the smallest difference is 8 names and the median 41 `[computed here from the listing]`. So `DATA_P/Batch4` is probably a copy of `DATA_P/Batch3/SubBatch1` in five wells `[reasoning, Likely; names only, no content read]`. If so, the DUP class has 13 distinct recordings, not 18, and five would count twice in the class statistics and in any replicate pair.
-
-Check, read-only, before or after the move (per well: files compared, files with identical content):
+The command, for the record:
 
 ```bash
 cd "/davinci-1/home/ldellamea/Deep Summary Network/Deep_bio/DATA_P" && for w in A1 A2 A3 B1 B2 B3; do n=0; t=0; for f in Batch4/ptrain_$w/ptrain_*.mat; do t=$((t+1)); cmp -s "$f" "Batch3/SubBatch1/ptrain_$w/${f##*/}" && n=$((n+1)); done; echo "$w files=$t identical=$n"; done
 ```
-
-`identical` equal to `files` means a copy; `identical=0` means different recordings that happen to share their file names.
