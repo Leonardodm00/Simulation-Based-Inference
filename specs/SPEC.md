@@ -2413,7 +2413,10 @@ fixture, not part of the pipeline.
     - contract: for each committed project file (`giulia.json`,
       `linddup.json`, and every run view of `synth.json`) the K_cfg part of
       the identity as `_identity` writes it from that file compares equal to
-      the file -- no refusal on the running chains;
+      the file -- no refusal on the running chains; [2026-11-17, the final
+      check's F2: every search view of each file -- linddup.json v11's three
+      run views included -- one identity per view, counted per file through
+      block 29's `search_views`];
     - reference, end to end on a reduced search of at least two rounds at
       one trial at a time: stopped while round 0 runs, `split.fractions`
       changed, submitted again with `--accept-config-change`: the `STOP:`
@@ -2436,7 +2439,8 @@ fixture, not part of the pipeline.
     of 7, 2 skip -- convergence, determinism; the poll's and the start's
     checks each removed are caught); checked by an independent agent on
     `e6e7af0` (`specs/test_reports/2026-11-14_1558_incremental.md`). Not run
-    on davinci.
+    on davinci. [2026-11-17: `test_contract` failed at a915950 against
+    linddup.json v11 (the final check's F2); 5 of 7 again since 6382a02.]
 - Test oracles (`hpc/pipeline/tests/test_smoke_block7.py`, the fake PBS
   with `FAKE_PBS_ENFORCE_WALLTIME`, the blocks 4-6 bank fixture: 194 rows,
   8 shards, 44 donors; the trial jobs run the real tuner and runner):
@@ -5539,8 +5543,14 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   `test_smoke_finalist.py`, `test_smoke_report.py` pass as at the contract
   commit.
 - Custom code: none.
-- Status: [Reopened 2026-11-17 by contract amendment 5 (F1: the reset tool sets the request aside): drafted
-  until implemented and checked.] Before: smoke-tested 2026-11-17 (wave W3, merged b1e53d1): `tests/
+- Status: [Reopened 2026-11-17 by contract amendment 5 (F1: the reset tool sets the request aside);
+  smoke-tested again 2026-11-17 (block 30c, merged 79f882d): `test_smoke_reset.py`
+  6 pass, 1 skip, its new `test_stop_request` (the CODE changes when a request
+  appears; a search ended user_stop reset with --confirm: the request listed, moved
+  into the set-aside folder with its sha256 and named in RESET_RECORD.json, gone
+  from the campaign; the stage then passes the gate on the kept probe file and
+  proposes round 0); the mutation `stop_left` (F1's symptom) caught; stop 6/2,
+  report 6/1, T29e as before `[SANDBOX 2026-11-17]`.] Before: smoke-tested 2026-11-17 (wave W3, merged b1e53d1): `tests/
   test_smoke_stop.py` 5 pass, 2 skip (convergence, determinism); T30b-T30d
   end to end on the fake PBS (`SEARCH COMPLETE (user_stop)`, the deleted
   jobs' Exit_status 271, no resubmission though `resubmit_killed` is true);
@@ -5668,8 +5678,15 @@ D-147, D-148; the sampler's construction Claude's; Confirmed: yes
   from a union of groups without enumerating it; checked:
   `numpy.random.Generator.choice` over groups then over rows, which is what
   it uses).
-- Status: [Reopened 2026-11-17 by contract amendment 5 (F3: the parser's choices): drafted
-  until implemented and checked.] Before: smoke-tested 2026-11-17 (wave W3, merged d44a76d):
+- Status: [Reopened 2026-11-17 by contract amendment 5 (F3: the parser's choices);
+  smoke-tested again 2026-11-17 (merged 6382a02): the stage-4 suites
+  `smoke_test_joint_tune.py` and `smoke_test_joint_space.py` 9 of 9 again (J28,
+  J35); `smoke_test_rep_pairs.py` 12/1 with T31e's bit-for-bit lines unchanged;
+  `smoke_test_joint_arms.py` 33; the parser unchanged (53 actions equal on every
+  attribute, the same help and usage, 12 command lines alike); five mutants of the
+  lists, each stopping the import `[SANDBOX 2026-11-17]`. Accepted deviations: the
+  check raises AssertionError explicitly (not stripped by -O) and reads the
+  parser's actions.] Before: smoke-tested 2026-11-17 (wave W3, merged d44a76d):
   `hpc/joint/stage3/smoke_test_rep_pairs.py` 12 pass, 1 skip
   (convergence); T31b at 2,000,000 draws: within-well shares 0.1969,
   0.0818, 0.0824, 1.0000 against 0.1970, 0.0819, 0.0819, 1 (amendment 2);
