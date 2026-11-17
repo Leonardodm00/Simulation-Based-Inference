@@ -1408,7 +1408,22 @@ fixture, not part of the pipeline.
   S1's artefact); the launcher's variables PROFILE, ENV_NAME = `envs.
   extract`, QUEUE = `bank.queue`, CONCURRENCY = `bank.concurrency`,
   WALLTIME = `bank.walltime` (the array), TEST_INDEX 0, SBI_HPC_DIR =
-  `<sbi_dir>/hpc`.
+  `<sbi_dir>/hpc`. [contract amendment 4, 2026-11-17, Sbi-extractor's final
+  check F3 (report 2026-11-17_1500 there): TEST_INDEX is the plan's first
+  task that holds simulations -- the smallest index i of the plan's
+  `tasks` (bank_plan.json, written by S4) whose `n_iters` is above 0
+  (Sbi-extractor Block 10 counts them after dropping the partial
+  topologies, so a task may hold none) -- passed to `test` and to `array`
+  alike (the launcher's WALLTIME=auto reads that task's marker; its
+  amendment 2 refuses a test task of 0 simulations). The test is skipped
+  when `<bank_root>/tasks/task_<iiii>.json` carries this plan's sha256 and
+  a `finished` time; the test log is `bank_test_<i>.log`; the record names
+  `bank test task <i>`; the dry run, which runs before the plan exists,
+  prints `TEST_INDEX=<the plan's first task with simulations>`. A plan
+  that cannot be read, or holds no such task, stops the stage with
+  `the bank plan <path> has no task with simulations` (or the read's
+  problem) before any job. With every task holding simulations, i = 0 and
+  every line is as before.]
 - Rules: S4 runs `plan` on the login node and needs the pass line `BANK
   PLAN OK` (the tool writes the plan and its .sha256); S5 is the chain line
   BC as phases -- `test` (skipped when `<bank_root>/tasks/task_0000.json`
@@ -1440,6 +1455,16 @@ fixture, not part of the pipeline.
     on the fixture: `BANK PLAN OK`, `TASK 0 OK`, the gate's `wrote`, `REAL
     BANK OK`, the artefacts with their sidecars, 3 jobs; a re-run on the
     state does nothing, on a fresh state skips all eight stages.
+  - [amendment 4] the test task: a plan whose task 0 holds no simulation
+    (on the stand-in, task 0's topologies made partial with
+    `drop_partial_topologies` true; where the stand-in cannot, a plan JSON
+    whose tasks' `n_iters` are [0, k, ...] given to the stage with the
+    launcher's calls recorded) -> `test` and `array` get TEST_INDEX 1, the
+    log `bank_test_1.log`, the skip rule reads `task_0001.json`; a plan
+    whose every task holds 0, or that cannot be read, stops the stage
+    before any job with the line above; on the unchanged fixture every
+    line and argument is as before (TEST_INDEX 0) and the end to end
+    passes as above.
   - determinism: the sequencer stopped while the test task is queued (the
     fake PBS's 4 s start delay) and re-run re-attaches: 3 jobs in all.
   - edge: a task's detections removed before the array -> the gate
@@ -1508,7 +1533,8 @@ fixture, not part of the pipeline.
   `REFUSED` lines stop the run. The stage does not resubmit failed tasks:
   the gate names them, and `--retry sim_bank` reruns the array, whose
   finished elements skip on their markers (the launcher's rule).
-- Status: smoke-tested 2026-10-16 (7 pass, 1 skip, about 30 s; the Sbi-
+- Status: [Reopened 2026-11-17 by contract amendment 4 (the test task):
+  drafted until implemented and checked.] Before: smoke-tested 2026-10-16 (7 pass, 1 skip, about 30 s; the Sbi-
   extractor bank suite untouched). The first davinci run (10:35) passed
   the cluster check, the block-1 test and the dry run; it found the
   profile defect above and that the Giulia banks had never been built
