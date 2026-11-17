@@ -6,7 +6,7 @@ One optimiser step consumes three batches drawn from two different banks:
                   Feeds L_NPE. theta exists only here.
     met stream  : class-balanced (x, c) from the REAL bank.
                   Feeds l_DSN. c exists only here.
-    rep stream  : same-donor well PAIRS from the REAL bank.
+    rep stream  : replicate PAIRS of real windows from the REAL bank.
                   Feeds L_rep. The replicate structure exists only here.
 
 Three properties this module is responsible for, each of which has a test:
@@ -20,10 +20,16 @@ Three properties this module is responsible for, each of which has a test:
     another's draws. Without this, a change to the metric batch size silently
     changes which simulated rows are seen, and any A/B comparison across
     configurations is confounded.
-  * **Replicate pairs are exhaustive and exchangeable.** All within-donor pairs
-    are enumerated once; a donor contributing k wells supplies k(k-1)/2 pairs.
-    Donors with a single well contribute none and are counted, not silently
-    dropped -- decision D12 turns on that count.
+  * **Replicate pairs follow one stated rule** [block 31, D-146..D-148]. A
+    row's group is the value of a real-bank id array (the KEY: the donor by
+    default). Under `cross_well` (block 14's F-ab, the default) every pair of
+    rows of one group in two different wells is enumerated once and a step
+    draws b_rep distinct pairs of that set; groups without such a pair are
+    counted, not silently dropped -- decision D12 turns on that count. Under
+    `within_group` the pair set is every pair of two different rows of one
+    group, any well, P = {(i, j) : i < j, g_i = g_j}; it is never enumerated
+    (its size grows as the square of the groups' sizes) and a step draws
+    b_rep independent pairs uniform on P (GroupPairSampler).
 
 Pure ASCII, LF only. torch + numpy.
 """
@@ -31,7 +37,11 @@ Pure ASCII, LF only. torch + numpy.
 import numpy as np
 import torch
 
-__all__ = ["enumerate_donor_pairs", "ThreeStreamBatcher", "BatchSpec", "ShardStream"]
+__all__ = ["enumerate_donor_pairs", "ThreeStreamBatcher", "BatchSpec", "ShardStream",
+           "GroupPairSampler", "REP_PAIRS"]
+
+# [block 31, D-148 (3)] the replicate pair rules (run_joint_arms.py --rep-pairs)
+REP_PAIRS = ("cross_well", "within_group")
 
 
 class ShardStream(object):
@@ -276,6 +286,95 @@ def enumerate_donor_pairs(donor_ids, well_ids=None):
     return np.asarray(pairs, dtype=np.int64), n_singleton
 
 
+class GroupPairSampler(object):
+    """[block 31, D-147] Uniform draws from the within-group pairs
+    P = {(i, j) : i < j, g_i = g_j}, without enumerating P (specs/SPEC.md
+    block 31, `within_group`).
+
+    With n_h the rows of group h and C_h = n_h (n_h - 1) / 2 its unordered
+    pairs, |P| = sum_h C_h. One draw: a group h with probability
+    w_h = C_h / |P|, then two distinct rows of h uniform among its C_h
+    unordered pairs; so every pair of P has probability w_h / C_h = 1 / |P|.
+    Two rows of one well are in P (D-146, D-147).
+
+    Parameters
+    ----------
+    group_ids : (n,) array -- the group of each entry (any dtype that
+        numpy.unique sorts: int ids, or strings)
+    rows : (n,) int array or None -- the row index each entry stands for
+        (default 0..n-1); a draw returns these indices
+
+    Attributes
+    ----------
+    groups : (G,) the distinct group ids, increasing (numpy.unique)
+    sizes : (G,) int64 -- n_h; pairs_per_group : (G,) int64 -- C_h
+    n_pairs : int -- |P|; n_groups : G; n_groups_paired : #{h : n_h >= 2}
+    """
+
+    def __init__(self, group_ids, rows=None):
+        g = np.asarray(group_ids).ravel()
+        if rows is None:
+            rows = np.arange(g.size, dtype=np.int64)
+        rows = np.asarray(rows, dtype=np.int64).ravel()
+        if rows.size != g.size:
+            raise ValueError("rows has %d entries, group_ids %d" % (rows.size, g.size))
+        self.groups, inv = np.unique(g, return_inverse=True)
+        inv = np.asarray(inv).ravel()
+        self.sizes = np.bincount(inv, minlength=self.groups.size).astype(np.int64)
+        # rows grouped by group (stable: row order kept within a group);
+        # group h's rows are rows_by_group[offsets[h]:offsets[h + 1]]
+        self.rows_by_group = rows[np.argsort(inv, kind="stable")]
+        self.offsets = np.concatenate([[0], np.cumsum(self.sizes)]).astype(np.int64)
+        self.pairs_per_group = self.sizes * (self.sizes - 1) // 2
+        self.n_pairs = int(self.pairs_per_group.sum())
+        self.paired = np.flatnonzero(self.sizes >= 2)
+        # w_h over the groups with a pair (float64; a group of one row has
+        # w_h = 0 and is left out of the draw)
+        self.weights = (self.pairs_per_group[self.paired].astype(np.float64)
+                        / float(self.n_pairs) if self.n_pairs
+                        else np.zeros(0, dtype=np.float64))
+
+    @property
+    def n_groups(self):
+        return int(self.groups.size)
+
+    @property
+    def n_groups_paired(self):
+        return int(self.paired.size)
+
+    def members(self, h):
+        """The rows of group index h (0..G-1), in row order."""
+        return self.rows_by_group[self.offsets[h]:self.offsets[h + 1]]
+
+    def draw(self, n, rng):
+        """n independent pairs, each uniform on P.
+
+        rng : numpy.random.Generator
+        Returns (n, 2) int64 rows, i < j within each pair.
+
+        Custom: numpy has no draw of a uniform pair from a union of groups
+        without enumerating the pairs. Checked: numpy.random.Generator.choice
+        over the groups (p = w) then over the rows, which is what this uses:
+        the group by Generator.choice, then a uniform row a of the group and
+        a uniform other row b (b drawn on n_h - 1 values and shifted past a),
+        by Generator.integers, which is choice over the rows vectorised with
+        a per-pick bound n_h. (a, b) is uniform on the n_h (n_h - 1) ordered
+        pairs of distinct rows, so {a, b} is uniform on the C_h unordered."""
+        n = int(n)
+        if self.n_pairs == 0:
+            raise ValueError("no within-group pair: every group has fewer than two rows")
+        if n < 0:
+            raise ValueError("n must be >= 0")
+        k = self.paired[rng.choice(self.paired.size, size=n, p=self.weights)]
+        nk = self.sizes[k]
+        a = rng.integers(0, nk)
+        b = rng.integers(0, nk - 1)
+        b = b + (b >= a)
+        i = self.rows_by_group[self.offsets[k] + a]
+        j = self.rows_by_group[self.offsets[k] + b]
+        return np.stack([np.minimum(i, j), np.maximum(i, j)], axis=1).astype(np.int64)
+
+
 class BatchSpec(object):
     """Sizes of the three streams per optimiser step."""
 
@@ -319,14 +418,36 @@ class ThreeStreamBatcher(object):
         does. The two arms differed only in name, and eq. (9)'s decomposition
         into a domain effect and an objective effect would have been computed
         from two copies of the same run.
+    rep_pairs : "cross_well" (default) or "within_group"  [block 31]
+        The replicate pair rule. cross_well: block 14's -- two rows of one
+        group in two different wells (with `real_well`; without it any two
+        rows of one group, as before block 14), enumerated, b_rep distinct
+        pairs per step. within_group: two different rows of one group, any
+        well, b_rep independent draws uniform on P per step, P never
+        enumerated (GroupPairSampler); the draws use the replicate generator
+        g_rep, so the checkpoint's state resumes the same sequence.
+    rep_group : (N_real,) array or None  [block 31]
+        The KEY array: the group of each real row. None: `real_donor`, so
+        the default call is block 14's exactly.
+    rep_group_key : str  [block 31]
+        The KEY's name (the real bank's id array: donor, rep_group, batch or
+        well), for the report lines; default "donor".
     """
 
     def __init__(self, sim_theta, sim_x, real_x=None, real_cls=None,
                  real_donor=None, surrogate=None, spec=None, seed=0,
-                 met_x=None, met_cls=None, sim_stream=None, real_well=None):
+                 met_x=None, met_cls=None, sim_stream=None, real_well=None,
+                 rep_pairs="cross_well", rep_group=None, rep_group_key="donor"):
         # [block 14, F-ab] `real_well`: the real rows' well ids; when given,
         # a replicate pair is two rows of one donor in two different wells
         # (enumerate_donor_pairs). None keeps the pairs by donor alone.
+        # [block 31] `rep_group` (the KEY array) takes the donor's place in
+        # that rule, and `rep_pairs` chooses the rule; the defaults are
+        # block 14's call, unchanged.
+        if rep_pairs not in REP_PAIRS:
+            raise ValueError("rep_pairs must be one of %s, got %r" % (REP_PAIRS, rep_pairs))
+        self.rep_pairs = rep_pairs
+        self.rep_group_key = str(rep_group_key)
         # [block 5, D-084] `sim_stream` (a ShardStream) replaces the in-memory
         # simulated tensors: the simulated batches then come from the rolling
         # buffer of shards and sim_theta / sim_x are None. Everything else is
@@ -380,8 +501,21 @@ class ThreeStreamBatcher(object):
         self.pairs = np.zeros((0, 2), dtype=np.int64)
         self.n_singleton_donors = 0
         self.pairs_across_wells = real_well is not None
-        if real_donor is not None:
-            donors = np.asarray(real_donor).ravel()
+        # [block 31] within_group: the sampler over P (None without real
+        # rows); `pairs` is None, since P is never enumerated -- a reader of
+        # `pairs` fails loudly instead of seeing no pair; `n_pairs` is |P|
+        # under either rule.
+        self.group_sampler = None
+        if self.rep_pairs == "within_group":
+            self.pairs = None
+        if rep_group is not None:
+            rep_group = np.asarray(rep_group).ravel()
+            if rep_group.size != self.surrogate.size:
+                raise ValueError("rep_group has %d entries, the real arm %d rows"
+                                 % (rep_group.size, self.surrogate.size))
+        groups = real_donor if rep_group is None else rep_group
+        if groups is not None:
+            donors = np.asarray(groups).ravel()
             # A surrogate row has no well identity, so it cannot be a
             # replicate. Exclude it by MASK and map the surviving indices back.
             #
@@ -391,12 +525,20 @@ class ThreeStreamBatcher(object):
             # two surrogates became one donor and formed a bogus replicate
             # pair. Masking has no dtype dependence at all.
             keep = np.flatnonzero(~self.surrogate)
-            wells = (None if real_well is None
-                     else np.asarray(real_well).ravel()[keep])
-            sub_pairs, self.n_singleton_donors = enumerate_donor_pairs(
-                donors[keep], wells)
-            self.pairs = (keep[sub_pairs] if sub_pairs.size
-                          else np.zeros((0, 2), dtype=np.int64))
+            if self.rep_pairs == "within_group":
+                # [block 31] R = the real rows that are not surrogates; the
+                # rows of one well are not told apart (`real_well` unused)
+                self.group_sampler = GroupPairSampler(donors[keep], rows=keep)
+                # the groups contributing no pair (the D12 number of the rule)
+                self.n_singleton_donors = (self.group_sampler.n_groups
+                                           - self.group_sampler.n_groups_paired)
+            else:
+                wells = (None if real_well is None
+                         else np.asarray(real_well).ravel()[keep])
+                sub_pairs, self.n_singleton_donors = enumerate_donor_pairs(
+                    donors[keep], wells)
+                self.pairs = (keep[sub_pairs] if sub_pairs.size
+                              else np.zeros((0, 2), dtype=np.int64))
 
     # -- the three streams ---------------------------------------------------
 
@@ -444,13 +586,57 @@ class ThreeStreamBatcher(object):
         idx = torch.cat(picks)
         return self.met_x[idx], self.met_cls[idx], idx
 
+    @property
+    def n_pairs(self):
+        """[block 31] |P|, the replicate pairs of the rule: the enumerated
+        pairs under cross_well, sum_h n_h (n_h - 1) / 2 under within_group."""
+        if self.rep_pairs == "within_group":
+            return 0 if self.group_sampler is None else self.group_sampler.n_pairs
+        return int(self.pairs.shape[0])
+
+    @property
+    def pair_rule_text(self):
+        """[block 31] The rule in words, as the report line and the
+        replicate diagnostic print it: `two rows of one <KEY> group, any
+        well` (within_group); `two wells of one <KEY> group` (cross_well).
+        With KEY donor under cross_well the text is block 14's, unchanged:
+        `two wells of one donor` (`any two rows of one donor` without well
+        ids), so that a call without the new flags prints what it printed
+        before (sec. 4; B14's runner check reads that line)."""
+        key = self.rep_group_key
+        if self.rep_pairs == "within_group":
+            return "two rows of one %s group, any well" % key
+        if key == "donor":
+            return ("two wells of one donor" if self.pairs_across_wells
+                    else "any two rows of one donor")
+        return ("two wells of one %s group" % key if self.pairs_across_wells
+                else "any two rows of one %s group" % key)
+
+    def draw_within_pairs(self, n):
+        """[block 31] n independent pairs uniform on P (within_group), as an
+        (n, 2) int64 array of real-row indices, i < j. One call is one
+        step's draw: a 62-bit seed taken from the replicate generator g_rep
+        (whose state the batcher's state_dict, and so block 6's checkpoint,
+        carries) seeds the numpy Generator that GroupPairSampler.draw uses;
+        so the same seed gives the same pairs, and a restored state the same
+        continuation."""
+        if self.group_sampler is None or self.group_sampler.n_pairs == 0:
+            raise ValueError("no within-group pair to draw")
+        seed = int(torch.randint(0, 2 ** 62, (1,), generator=self.g_rep).item())
+        return self.group_sampler.draw(int(n), np.random.default_rng(seed))
+
     def rep_batch(self):
-        """Same-donor well pairs."""
-        if self.spec.b_rep == 0 or self.pairs.shape[0] == 0:
+        """Replicate pairs: under cross_well (block 14) b_rep distinct pairs
+        of the enumerated set; under within_group (block 31) b_rep
+        independent pairs uniform on P, so a step may repeat a pair."""
+        if self.spec.b_rep == 0 or self.n_pairs == 0:
             return None
-        n = min(self.spec.b_rep, self.pairs.shape[0])
-        sel = torch.randperm(self.pairs.shape[0], generator=self.g_rep)[:n]
-        p = self.pairs[sel.numpy()]
+        if self.rep_pairs == "within_group":
+            p = self.draw_within_pairs(self.spec.b_rep)
+        else:
+            n = min(self.spec.b_rep, self.pairs.shape[0])
+            sel = torch.randperm(self.pairs.shape[0], generator=self.g_rep)[:n]
+            p = self.pairs[sel.numpy()]
         ig = torch.as_tensor(p[:, 0], dtype=torch.long)
         igp = torch.as_tensor(p[:, 1], dtype=torch.long)
         return self.real_x[ig], self.real_x[igp], (ig, igp)
@@ -460,7 +646,7 @@ class ThreeStreamBatcher(object):
                 "rep": self.rep_batch()}
 
     def report(self):
-        return "\n".join([
+        lines = [
             "simulated rows   : %d%s" % (self.n_sim, (
                 "   (streamed: buffer %d shard(s) of %d)"
                 % (self.sim_stream.K, len(self.sim_stream.shards))
@@ -470,10 +656,20 @@ class ThreeStreamBatcher(object):
             "surrogate rows   : %d" % int(self.surrogate.sum()),
             "metric source    : %s" % ("real" if self._met_is_real else "sim"),
             "classes          : %s" % sorted(self.class_index),
-            "replicate pairs  : %d  (%s)" % (
-                self.pairs.shape[0],
-                "two wells of one donor" if self.pairs_across_wells
-                else "any two rows of one donor"),
-            "singleton donors : %d   <- D12: pairs are impossible for these"
-            % self.n_singleton_donors,
-        ])
+            "replicate pairs  : %d  (%s)" % (self.n_pairs, self.pair_rule_text),
+        ]
+        if self.rep_pairs == "within_group":
+            # [block 31] the groups with a pair, of the groups of the
+            # non-surrogate real rows
+            gs = self.group_sampler
+            lines.append("replicate groups : %d of %d"
+                         % ((gs.n_groups_paired, gs.n_groups) if gs is not None
+                            else (0, 0)))
+        elif self.rep_group_key == "donor":
+            lines.append("singleton donors : %d   <- D12: pairs are impossible for these"
+                         % self.n_singleton_donors)
+        else:
+            lines.append("singleton groups : %d   <- D12: pairs are impossible for "
+                         "these (%s groups)" % (self.n_singleton_donors,
+                                                self.rep_group_key))
+        return "\n".join(lines)
