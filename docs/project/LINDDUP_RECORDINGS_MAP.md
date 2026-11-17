@@ -5,6 +5,7 @@
 | 2026-11-17 | v1. Written from the user's `ls -R` of `Deep_bio/` (pasted 10:57 Europe/Rome) `[CLUSTER, the user's paste]`. The move of sec. 2 is handed to the user as commands; NOT yet run when this was written. The donor column is empty: the folder tree does not name a donor (sec. 4). |
 | 2026-11-17 | v2. The user's message of 11:14: the donor is the condition (D-144; sec. 4, the donor column filled: `C`, `P`); the `cmp` check of sec. 5 run on davinci `[CLUSTER, the user's paste]`: `DATA_P/Batch4` wells A2, A3, B1, B2, B3 are byte-for-byte copies of `DATA_P/Batch3/SubBatch1`'s, A1 shares no file with it. The move of sec. 2 not reported run. |
 | 2026-11-17 | v3. The user's message of 11:51: the move of sec. 2 ran ("This worked"; output not pasted), so the recordings are at `LindaColloDUP/recordings/`; the five copies are left out of the real data (D-145): 30 wells, 17 control, 13 DUP. |
+| 2026-11-17 | v4. The user's messages of 12:11 and 12:17: an A5 replicate pair is two subregions of one batch, the batch being `Batch3` / `Batch4` within a condition (D-146; new sec. 4b; the CSV gains `pair_group` and `in_real_data`). |
 
 Machine-readable copy of sec. 3: `docs/project/linddup_recordings_map.csv` (same rows, same columns, plus the paths).
 
@@ -100,6 +101,19 @@ Consequences `[reasoning]`, for the LindDUP pipeline chat:
 - A5's pairs are then exactly the same-class pairs of A2's labels: the replicate term pulls together what the DSN term's positives pull together. The two arms differ on the real windows only in A2's push between classes.
 - Any statistic that resamples real donors (a donor-cluster bootstrap) has 2 clusters and cannot give an interval; on the real arm the resampling unit has to be the well or the plate folder.
 - Wells of one plate folder are likely closer than wells of different batches; whether pairs are drawn across batches or within is not decided.
+
+## 4b. The A5 pair group (D-146)
+
+An A5 replicate pair is two subregion windows of the same batch, the batch being `Batch3` or `Batch4` within a condition `[user, 2026-11-17 12:11, 12:17]`: pairs within a well, across wells of a plate folder, and across the sub-batches of a batch. This narrows D-144's "any two wells of one condition". With the five copies out (D-145):
+
+| pair group | wells | plate folders |
+|---|---|---|
+| C-Batch3 | 5 | C-B3 |
+| C-Batch4 | 12 | C-B4-S1, C-B4-S2 |
+| P-Batch3 | 12 | P-B3-S1, P-B3-S2 |
+| P-Batch4 | 1 | P-B4 (well A1 only: its pairs are within the well) |
+
+The level is to be a configuration value (well, plate folder, batch), set to batch. Before A5's search, on the A1 fit (no replicate term): compare the summaries' distance over pairs of subregions of one well with that over pairs from different wells of one batch; if the second is clearly larger, wells of a batch are not exchangeable and the level goes back to the user `[Claude's proposal, accepted: "Go on then"]`.
 
 ## 5. `DATA_P/Batch4` against `DATA_P/Batch3/SubBatch1`: five copies (run 2026-11-17)
 
