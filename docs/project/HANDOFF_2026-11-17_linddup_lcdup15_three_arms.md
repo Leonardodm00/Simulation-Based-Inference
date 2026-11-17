@@ -3,6 +3,7 @@
 | Date | Change |
 |---|---|
 | 2026-11-17 | v1. Written by the results-commentary chat (the chat that read synth v4's evaluation, D-136's Status) for the LindDUP pipeline chat, at the user's word of 09:29 Europe/Rome. State at writing: four decisions logged (D-138..D-141, log v1.140 on `main` `8d70dd8`); `linddup.json` still v10 (MEAMA, A1 only) on `sci/pipeline` `ee8b382`; nothing built, nothing run. |
+| 2026-11-17 | v2. The outputs of sec. 4's three checks, pasted by the user at 09:55 Europe/Rome from `dvlogin02` `[CLUSTER, the user's paste]`: recorded in sec. 4, with what they change in sec. 5. |
 
 Tags: `[LOG D-nnn]` the decision log on `main`; `[CODE SBI@ee8b382 file]` read in the code on `sci/pipeline`; `[BRIEF]` the user's `LindaColloDUP15_SBI_brief.md` (written 2026-11-16 from the ANN repository; attached by the user to the results-commentary chat, not in this repository: ask the user to attach it); `[BENCH]` computed by the results-commentary chat on the synth v4 bundle (`synth_v4_results.tar.gz`), scripts delivered to the user; `[user]`; `[estimate]`; `[reasoning]` not checked.
 
@@ -51,7 +52,7 @@ Sections of `linddup.json` that are MEAMA's and must be rewritten: `sim` (root, 
 
 Not checked, to check first: whether `sim_reextract/` (the re-detection profile `linddup.sh`), the label freeze and the bank tool read this campaign (the constant columns, `conn_prob` beside `theta`, no `O_N` axis, no astrocyte spikes); which commit's code ran and the U_0_sr box as launched (the campaign's `PROVENANCE_*.txt` and `job_args.json`).
 
-## 4. Read-only checks for davinci (given to the user 2026-11-16 and 2026-11-17; outputs not yet seen)
+## 4. Read-only checks for davinci: run 2026-11-17 09:55, results below
 
 The first two are the brief's own lines; none was tested by the results-commentary chat.
 
@@ -66,6 +67,16 @@ cd ~/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP && pyth
 ```bash
 qstat -Qf intel | grep -E "resources_max|resources_default|max_run|enabled|started"
 ```
+
+Results `[CLUSTER, the user's paste of 2026-11-17 09:55, dvlogin02]`:
+
+| Check | Output | Reading |
+|---|---|---|
+| Count | `progress: 442,473 / 1,000,000 (44.2%)   discard rate: 0.28%   total disk: 1.200 TiB`; arrays `1942752[]` (cfd, 192 cores) and `1942753[]` (cpu, 48 cores) in state `B` | still running; the bank is a snapshot, so the count to train on has to be frozen when the bank is built |
+| Axes | 13 active names; 14 swept axes: Sigma (3, 15, lin), gbarA (0.01, 10, log), tauA (10, 2000, log), U_0_ar (1e-4, 0.05, log), U_max (0.1, 1, log), U_0_sr (0.1, 1, log), Omega_f_sr, Omega_f_ar, Omega_d (0.1, 4.5, log), g_ampa, g_nmda (0.01, 10, log), delta_gA (0.005, 10, log), x0 (0.05, 0.5, log), conn_prob (0.01, 0.4, lin) | as the brief says, the launched U_0_sr box [0.1, 1] included; p = 14 confirmed on one task's `job_args.json` (the first sweep folder; the others not read) |
+| `intel` | `resources_max.walltime = 240:00:00`; `max_run_res.ncpus = [u:ldellamea=960]`; enabled and started; no per-job ncpus or mem line | a job may ask at most 240 h: the best fit's 300 h walltime must come down (members resume, block 6); 444 cores fit under the user's 960; whether one node holds 48 cores and 160-200 GB is still not shown (a node listing is needed) |
+
+At 442,473 simulations: n_train about 376,100; a 6-pass trial is 8,820 / 4,420 / 2,220 steps at batch 256 / 512 / 1024; a member pass 1,470 steps at batch 256; trial and arm times of sec. 5 scale by about 1.43 (typical trial about 7 h, one arm about 850 h) `[estimate]`.
 
 Expected for the second: 13 active names, U_0_sr (0.1, 1.0, True), conn_prob (0.01, 0.4, False) `[BRIEF sec. 7]`. The third answers whether an `intel` node holds a 48-core, 160 GB trial; if not, the trial's size and the arithmetic of sec. 5 change.
 
