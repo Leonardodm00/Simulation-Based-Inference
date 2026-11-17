@@ -9,20 +9,31 @@ stand).
                      `BANK PLAN OK`; artefact `<sbix_dir>/export_windows/
                      <tag>/bank_plan.json` + .sha256 (the tool writes both)
     sim_bank (S5)    the chain line BC of the first data set, as phases:
-                     `test` (one task as a job; skipped when its marker
+                     `test` (one task as a job: TEST_INDEX i, the plan's
+                     first task with simulations; skipped when its marker
                      belongs to this plan), passed when its completion
-                     marker `tasks/task_0000.json` is this plan's (its log
+                     marker `tasks/task_<iiii>.json` is this plan's (its log
                      line `TASK <i> OK` is reported with it); `array` with
                      WALLTIME from `bank.walltime` (`auto` = the launcher's
-                     rule from the test task's pace) -- the array and its
-                     gate job; then a verification JOB (tools/bank_verify.py:
-                     every shard's sha256 and every zip member's CRC); bad
-                     tasks are moved to a quarantine folder (never deleted)
-                     and the array runs again, at most bank.max_rerun_rounds
-                     times (D-094, D-095); artefact `BANK_RECORD.json` +
-                     .sha256 and `BANK_VERIFIED.json` + .sha256
+                     rule from the test task's pace) and the same TEST_INDEX
+                     -- the array and its gate job; then a verification JOB
+                     (tools/bank_verify.py: every shard's sha256 and every
+                     zip member's CRC); bad tasks are moved to a quarantine
+                     folder (never deleted) and the array runs again, at
+                     most bank.max_rerun_rounds times (D-094, D-095);
+                     artefact `BANK_RECORD.json` + .sha256 and
+                     `BANK_VERIFIED.json` + .sha256
     real_bank (S6)   `launch_bank.sh real` on the login node; pass line
                      `REAL BANK OK`; artefact `shard_0000.npz` + .json
+
+The test task (contract amendment 4, 2026-11-17): Sbi-extractor's plan
+counts each task's `n_iters` after dropping its partial topologies (its
+Block 10), so a task may hold no simulation, and the launcher's
+WALLTIME=auto needs the pace of a test task that read some (its amendment
+2 refuses one of 0). TEST_INDEX is therefore the smallest index of the
+plan's `tasks` whose `n_iters` is above 0 (0 when every task holds
+simulations: every line and argument as before); a plan that cannot be
+read, or holds no such task, stops the stage before any job.
 
 The launcher submits the jobs itself and prints `  job   : <id>` and
 `  gate  : <id>`; the stages record those ids through the sequencer's
@@ -159,6 +170,30 @@ def grace_over(sub, job_id):
     now = time.time()
     t0 = float(seen.setdefault(job_id, now))
     return (now - t0) >= grace
+
+
+def first_task_with_simulations(plan_path):
+    """(i, None), i the smallest index of the bank plan's `tasks` whose
+    `n_iters` is above 0 -- the test task (contract amendment 4) -- or
+    (None, the reason): `the bank plan <path> has no task with simulations`,
+    or `the bank plan <path> cannot be read: <problem>`. Never raises (the
+    stage also asks it in a poll, where an exception would end the
+    sequencer's job instead of the stage)."""
+    plan, problem = CM.try_read_json(plan_path)
+    if plan is None:
+        return None, "the bank plan %s cannot be read: %s" % (plan_path, problem)
+    tasks = plan.get("tasks")
+    if not isinstance(tasks, list):
+        return None, ("the bank plan %s cannot be read: its tasks are %s, not a list"
+                      % (plan_path, "absent" if tasks is None else type(tasks).__name__))
+    for i, t in enumerate(tasks):
+        n = t.get("n_iters") if isinstance(t, dict) else None
+        if isinstance(n, bool) or not isinstance(n, int):
+            return None, ("the bank plan %s cannot be read: task %d has n_iters %s, not an integer"
+                          % (plan_path, i, ascii(n)))
+        if n > 0:
+            return i, None
+    return None, "the bank plan %s has no task with simulations" % plan_path
 
 
 def _bank_protocol_line(cfg):
@@ -349,7 +384,8 @@ class SimBankStage(_BankBase):
     """S5, the simulated bank, as phases (specs/SPEC.md block 2; the
     self-healing rules D-094, D-095):
 
-        test        one task as a job (skipped when its marker is this plan's)
+        test        one task as a job, TEST_INDEX the plan's first task with
+                    simulations (skipped when its marker is this plan's)
         gate        round r: `launch_bank.sh array` -- the array and its gate --
                     until the gate has ended (passed, refused, never ran) and
                     the array too
@@ -412,9 +448,26 @@ class SimBankStage(_BankBase):
 
     # -- helpers ---------------------------------------------------------------
 
-    def _test_marker_ok(self, cfg):
-        """The test task's marker exists and belongs to this plan."""
-        m = os.path.join(self._bank_root(cfg), "tasks", "task_0000.json")
+    def _test_index(self, cfg, sub):
+        """The test task's index for a submission (contract amendment 4): the
+        plan's first task with simulations, kept in the stage's state from its
+        start. A state written before the amendment has none (its test job,
+        if one is in flight, is task 0's: the test phase's poll reads that
+        marker): it is read from the plan of record now and kept. None, with
+        the stage failed on the reason, when the plan cannot be read or holds
+        no such task."""
+        if sub.get("test_index") is None:
+            i, why = first_task_with_simulations(artefact_of("bank_plan", cfg)[1])
+            if i is None:
+                self._fail(sub, why)
+                return None
+            sub["test_index"] = i
+        return int(sub["test_index"])
+
+    def _test_marker_ok(self, cfg, index):
+        """The test task's marker `tasks/task_<iiii>.json` (i = `index`)
+        exists and belongs to this plan."""
+        m = os.path.join(self._bank_root(cfg), "tasks", "task_%04d.json" % int(index))
         plan = artefact_of("bank_plan", cfg)[1]
         if not (os.path.isfile(m) and os.path.isfile(plan)):
             return False
@@ -518,14 +571,17 @@ class SimBankStage(_BankBase):
         task = cores[0]
         if not pbs.fits(task):
             return self._waits(sub, pbs, "test_waiting", "the test task", task)
-        log_path = os.path.join(self._log_dir(cfg), "bank_test_0.log")
-        rc, text = self._run_launcher(cfg, "test", self._login_log(cfg), TEST_INDEX="0")
+        i = self._test_index(cfg, sub)          # contract amendment 4
+        if i is None:
+            return
+        log_path = os.path.join(self._log_dir(cfg), "bank_test_%d.log" % i)
+        rc, text = self._run_launcher(cfg, "test", self._login_log(cfg), TEST_INDEX=str(i))
         jobs = self._jobs_of(text)
         if rc != 0 or "job" not in jobs:
             sub["fail"] = "the test task could not be submitted (exit %d): %s" % (rc, self._refusal(text))
             sub["phase"] = "failed"
             return
-        pbs.record(jobs["job"], "bank test task 0", ["launch_bank.sh", "test"], log_path=log_path,
+        pbs.record(jobs["job"], "bank test task %d" % i, ["launch_bank.sh", "test"], log_path=log_path,
                    ncpus=task)
         sub["test_job"] = jobs["job"]
         sub["test_log"] = log_path
@@ -550,6 +606,9 @@ class SimBankStage(_BankBase):
         if not pbs.fits(max(task, gate)):
             return self._waits(sub, pbs, "array_waiting", "the array (its gate after it)",
                                max(task, gate))
+        i = self._test_index(cfg, sub)          # contract amendment 4: as the test's
+        if i is None:
+            return
         conc = int(cfg.data["bank"]["concurrency"])
         free = pbs.free()
         if free is not None:
@@ -559,7 +618,7 @@ class SimBankStage(_BankBase):
                     "for %d task(s) of %d core(s), D-099)"
                     % (conc, int(cfg.data["bank"]["concurrency"]), free // task, task))
         rc, text = self._run_launcher(cfg, "array", self._login_log(cfg),
-                                      WALLTIME=walltime, TEST_INDEX="0", CONCURRENCY=str(conc))
+                                      WALLTIME=walltime, TEST_INDEX=str(i), CONCURRENCY=str(conc))
         jobs = self._jobs_of(text)
         if rc != 0 or "job" not in jobs or "gate" not in jobs:
             sub["fail"] = ("the array could not be submitted (round %d, exit %d): %s"
@@ -884,7 +943,15 @@ class SimBankStage(_BankBase):
         # stage here, before its test task
         pbs.check(max(self._launcher_cores(cfg)))
         sub["round"] = 0
-        if self._test_marker_ok(cfg):
+        # contract amendment 4: the test task is the plan's first task with
+        # simulations; a plan that cannot be read, or holds no such task,
+        # stops the stage here, before any job
+        i, why = first_task_with_simulations(artefact_of("bank_plan", cfg)[1])
+        if i is None:
+            self._fail(sub, why)
+            return
+        sub["test_index"] = i
+        if self._test_marker_ok(cfg, i):
             pbs.log("sim_bank: the test task's marker belongs to this plan: test skipped")
             sub["test_skipped"] = True
             self._start_array(cfg, st, pbs)
@@ -914,7 +981,9 @@ class SimBankStage(_BankBase):
                 return "running"
             text = read_log(sub["test_log"])
             ok_lines = re.findall(r"(?m)^TASK \d+ OK.*$", text)
-            if self._test_marker_ok(cfg):
+            # the marker of the test job in flight: task 0's in a state written
+            # before contract amendment 4, whose test task was always task 0
+            if self._test_marker_ok(cfg, int(sub.get("test_index", 0))):
                 CM.clear_env_fault_streak(sub)            # the job ran (D-111)
                 pbs.log("sim_bank: test task passed: %s (its marker is this plan's)"
                         % (ok_lines[-1].strip() if ok_lines else "no log line yet"))
@@ -1063,9 +1132,12 @@ class SimBankStage(_BankBase):
         except RuntimeError as exc:
             cores = "cores (D-099): %s -- the stage would stop on it" % exc
         return [cores,
-                "test (skipped when %s/tasks/task_0000.json belongs to the plan): PROFILE=<profile> "
-                "QUEUE=%s TEST_INDEX=0 bash %s/launch_bank.sh test -> one job; passed by its marker "
-                "(log line TASK 0 OK)" % (self._bank_root(cfg), d["bank"]["queue"], ld),
+                # contract amendment 4: the dry run runs before the plan exists
+                "test (skipped when %s/tasks/task_<iiii>.json belongs to the plan): PROFILE=<profile> "
+                "QUEUE=%s TEST_INDEX=<the plan's first task with simulations> bash %s/launch_bank.sh test "
+                "-> one job; passed by its marker (log line TASK <i> OK); i = TEST_INDEX, the array's "
+                "too; a plan with no such task stops the stage before any job"
+                % (self._bank_root(cfg), d["bank"]["queue"], ld),
                 "array: WALLTIME=%s CONCURRENCY=%d QUEUE=%s bash %s/launch_bank.sh array -> the array "
                 "(-J 0-<n-1>%%%d) and its gate job (depend=afterok)"
                 % (d["bank"]["walltime"], int(d["bank"]["concurrency"]), d["bank"]["queue"], ld,
