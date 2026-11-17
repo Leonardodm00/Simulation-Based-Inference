@@ -35,7 +35,7 @@ CONFIG_VERSION = 11          # v11, 2026-11-17: D-148 (searches, replicate.*, re
 
 _WALLTIME = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
 _MEM = re.compile(r"^[0-9]+(kb|mb|gb|tb)$")
-_TAG = re.compile(r"^[a-z0-9_]+$")
+_TAG = re.compile(r"^[a-z0-9_]+\Z")   # \Z, not $: no trailing newline [amendment 5]
 _CAMPAIGNS = ("S-A1", "S-A2", "S-A5", "S-A25", "S-A2-only", "S-A5-only")   # block 26: the last two
 _ARMS = ("A0", "A0s", "A1", "A2", "A2s", "A3", "A5", "A_ref", "shuffled")
 # [block 31, D-148 (3)] the replicate pair rule and the real-bank id fields that may name
@@ -365,7 +365,7 @@ def _check_value(key, kind, v):
         if not isinstance(v, dict):
             return bad + "must be an object axis -> [lo, hi] or [levels]"
         for axis, rng in v.items():
-            if not (isinstance(axis, str) and re.match(r"^[a-z0-9_]+$", axis)):
+            if not (isinstance(axis, str) and re.match(r"^[a-z0-9_]+\Z", axis)):
                 return bad + "axis name %r is not [a-z0-9_]+" % (axis,)
             if not (isinstance(rng, list) and len(rng) >= 2
                     and all(_is_num(x) or isinstance(x, str) for x in rng)):
@@ -380,8 +380,8 @@ def _check_value(key, kind, v):
 # [block 15] the lists of a synthetic configuration: objects with exactly the
 # listed keys, each item checked by its own function
 
-_REAL_NAME = re.compile(r"^[A-Za-z0-9]+$")
-_RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_REAL_NAME = re.compile(r"^[A-Za-z0-9]+\Z")
+_RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 
 
 def _check_list(bad, v, keys, item_check):

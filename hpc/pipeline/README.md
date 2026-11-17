@@ -415,7 +415,14 @@ search's wall budget at 400 h, D-090) plus the queue of the trial and
 member jobs (`search.trial.queue`, `best_fit.queue`: `cpu`). A run started
 under v5 needs `--accept-config-change` once.
 
-`projects/linddup/linddup.json` (2026-10-29, config v10): the LindDUP data set (D-104) -- the
+`projects/linddup/linddup.json` [since 2026-11-17, config v11 (D-138..D-151): the LindaColloDUP15 campaign
+`campaign_lcdup15_rho1300_neur_n01` (neurons only, p = 14: 13 active axes and conn_prob) against the same
+recordings through the cohort map `projects/linddup/linddup_cohort_map.csv` (donor = condition, pairing group =
+condition x batch, five copied wells left out: 30 wells); three searches A1 (S-A1), A2 (S-A2-only) and A5
+(S-A5-only), each with its own best fit and `max_cores` 148 (3 jobs of 48 at once; `resources.max_cores` 444);
+`replicate` within_group on `rep_group`; partial topologies dropped whole; no clock cap (`max_total_walltime_h`
+null), a search stopped by hand with `pipeline.py stop-search`; every job on `intel`. Its run sheet is "LindDUP:
+lcdup15 and its three arms" below. What follows is v10's, superseded.] (2026-10-29, config v10): the LindDUP data set (D-104) -- the
 MEAMA campaign `campaign_meama_rho1600_n01` against the DUP15HD recordings (`extracted_v2`,
 DATA_C / DATA_P), S-A1 (D-106), the contact gate `stoa_gate_p` in theta (D-107: p = 34),
 `resources.max_cores` 200 (D-109); its other values Giulia's, each `_` key saying which.
@@ -1195,7 +1202,9 @@ A `STOP:` line in the log ends the chain on purpose. Read it and the job's log, 
 the submission again with `--retry <stage>`, as in "LindDUP: the first submission (2026-10-29)" L6. S2's
 array walltime is 12 h per task, an estimate (`sim.walltime`): a task killed at that limit is rerun, at
 most twice. Raise it in `linddup.json` with `--accept-config-change` if the first round's tasks come
-close.
+close. Do not change `replicate.*` while A5's search runs: the pair rule is not part of a search's
+identity (SPEC block 29's note S2), so the search would continue under another rule. A stopped search
+that is reset (`tools/search_reset.py --search <q>`) has its stop request set aside with its rounds.
 
 ## Tests
 

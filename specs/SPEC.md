@@ -694,7 +694,7 @@ Claude's as the log records (D-085..D-090).
 | `bank.max_rerun_rounds` | int | >= 0 -- reruns of the array after a quarantine (v6) |
 | `bank.drop_partial_topologies` | bool | v11 (D-148 (5)): written into the bank profile; true drops whole every topology with fewer simulations than its task dispatched (Sbi-extractor block 10) |
 | `split.fractions` | [float, float, float] | each in (0, 1), sum 1 within 1e-9 |
-| `searches` | null or [object] | v11 (D-148 (1), block 29): null -- the single search of `search.campaign`; a list -- each item exactly {`name` `[A-Za-z0-9][A-Za-z0-9_-]*`, `campaign` among the campaigns below, `max_cores` an integer >= 1 or null}; the names unique, the campaigns unique; an integer `max_cores` at least the larger of `search.trial.ncpus` and `best_fit.ncpus` and at most `resources.max_cores` - `driver.ncpus`. With a list, `search.campaign` and `search.arm` are refused (each search names its campaign; the arm is the campaign's) |
+| `searches` | null or [object] | v11 (D-148 (1), block 29): null -- the single search of `search.campaign`; a list -- each item exactly {`name` `[A-Za-z0-9][A-Za-z0-9_-]*`, `campaign` among the campaigns below, `max_cores` an integer >= 1 or null}; the names unique, the campaigns unique; an integer `max_cores` at least the larger of `search.trial.ncpus` and `best_fit.ncpus` and at most `resources.max_cores` - `driver.ncpus`. With a list, `search.campaign` and `search.arm` are refused (each search names its campaign; the arm is the campaign's). [amendment 5, 2026-11-17, the final check's S1 and F5: a list is non-empty (an empty list is refused); every name rule of the configuration -- `name` here, `synthetic.searches[].name`, `synthetic.real[].name`, the dataset tag, the label axes -- matches the whole string (`\Z`, not `$`, so a trailing newline is refused)] |
 | `replicate.pairs` | str | v11 (D-148 (3), block 31): `within_group` (the standard: two different real windows of one group, within-well pairs allowed) or `cross_well` (block 14's: two rows of one group in two different wells) |
 | `replicate.group_key` | str | v11: the real bank's id array that names a row's group: `rep_group` (the standard; Sbi-extractor block 9), `donor`, `batch` or `well` |
 | `search.{campaign, arm}` | str | `campaign` in {S-A1, S-A2, S-A5, S-A25} [and S-A2-only, S-A5-only since block 26]; `arm` in the runner's arms; [v11] only with `searches` null |
@@ -2738,7 +2738,8 @@ fixture, not part of the pipeline.
     a list-then-confirm tool (the project's delete rule; nothing deleted).
     The listing: the campaign's `trials`, `pending`, `runs`, `jobs`,
     `pipeline_rounds.json`, `finalists.json`, `SEARCH_COMPLETE.json` (those
-    present, with their sizes), `gate` and `bank_split.json` kept, the
+    present, with their sizes) [and, amendment 5, `STOP_REQUEST.json`
+    (block 30) when present], `gate` and `bank_split.json` kept, the
     ledger's counts, the trial jobs the state records that the scheduler
     reports not finished, and `CODE <8 hex>` -- the first 8 hex digits of
     the sha256 of the listing's items, live jobs and ledger counts, so that
@@ -5399,6 +5400,13 @@ group cap) Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   `test_smoke_reset.py`, `test_smoke_purge.py`, `test_smoke_perrow.py`
   pass as at the contract commit.
 - Custom code: none.
+- [2026-11-17, the final check's S2, a design question the orchestrator defers: `replicate.*`
+  is not in the search identity K_cfg (block 7 (j)), so changing it while a search
+  that trains the replicate term runs (A5) would continue that search under another
+  rule. Not changed in this wave: a changed configuration already needs
+  `--accept-config-change`, and the run sheet says not to change `replicate.*` while an
+  A5 search runs. Adding it to K_cfg, with identities written before accepted, is
+  an open idea.]
 - Status: smoke-tested 2026-11-17 (wave W3, merged e4c85d9): `tests/
   test_smoke_runs.py` 5 pass, 1 skip (convergence) -- T29c's ticks show
   each search at 3 jobs of 48 at once and the project at 432 of 440 cores;
@@ -5488,9 +5496,20 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   once the phase ends; with no completed trial `_finish` fails as it does
   today (the command refuses such a request, so only a hand-made file gets
   there). Without a request the stage is unchanged (regression).
+  [amendment 5, 2026-11-17, the final check's F1 (MAJOR), S4, S5: the
+  request file outlives its search -- it stays beside SEARCH_COMPLETE.json
+  as the record of the stop (`--cancel` is refused once the search has
+  ended) -- so `tools/search_reset.py` sets it aside with the rounds: it is
+  one of the listing's items (with its size, in the CODE's digest) and is
+  moved into `<campaign>_set_aside_<utc>/`; a reset search therefore starts
+  with no request and proposes round 0 as before. The stage itself is
+  unchanged.]
 - `status_line(view)`: None without a request; else `stop requested <utc>
   (kill running: yes|no)`, with `; the search ended (user_stop)` once its
-  SEARCH_COMPLETE.json says so.
+  SEARCH_COMPLETE.json says so. [2026-11-17, the final check's S3 and S6,
+  the code's rules recorded and accepted: on a synthetic configuration
+  `--search` takes the names of `synthetic.searches`; with `searches` null
+  the `status` prints no stop line (the search report prints the request).]
 - [amendment 3, 2026-11-17, D-154; a follow-up of the wave, block "30b"]
   `tools/search_report.py`: a trial `cancelled` reads `next: nothing
   (cancelled by the stop request; never submitted)`, and while the search's
@@ -5520,7 +5539,8 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   `test_smoke_finalist.py`, `test_smoke_report.py` pass as at the contract
   commit.
 - Custom code: none.
-- Status: smoke-tested 2026-11-17 (wave W3, merged b1e53d1): `tests/
+- Status: [Reopened 2026-11-17 by contract amendment 5 (F1: the reset tool sets the request aside): drafted
+  until implemented and checked.] Before: smoke-tested 2026-11-17 (wave W3, merged b1e53d1): `tests/
   test_smoke_stop.py` 5 pass, 2 skip (convergence, determinism); T30b-T30d
   end to end on the fake PBS (`SEARCH COMPLETE (user_stop)`, the deleted
   jobs' Exit_status 271, no resubmission though `resubmit_killed` is true);
@@ -5560,7 +5580,12 @@ D-147, D-148; the sampler's construction Claude's; Confirmed: yes
   `--rep-pairs {cross_well,within_group}`, default `cross_well`;
   `--rep-group-key {donor,rep_group,batch,well}`, default `donor`. Without
   the flags the runner is exactly the parent commit's (regression: block
-  14's rule).
+  14's rule). [amendment 5, 2026-11-17, the final check's F3: the two
+  choices are literal tuples inside `build_parser`, which the stage-4
+  suites (`smoke_test_joint_tune.py` J28, `smoke_test_joint_space.py` J35)
+  lift out of the runner by AST and run without its module; the runner
+  asserts at import that they equal `joint_batches.REP_PAIRS` and its own
+  `REP_GROUP_KEYS`, so the lists stay one.]
 - Mathematics. Let R be the real rows that are not surrogates, g_i the
   value of the KEY array at row i, and for each group h, n_h = |{i in R :
   g_i = h}|.
@@ -5593,7 +5618,10 @@ D-147, D-148; the sampler's construction Claude's; Confirmed: yes
   texts are block 14's unchanged (`two wells of one donor`, the singleton
   donors line), since the default's output must stay the parent commit's
   and block 14's runner check reads it; `two wells of one <KEY> group`
-  holds for any other KEY.]
+  holds for any other KEY.] [2026-11-17, the final check's S8, the code's
+  text recorded: under cross_well with another KEY the singleton line reads
+  `singleton groups : <n>   <- D12: pairs are impossible for these (<KEY>
+  groups)`.]
 - The replicate diagnostic (run_joint_arms, after training): under
   `within_group` it scores at most 64 pairs of P drawn with a generator
   seeded by `--seed`, spread over the groups (round robin over the groups
@@ -5640,7 +5668,8 @@ D-147, D-148; the sampler's construction Claude's; Confirmed: yes
   from a union of groups without enumerating it; checked:
   `numpy.random.Generator.choice` over groups then over rows, which is what
   it uses).
-- Status: smoke-tested 2026-11-17 (wave W3, merged d44a76d):
+- Status: [Reopened 2026-11-17 by contract amendment 5 (F3: the parser's choices): drafted
+  until implemented and checked.] Before: smoke-tested 2026-11-17 (wave W3, merged d44a76d):
   `hpc/joint/stage3/smoke_test_rep_pairs.py` 12 pass, 1 skip
   (convergence); T31b at 2,000,000 draws: within-well shares 0.1969,
   0.0818, 0.0824, 1.0000 against 0.1970, 0.0819, 0.0819, 1 (amendment 2);
@@ -5700,7 +5729,8 @@ plan; Confirmed: yes 2026-11-17]
     Sbi-extractor Block 10's rule (K(t) from job_args; f(t, k) = the
     topology's `iter_*.json` files + the non-blank lines of its
     `_failures.jsonl`): NOTE `<n> partial topologies in <m> task(s),
-    <s> simulations: the bank plan drops them whole`; FAIL when a task's
+    <s> simulations: the bank plan drops them whole` (<s> counts the
+    partial topologies' `iter_*.npz` files: the final check's S7); FAIL when a task's
     job_args lacks a positive integer `_resolved_n_workers` or
     `n_params_per_worker`, or when f(t, k) > K(t); with false: NOTE `not
     checked (drop_partial_topologies false)`.
@@ -5709,6 +5739,12 @@ plan; Confirmed: yes 2026-11-17]
     `resources.max_cores`.
   The existing rows are unchanged; their reading of `stoa_gate_p` is the
   configuration's (`bank.topology_axes`), not a name in the code.
+  [2026-11-17, the final check's F6, a NOTE accepted: the rows match the
+  folders by `^topo_(\d+)$` and rebuild their paths as `topo_%05d`, so a
+  folder named otherwise (`topo_1`) is misread; the simulator writes only
+  `topo_%05d`. Importing Sbi-extractor Block 10's `dispatch_size` and
+  `raw_finished_counts`, so that the rule lives in one place, is an open
+  improvement.]
 - Test oracles: T32a the consistent lcdup15-like tree: 0 FAIL, 0 WARN;
   the counts; `topology axis conn_prob` OK; the `cohort map` row OK with its
   counts (a fake `cohort_map` module in the test's Sbi-extractor tree
