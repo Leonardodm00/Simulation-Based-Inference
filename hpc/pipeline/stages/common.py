@@ -249,9 +249,20 @@ def stage_budget(cfg):
 
 def cap_room(cfg, ncpus, limit=None):
     """How many jobs of `ncpus` cores the cap holds at once, at most `limit`
-    (the dry runs' line; D-099)."""
+    (the dry runs' line; D-099). [block 29, D-141; the orchestrator's fix
+    after the wave] For a run's view whose run has an integer `max_cores`
+    (a searches list's search, block 29), also at most that cap's jobs: the
+    sequencer's Submitter counts a run's jobs against both caps, so the line
+    states the smaller room. Every other configuration (one without a
+    searches list; the synthetic kind's runs, whose max_cores is null) is
+    unchanged."""
     b = stage_budget(cfg)
     k = (b // int(ncpus)) if b is not None else None
+    run = getattr(cfg, "run", None)
+    group = run.get("max_cores") if isinstance(run, dict) else None
+    if isinstance(group, int) and not isinstance(group, bool):
+        g = int(group) // int(ncpus)
+        k = g if k is None else min(k, g)
     if limit is None:
         return k
     return int(limit) if k is None else min(int(limit), k)

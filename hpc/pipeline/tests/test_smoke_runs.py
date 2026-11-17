@@ -396,6 +396,14 @@ def test_t29a_graph():
                       "job(s) of 48 cores at once")
         for q in ("A1", "A2", "A5"):
             assert lines.count(group_line % (q, q)) == 2, (q, out[-4000:])   # the search, the best fit
+        # [the orchestrator's fix after the wave] D-099's own lines state the run's room too:
+        # min(440 // 48 = 9, 148 // 48 = 3) = 3, as the Submitter counts (9 before the fix)
+        assert lines.count("    cores (D-099): at most 3 trial(s) at once -- max_concurrent_trials 25, "
+                           "and the cap leaves room for 3 of 48 cores each; the gate's probes "
+                           "likewise") == 3, out[-4000:]
+        assert lines.count("    cores (D-099): at most 3 member(s) at once -- the cap leaves room "
+                           "for 3 of 48 cores each") == 3, out[-4000:]
+        assert "leaves room for 9 of 48" not in out, out[-4000:]
         assert out.count("qsub -N t_<trial>") == 3 and out.count("qsub -N bf_linddu_s<k>") == 3, \
             out[-4000:]
         if dry_cfg == LINDDUP:

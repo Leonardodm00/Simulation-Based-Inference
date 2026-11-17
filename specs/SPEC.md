@@ -5371,8 +5371,14 @@ group cap) Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   its top (block 30's search.py imports search_stop, which imports runs);
   helpers `run_core_group`, `pick_search`; a stop line per search
   `search <q>: <status_line>`; the run stages' dry run adds a line per
-  capped search (`at most 3 job(s) of 48 cores at once`). Not run on
-  davinci.
+  capped search (`at most 3 job(s) of 48 cores at once`). After the wave
+  (the orchestrator's fix, plumbing): D-099's own dry-run lines of a run
+  with a cap state the smaller room too -- `stages/common.py` `cap_room`
+  takes min(the project's room, the run's `max_cores` // ncpus), so
+  LindDUP's trial and member lines read `at most 3` where they read 9; a
+  configuration without a searches list and the synthetic runs print as
+  before (Giulia's and synth's dry runs unchanged); checked in T29a. Not
+  run on davinci.
 
 ### Block 30: stop a search by hand (added 2026-11-17; D-148 (2), D-141, D-150; wave W3)
 
