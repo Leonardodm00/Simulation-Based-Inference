@@ -44,6 +44,12 @@ submitted whose name is already queued or running is adopted, not
 submitted twice. `retire` stops a sequencer started on a login node before
 2026-10-18 from any login node, through the shared file system only.
 
+The cores the pipeline's jobs hold at once stay under resources.max_cores
+(D-099); [block 29, D-148 (1)] on a recorded data set with several searches
+the jobs of each search's stages also stay under that search's own
+max_cores (its stages' `core_group`), and `status` and the dry run print a
+cores line per search.
+
 Exit codes: 0 every stage done or skipped (or a requested stop); 2 a
 configuration refusal (a schema problem, a key no built block honours, a
 stage not built); 3 a stage failed (its STOP: line is the last line of the
@@ -395,14 +401,17 @@ def job_cores(job):
     return PBS.cores_of_argv(job.get("cmd") or [])
 
 
-def cores_in_flight(state):
+def cores_in_flight(state, names=None):
     """(cores, jobs counted, [ids of jobs whose cores no record gives]) over
     the jobs not marked finished of every stage not done or skipped (a done
     stage's record its polls never marked finished holds no cores). Jobs
     recorded `after` one (a gate, an aggregation) start when it ends: the
-    group holds the larger of its cores and the sum of theirs, never both."""
-    jobs = [j for st in state.data.get("stages", {}).values()
-            if st.get("status") not in ("done", "skipped")
+    group holds the larger of its cores and the sum of theirs, never both.
+    [block 29] `names`: only the stages of those names (a search's core
+    group), counted the same way; None: every stage (the whole project)."""
+    keep = None if names is None else set([names] if isinstance(names, str) else names)
+    jobs = [j for name, st in state.data.get("stages", {}).items()
+            if (keep is None or name in keep) and st.get("status") not in ("done", "skipped")
             for j in st.get("jobs", []) if not j.get("finished")]
     by_id = dict((j["id"], j) for j in jobs)
     later = {}
@@ -446,18 +455,60 @@ def cores_line(cfg, state):
                if unknown else ""))
 
 
+def search_lines(cfg, state):
+    """[block 29] The dry run's and --status's lines after the cores line, for
+    a configuration with a searches list: per search with a cap, its cores
+    (`cores of search <q>: at most <c> (searches[].max_cores); in flight <x>
+    in <k> job(s)`), and per search its stop request's line (block 30's
+    `search_stop.status_line`, which raises NotImplementedError until block
+    30 lands: then nothing is printed). Nothing for any other configuration."""
+    if not C.has_search_list(cfg.data):
+        return []
+    from stages import runs as R
+    from stages import search_stop as SS
+    out = []
+    for name, view in R.search_views(cfg):
+        grp = R.run_core_group(view.run)
+        if grp is not None:
+            used, n, unknown = cores_in_flight(state, names=grp[1])
+            out.append("cores of search %s: at most %d (searches[].max_cores); in flight %d in %d "
+                       "job(s)%s" % (name, grp[0], used, n,
+                                     ("; %d job(s) of unknown cores, not counted: %s"
+                                      % (len(unknown), ", ".join(unknown[:6]))) if unknown else ""))
+        try:
+            stop = SS.status_line(view)
+        except NotImplementedError:          # block 30 not built yet
+            stop = None
+        if stop:
+            out.append("search %s: %s" % (name, stop))
+    return out
+
+
+def _group_search(names):
+    """The search a core group belongs to, for the messages: `<q>` of its
+    stage `search_<q>`; the names themselves when none is."""
+    for n in names:
+        if n.startswith("search_"):
+            return n[len("search_"):]
+    return ", ".join(names)
+
+
 class Submitter(object):
     """Submits through the adapter and records every job in the state, so
     a stage never has to know the state file's layout. With the
     configuration it also keeps the stages under resources.max_cores
-    (D-099): `fits(n)` before a submission."""
+    (D-099): `fits(n)` before a submission. [block 29, D-148 (1)] With a
+    core group (cap, stage names) -- a search's own `max_cores`, its
+    stages' `core_group` -- the jobs of those stages also stay under the
+    group's cap; jobs of other stages never count against it."""
 
-    def __init__(self, pbs_module, state, stage_name, log, cfg=None):
+    def __init__(self, pbs_module, state, stage_name, log, cfg=None, group=None):
         self._pbs = pbs_module
         self._state = state
         self._name = stage_name
         self._log = log
         self._cfg = cfg
+        self._group = None if group is None else (int(group[0]), tuple(group[1]))
 
     def budget(self):
         return stage_budget(self._cfg)
@@ -469,10 +520,25 @@ class Submitter(object):
         b = self.budget()
         return None if b is None else b - self.in_flight()
 
+    def group_in_flight(self):
+        """[block 29] The cores in flight of the group's stages (None without
+        a group), counted as cores_in_flight counts the project's."""
+        if self._group is None:
+            return None
+        return cores_in_flight(self._state, names=self._group[1])[0]
+
+    def group_free(self):
+        """[block 29] The group's cap less its cores in flight; None without a
+        group."""
+        if self._group is None:
+            return None
+        return self._group[0] - self.group_in_flight()
+
     def check(self, n):
         """CapExceeded when a job of n cores can never start: more than the
         stages' whole share (a stage's start asks it of the jobs it submits
-        later, so it stops before its first job, not after); True else."""
+        later, so it stops before its first job, not after), or [block 29]
+        more than its search's own cap; True else."""
         b = self.budget()
         if b is not None and n is not None and int(n) > b:
             d = self._cfg.data
@@ -483,18 +549,31 @@ class Submitter(object):
                 "or ask fewer cores (D-099)"
                 % (self._name, int(n), b, int(d["resources"]["max_cores"]),
                    int(d["driver"]["ncpus"])))
+        if self._group is not None and n is not None and int(n) > self._group[0]:
+            cap, names = self._group
+            raise CapExceeded(
+                "%s: a job of %d cores can never start: the jobs of search %s (%s) share at "
+                "most %d cores (its max_cores %d in searches, block 29); raise that search's "
+                "max_cores (--stop, then a submission with --accept-config-change) or ask "
+                "fewer cores" % (self._name, int(n), _group_search(names), ", ".join(names), cap,
+                                 cap))
         return True
 
     def fits(self, n):
         """True when a job of n cores fits under the cap now (always without a
         cap, or when n is not known); one that can never start raises
         (check), so its stage stops with the reason instead of waiting for
-        ever."""
+        ever. [block 29] With a core group, it must also fit under the
+        group's cap less the group's own cores in flight."""
         b = self.budget()
-        if b is None or n is None:
+        if n is None or (b is None and self._group is None):
             return True
         self.check(n)
-        return int(n) <= b - self.in_flight()
+        if b is not None and int(n) > b - self.in_flight():
+            return False
+        if self._group is not None and int(n) > self.group_free():
+            return False
+        return True
 
     def submit(self, argv, role, log_path=None, cwd=None, env=None, ncpus=None, after=None):
         # A job already queued, held or running under the same name AND the
@@ -525,8 +604,12 @@ class Submitter(object):
                 return job_id
         n = ncpus if ncpus is not None else PBS.cores_of_argv(argv)
         if n is not None and not self.fits(n):
-            raise CapExceeded("%s: %s asks %d cores; %s of %s free under resources.max_cores"
-                              % (self._name, role, n, self.free(), self.budget()))
+            raise CapExceeded("%s: %s asks %d cores; %s of %s free under resources.max_cores%s"
+                              % (self._name, role, n, self.free(), self.budget(),
+                                 "" if self._group is None else
+                                 "; %d of %d free under the max_cores of search %s (block 29)"
+                                 % (self.group_free(), self._group[0],
+                                    _group_search(self._group[1]))))
         job_id = self._pbs.submit(argv, cwd=cwd, env=env)
         self._state.add_job(self._name, job_id, role, argv, log=log_path, ncpus=n, after=after)
         self._state.save()
@@ -748,6 +831,8 @@ def _dry_run(cfg, graph, state, log):
             log("    %s" % line)
     if "resources" in cfg.data:
         log(cores_line(cfg, state))
+        for line in search_lines(cfg, state):     # [block 29] each search's own cap
+            log(line)
     if "driver" in cfg.data:
         d = cfg.data["driver"]
         log("the sequencer: PBS jobs named %s on queue %s (%d cores, %s, walltime %s, a tick every "
@@ -868,7 +953,9 @@ def run(cfg, graph=None, poll_seconds=60.0, dry_run=False, retry=(),
                     log("STOP: stage %s failed: %s" % (stage.name, st.get("note", "")))
                     _END["why"] = "failed"
                     return EXIT_FAILED
-                sub = Submitter(pbs_module, state, stage.name, log, cfg)
+                # [block 29] a search's stages also count against its own max_cores
+                sub = Submitter(pbs_module, state, stage.name, log, cfg,
+                                group=getattr(stage, "core_group", None))
                 if status == "pending":
                     done, why = stage.is_done(cfg)
                     if done:
@@ -1493,6 +1580,8 @@ def cmd_status(args, graph=None, entry=None):
         log("lock: %s" % ("%s on %s" % lock if lock else "none (no sequencer ticking)"))
     if "resources" in cfg.data:
         log(cores_line(cfg, state))
+        for line in search_lines(cfg, state):     # [block 29] each search's own cap
+            log(line)
     if "driver" in cfg.data:
         try:
             live = _drivers(cfg)

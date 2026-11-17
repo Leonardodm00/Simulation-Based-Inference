@@ -41,14 +41,12 @@ import re
 
 import config as C
 
-from . import Stage, artefact_done, artefact_of
+from . import Stage, artefact_done
 
 if not hasattr(C, "SCHEMA_SYNTHETIC"):       # another config.py earlier on sys.path
     raise ImportError("stages.synthetic imported %s as `config`, not the pipeline's config.py: "
                       "import the pipeline's config first" % getattr(C, "__file__", "?"))
 from . import common as CM
-from .best_fit import BestFitStage
-from .search import SearchStage
 
 __all__ = ["RunView", "RunSearchStage", "RunBestFitStage", "RunAltBestFitStage",
            "SynthBankStage", "build_of", "bank_dir", "synthetic_set_graph", "SIM_BANK",
@@ -64,216 +62,11 @@ _SHARD_FILE = re.compile(r"^shard_([0-9]+)\.(npz|json)$")
 # A run's view of the configuration (block 15)
 # ---------------------------------------------------------------------------
 
-# [block 29] RunView is stages/runs.py's (both kinds); imported here, as before
-from .runs import RunView   # noqa: E402
+# [block 29] RunView and the run stages are stages/runs.py's (both kinds); imported
+# here under their names of before (the stages' graph, names and behaviour unchanged)
+from .runs import RunView, _RunStage, _StageLog, stage_classes   # noqa: E402,F401
 
-
-class _StageLog(object):
-    """The sequencer's recorder (pipeline.Submitter) with S7's and S8's log
-    lines renamed: a line starting `search: ` (`best_fit: `) starts with the
-    run stage's name instead; everything else is the recorder's."""
-
-    def __init__(self, pbs, old, new):
-        self._pbs = pbs
-        self._old = old + ": "
-        self._new = new + ": "
-
-    def log(self, text):
-        t = str(text)
-        if t.startswith(self._old):
-            t = self._new + t[len(self._old):]
-        self._pbs.log(t)
-
-    def __getattr__(self, name):
-        return getattr(self._pbs, name)
-
-
-class _RunStage(object):
-    """What the run stages share: the view (cached; a view is returned as
-    it is, since S7's and S8's methods call is_done with it) and the
-    renamed recorder."""
-
-    base_name = ""
-    log_name = None             # [block 18] the prefix of the lines renamed; None: base_name
-
-    def _init_run(self, run, prefix):
-        self.run = dict(run)
-        self.name = prefix + run["name"]
-        self._cache = None
-
-    def _view(self, cfg):
-        if isinstance(cfg, RunView):
-            if cfg.run["name"] != self.run["name"]:
-                raise ValueError("stage %s given the view of run %s" % (self.name, cfg.run["name"]))
-            return cfg
-        hit = self._cache
-        if hit is not None and hit[0] is cfg:
-            return hit[1]
-        view = RunView(cfg, self.run)
-        self._cache = (cfg, view)
-        return view
-
-    def _rec(self, pbs):
-        return _StageLog(pbs, self.log_name or self.base_name, self.name)
-
-    def is_done(self, cfg):
-        kind, path = artefact_of(self.base_name, self._view(cfg))
-        return artefact_done(kind, path)
-
-
-class RunSearchStage(_RunStage, SearchStage):
-    """S7 on one search's view (sec. 2.1, the synthetic kind)."""
-
-    base_name = "search"
-    max_resubmits = 0
-
-    def __init__(self, run):
-        self._init_run(run, "search_")
-        self.deps = (SIM_BANK, "real_bank_" + run["real"])
-
-    def start(self, cfg, st, pbs):
-        return SearchStage.start(self, self._view(cfg), st, self._rec(pbs))
-
-    def poll(self, cfg, st, pbs):
-        return SearchStage.poll(self, self._view(cfg), st, self._rec(pbs))
-
-    def verify(self, cfg, st):
-        return SearchStage.verify(self, self._view(cfg), st)
-
-    def on_killed(self, cfg, st, pbs):
-        return SearchStage.on_killed(self, self._view(cfg), st, self._rec(pbs))
-
-    def dry_run(self, cfg, st):
-        v = self._view(cfg)
-        sim, real = CM.shard_globs(v)
-        return (["run %s: campaign %s, folder %s; the runner gets the simulated bank %s and the "
-                 "real bank %s (every campaign, D-122)"
-                 % (self.run["name"], self.run["campaign"],
-                    os.path.join(v.data["paths"]["tune_root"], self.run["campaign"]), sim, real)]
-                + SearchStage.dry_run(self, v, st))
-
-
-class RunBestFitStage(_RunStage, BestFitStage):
-    """S8 on one search's view (sec. 2.1, the synthetic kind)."""
-
-    base_name = "best_fit"
-    max_resubmits = 0
-
-    def __init__(self, run):
-        self._init_run(run, "best_fit_")
-        self.deps = ("search_" + run["name"],)
-
-    def start(self, cfg, st, pbs):
-        return BestFitStage.start(self, self._view(cfg), st, self._rec(pbs))
-
-    def poll(self, cfg, st, pbs):
-        return BestFitStage.poll(self, self._view(cfg), st, self._rec(pbs))
-
-    def verify(self, cfg, st):
-        return BestFitStage.verify(self, self._view(cfg), st)
-
-    def on_killed(self, cfg, st, pbs):
-        return BestFitStage.on_killed(self, self._view(cfg), st, self._rec(pbs))
-
-    def is_done(self, cfg):
-        # [block 7 (i), D-134] the best fit follows its search's finalist: S8's
-        # predicate on the view, not _RunStage's artefact-only one (G_q inherits it)
-        return BestFitStage.is_done(self, self._view(cfg))
-
-    def dry_run(self, cfg, st):
-        v = self._view(cfg)
-        return (["run %s: the best fit of %s in %s"
-                 % (self.run["name"], self._dirs(v)["search_complete"], self._dirs(v)["root"])]
-                + BestFitStage.dry_run(self, v, st))
-
-
-class RunAltBestFitStage(RunBestFitStage):
-    """[block 18, D-126] S8 on one search's view for the best trial, on the
-    simulated report split's nll, of the arm the search's finalist is not
-    (specs/SPEC.md sec. 2.5): the folder `<runs_root>/<q>/<tag>_best_alt`,
-    the member jobs `ba_<tag>_s<k>`, S8's log lines under the stage's own
-    name. Only the finalist is its own; the members, their faults and the
-    ensemble are S8's, with the same `best_fit.*` values."""
-
-    base_name = "best_fit_alt"
-    log_name = "best_fit"
-    root_suffix = "_best_alt"
-    job_prefix = "ba"
-
-    def __init__(self, run):
-        self._init_run(run, "best_fit_alt_")
-        self.deps = ("search_" + run["name"],)
-
-    def _arms(self, cfg):
-        camp = cfg.data["search"]["campaign"]
-        if camp not in C.ALT_ARMS:
-            raise RuntimeError("%s: campaign %s has no other arm (config.ALT_ARMS: %s)"
-                               % (self.name, camp, ", ".join(sorted(C.ALT_ARMS))))
-        return C.ALT_ARMS[camp]
-
-    def _arm_file(self, cfg, arm):
-        return os.path.join(self._dirs(cfg)["root"], "finalists_%s.json" % arm)
-
-    def _finalist(self, cfg, st):
-        """The tuner's `finalists --arm a` for each arm a of the campaign;
-        the search's finalist must be the best of exactly one, and the
-        other arm's best is fitted. Written to finalist_config.json in the
-        tuner's --config-json shape, as S8's."""
-        sub = st["sub"]
-        if sub.get("finalist"):
-            return sub["finalist"]
-        dirs = self._dirs(cfg)
-        sc = CM.read_json(dirs["search_complete"])
-        main_id = sc["finalist"]["trial_id"]
-        if not os.path.isdir(dirs["jobs"]):
-            os.makedirs(dirs["jobs"])
-        arms = self._arms(cfg)
-        best = {}
-        for arm in arms:
-            out = self._arm_file(cfg, arm)
-            CM.run_tuner(cfg, ["finalists"] + CM.tuner_common_args(cfg, sc["identity"])
-                         + ["--top-k", "1", "--rank-split", "report", "--gate-split", "report",
-                            "--arm", arm, "--out", out], log_path=self._log_path(cfg))
-            fin = CM.read_json(out)
-            if fin.get("arm") != arm or not fin.get("finalists"):
-                raise RuntimeError("%s: %s is not the ranking of arm %s" % (self.name, out, arm))
-            best[arm] = fin["finalists"][0]
-        own = [a for a in arms if best[a]["trial_id"] == main_id]
-        if len(own) != 1:
-            raise RuntimeError(
-                "%s: the search's finalist %s is the best trial of %d of the arms %s (best %s); "
-                "exactly one was expected (%s)"
-                % (self.name, main_id[:12], len(own), "/".join(arms),
-                   ", ".join("%s %s" % (a, best[a]["trial_id"][:12]) for a in arms),
-                   dirs["search_complete"]))
-        other = [a for a in arms if a != own[0]][0]
-        alt = best[other]
-        search_finalist = {"trial_id": main_id, "arm": own[0]}
-        CM.write_json(dirs["finalist_config"],
-                      {"trial_id": alt["trial_id"], "campaign": sc["campaign"],
-                       "nll_search": alt["nll_rank_split"], "config": alt["config"],
-                       "search_complete": dirs["search_complete"], "arm": other,
-                       "search_finalist": search_finalist,
-                       "finalists_files": dict((a, self._arm_file(cfg, a)) for a in arms)})
-        sub["finalist"] = {"trial_id": alt["trial_id"], "nll_search": alt["nll_rank_split"],
-                           "identity": sc["identity"], "config_file": dirs["finalist_config"],
-                           "arm": other, "search_finalist": search_finalist}
-        sub.setdefault("members", {})
-        return sub["finalist"]
-
-    def dry_run(self, cfg, st):
-        v = self._view(cfg)
-        arms = C.ALT_ARMS.get(v.data["search"]["campaign"], ())
-        lines = []
-        for ln in BestFitStage.dry_run(self, v, st):
-            if ln.startswith("finalist: "):
-                ln = ("finalist: the best trial on the report-split nll of the arm of %s that the "
-                      "finalist of %s is not -- the tuner's finalists --arm <a> --out %s for each "
-                      "(block 18)" % ("/".join(arms), self._dirs(v)["search_complete"],
-                                      self._arm_file(v, "<a>")))
-            lines.append(ln)
-        return ["run %s: the best fit of the other arm (D-126) in %s"
-                % (self.run["name"], self._dirs(v)["root"])] + lines
+RunSearchStage, RunBestFitStage, RunAltBestFitStage = stage_classes()
 
 
 # ---------------------------------------------------------------------------
@@ -781,7 +574,7 @@ def synthetic_set_graph(cfg):
     syn = cfg.data["synthetic"]
     graph = [SynthBankStage("sim")] + [SynthBankStage(r["name"]) for r in syn["real"]]
     for q in syn["searches"]:
-        graph.append(RunSearchStage(q))
+        graph.append(RunSearchStage(q, deps=(SIM_BANK, "real_bank_" + q["real"])))
         graph.append(RunBestFitStage(q))
         if q.get("alt_best_fit"):
             graph.append(RunAltBestFitStage(q))
