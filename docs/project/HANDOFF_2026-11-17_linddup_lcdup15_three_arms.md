@@ -8,6 +8,7 @@
 | 2026-11-17 | v4. The Neuro-astro network project's reply to the SBI request (a file the user passed on at 10:46; its own tags `[REPO]`, `[RUN]`, `[OWN]`, at ANN `main` 1789e40 and f216b00): new sec. 3b. It corrects the brief and this handoff: 192 or 48 simulations share each topology, not one. The well-to-donor map is not known to that project. |
 
 Tags: `[LOG D-nnn]` the decision log on `main`; `[CODE SBI@ee8b382 file]` read in the code on `sci/pipeline`; `[BRIEF]` the user's `LindaColloDUP15_SBI_brief.md` (written 2026-11-16 from the ANN repository; attached by the user to the results-commentary chat, not in this repository: ask the user to attach it); `[BENCH]` computed by the results-commentary chat on the synth v4 bundle (`synth_v4_results.tar.gz`), scripts delivered to the user; `[user]`; `[estimate]`; `[reasoning]` not checked.
+| 2026-11-17 | v5. The user's message of 10:57 with an `ls -R` of `Deep_bio/` `[CLUSTER, the user's paste]`: the recordings move to `LindaColloDUP/recordings/` (D-142; commands and the 35-well map in `docs/project/LINDDUP_RECORDINGS_MAP.md`, the move not yet run); partial topologies are dropped whole (D-143, the user: "That's correct"); on the split by topology and on `conn_prob`'s few thousand distinct values the user: "do not worry" (no action asked; `linddup.json`'s split is already by donor = one network, D-076). The tree names no donor (map sec. 4), and `DATA_P/Batch4` shares its file names with `DATA_P/Batch3/SubBatch1` in five wells (map sec. 5): sec. 7 updated. |
 
 ## 1. The task
 
@@ -139,6 +140,9 @@ Numbers are `[BENCH]`; the full reading is D-136's Status and the user's documen
 ## 7. Still needed from the user
 
 - The well-to-donor map of the 35 DUP15HD wells (A5's pairs, D-140). Asked 2026-11-16 and 2026-11-17; the ANN project does not have it (sec. 3b); it has to come from the plating records.
+  - [2026-11-17 10:57] The user pointed to the folder tree of `Deep_bio/` as the map. Written out as `docs/project/LINDDUP_RECORDINGS_MAP.md` + `linddup_recordings_map.csv` (35 wells: condition, batch, sub-batch, well). The tree does not name a donor; three readings are listed there (plate folder, condition x batch, condition), the user's call. A5 stays blocked on that one answer.
+- Whether `DATA_P/Batch4` is a copy of `DATA_P/Batch3/SubBatch1` (identical file-name sets in wells A2-B3; the `cmp` command is in the map, sec. 5). If it is, the DUP class has 13 distinct recordings and the cohort manifest counts five twice.
+- After the move (D-142): the raw recordings are at `LindaColloDUP/recordings/DATA_{C,P}`, with symlinks at the old paths; `real.extract_root` (`extracted_v2`) is unchanged.
 - The outputs of sec. 4: given 2026-11-17 (recorded there).
 - The final simulation count: the user said on 2026-11-17 10:17 that the campaign's arrays on `cfd` and `cpu` will be removed; after that, rebuild the campaign index (a job killed mid-write may leave a truncated file `[reasoning]`) and record the count as the snapshot LindDUP trains on. Not yet done.
 - The calls of sec. 5 (the clock, the three-arm layout, the edge support) and of sec. 6 (the term arms' ranking, the promotion stage).
