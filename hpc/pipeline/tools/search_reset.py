@@ -13,6 +13,12 @@ submission's own `--retry search`.
     python3 hpc/pipeline/tools/search_reset.py --config <project>.json --confirm <CODE>
         does it, when the CODE still matches what is there
 
+[block 29] On a configuration with a `searches` list, `--search <name>`
+names the search (required there; refused on one whose `searches` is null,
+exit 2 with a `REFUSED:` line, as search_report.py): its view's campaign
+folder `<tune_root>/<name>/<campaign>`, its stage `search_<name>` in the
+state, and `--retry search_<name>` in the pass line.
+
 What is set aside, to `<campaign>_set_aside_<utc>/` beside the campaign
 folder: `trials/` (the ledger), `pending/`, `runs/`, `jobs/`,
 `pipeline_rounds.json`, `finalists.json`, `SEARCH_COMPLETE.json` -- each
@@ -28,6 +34,8 @@ the configuration does not load. Exit 0 with the pass line
 
     SEARCH RESET DONE: <n> job(s) deleted, round(s) set aside as <dir>; next:
     submit with --retry search --accept-config-change
+
+(`--retry search_<name>` for search <name> of a searches list).
 
 Stdlib only. Pure ASCII, LF only; Python 3.6 syntax.
 """
@@ -49,6 +57,7 @@ import pbs as PBS                       # noqa: E402
 import pipeline as P                    # noqa: E402
 import state as ST                      # noqa: E402
 import stages.common as CM              # noqa: E402
+import stages.runs as R                 # noqa: E402  (block 29: --search)
 from stages.search import SearchStage   # noqa: E402
 
 MOVED = ("trials", "pending", "runs", "jobs", "pipeline_rounds.json", "finalists.json",
@@ -72,10 +81,12 @@ def _tree_size(path):
     return n, b
 
 
-def listing(cfg, pbs_module=PBS):
+def listing(cfg, pbs_module=PBS, stage_name="search"):
     """What the reset would act on: the campaign's items, the ledger's
     counts, the trial jobs the state records that the scheduler reports
-    not finished, and the sequencer jobs (which must be none)."""
+    not finished, and the sequencer jobs (which must be none). [block 29]
+    `stage_name`: the search stage's name in the state (`search_<q>` for
+    search q of a searches list, `cfg` then its view)."""
     stage = SearchStage()
     dirs = stage._dirs(cfg)
     camp = dirs["campaign"]
@@ -100,7 +111,7 @@ def listing(cfg, pbs_module=PBS):
                 ledger[k if k in ledger else "other"] += 1
     wr = cfg.data["paths"]["work_root"]
     state = ST.State.load(wr) if os.path.isdir(wr) else None
-    st = (state.data.get("stages", {}).get("search") if state is not None else None) or {}
+    st = (state.data.get("stages", {}).get(stage_name) if state is not None else None) or {}
     live = []
     for job in st.get("jobs", []):
         if job.get("finished"):
@@ -111,7 +122,7 @@ def listing(cfg, pbs_module=PBS):
     drivers = P._drivers(cfg, pbs_module)
     return {"campaign": camp, "items": items, "kept": kept, "ledger": ledger, "live": live,
             "drivers": drivers, "state_status": st.get("status"),
-            "rounds": len((st.get("sub") or {}).get("rounds", []) or [])}
+            "rounds": len((st.get("sub") or {}).get("rounds", []) or []), "stage": stage_name}
 
 
 def code_of(lst):
@@ -125,8 +136,9 @@ def code_of(lst):
 
 def print_listing(lst, code):
     print("SEARCH RESET (nothing done yet): campaign folder %s" % lst["campaign"])
-    print("  the state's search stage: %s, %d round(s) recorded"
-          % (lst["state_status"], lst["rounds"]))
+    stage = lst.get("stage", "search")
+    print("  the state's search stage%s: %s, %d round(s) recorded"
+          % ("" if stage == "search" else " " + stage, lst["state_status"], lst["rounds"]))
     print("  the ledger: %s" % ", ".join("%s %d" % (k, v) for k, v in sorted(lst["ledger"].items())
                                         if v))
     for it in lst["items"]:
@@ -140,7 +152,7 @@ def print_listing(lst, code):
               % (j["id"], j["role"], j["state"]))
     if not lst["live"]:
         print("  no trial job queued or running per the state and the scheduler")
-    print("  the state file is not touched: the submission's --retry search resets the stage")
+    print("  the state file is not touched: the submission's --retry %s resets the stage" % stage)
     print("CODE %s -- run again with --confirm %s to do the above" % (code, code))
 
 
@@ -182,13 +194,15 @@ def do_reset(cfg, lst, code, pbs_module=PBS):
                    "ledger_before": lst["ledger"], "config_sha256": cfg.sha256,
                    "host": os.uname()[1]})
     print("SEARCH RESET DONE: %d job(s) deleted, round(s) set aside as %s; next: submit with "
-          "--retry search --accept-config-change" % (len(deleted), aside))
+          "--retry %s --accept-config-change" % (len(deleted), aside, lst.get("stage", "search")))
     return 0
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--config", required=True)
+    ap.add_argument("--search", default=None, metavar="NAME",
+                    help="the search, on a configuration with a searches list (block 29)")
     ap.add_argument("--confirm", default=None, metavar="CODE")
     args = ap.parse_args(argv)
     try:
@@ -197,7 +211,13 @@ def main(argv=None):
         print("SEARCH RESET: the configuration %s does not load: %s" % (args.config, exc.problems))
         return 2
     try:
-        lst = listing(cfg)
+        # [block 29] the search of a configuration with a searches list: its view
+        cfg, stage_name = R.pick_search(cfg, args.search)
+    except ValueError as exc:
+        print(str(exc))
+        return 2
+    try:
+        lst = listing(cfg, stage_name=stage_name)
     except PBS.SchedulerError as exc:
         print("SEARCH RESET: the scheduler did not answer (%s); try again" % exc)
         return 4

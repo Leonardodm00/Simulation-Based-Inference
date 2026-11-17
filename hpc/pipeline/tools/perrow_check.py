@@ -32,7 +32,9 @@ epochs, p_eff -- and the line `TRAINING CURVES: ...` (added 2026-10-20
     PERROW CHECK OK: <k> trial(s) read, <s> skipped, <m> without a per-row
     file; <r> row set(s); T = <t> nats/row; nothing was written
 
-Exit 0; 2 the configuration does not load; 3 no per-row file was read.
+Exit 0; 2 the configuration does not load, or [block 29] it has a
+`searches` list (one `REFUSED:` line: not supported for several searches);
+3 no per-row file was read.
 Needs numpy (the sbi_export environment has it). Pure ASCII, LF only;
 Python 3.6 syntax.
 """
@@ -490,6 +492,12 @@ def main(argv=None):
         cfg = C.load_config(args.config)
     except C.ConfigError as exc:
         print("PERROW CHECK: the configuration %s does not load: %s" % (args.config, exc.problems))
+        return 2
+    if C.has_search_list(cfg.data):
+        # [block 29] the check reads the single search's campaign folder (search.campaign)
+        print("REFUSED: %s has several searches (%s): perrow_check.py is not supported for "
+              "several searches (block 29); nothing was read"
+              % (cfg.path, ", ".join(q["name"] for q in cfg.data["searches"])))
         return 2
     res = analyse(cfg, campaign_dirs(cfg, args.campaign_dir), args.trial, args.bound)
     print_report(res)

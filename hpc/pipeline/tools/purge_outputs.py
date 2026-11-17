@@ -17,6 +17,9 @@ The targets, from the configuration:
 Never touched (printed as kept): the real bank <banks_root>/<dataset>_real,
 the bank plan's folder, the work root (state, log, reports), S1-S3.
 
+[block 29] A configuration with a `searches` list is refused (exit 2, one
+`REFUSED:` line: not supported for several searches), nothing listed.
+
 Refused (exit 4, nothing deleted): the work root's lock; a sequencer job
 pl_<tag> queued, held or running; a job a stage of the state records that
 the scheduler reports not finished; a job of the user whose qstat names
@@ -654,6 +657,12 @@ def main(argv=None):
         cfg = C.load_config(args.config, synthetic_ok=True)     # block 24: a synthetic project too
     except C.ConfigError as exc:
         print("PURGE: the configuration %s does not load: %s" % (args.config, exc.problems))
+        return EXIT_ARGS
+    if C.has_search_list(cfg.data):
+        # [block 29] the targets are the single search's (search.campaign) and its best fit's
+        print("REFUSED: %s has several searches (%s): purge_outputs.py is not supported for "
+              "several searches (block 29); nothing listed, nothing deleted"
+              % (cfg.path, ", ".join(q["name"] for q in cfg.data["searches"])))
         return EXIT_ARGS
     synth = is_synthetic(cfg)
     allowed = SYNTH_KINDS if synth else KINDS

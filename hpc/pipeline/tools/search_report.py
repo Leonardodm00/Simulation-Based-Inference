@@ -5,8 +5,12 @@ the pending specs, the run folders and the job logs say of each trial, and
 what the stage's next poll does with it by the stage's own rules.
 
     python3 hpc/pipeline/tools/search_report.py --config <project>.json
-        [--qstat] [--trial <id prefix>]
+        [--search <name>] [--qstat] [--trial <id prefix>]
 
+    --search   [block 29] the search to report on, for a configuration
+               with a `searches` list (required there, refused on one whose
+               `searches` is null): its view's folders, its stage
+               `search_<name>` in the state
     --qstat    ask the scheduler (one `qstat -x -f` of every trial's last
                job, a query) for its state, node, exit, walltime and
                memory; a job the state file does not know to have ended is
@@ -29,8 +33,11 @@ cause, the unreadable records, and the last line
     SEARCH REPORT OK: <n> trial(s) read; nothing was written
 
 Exit 0 with that line; 2 when the configuration does not load or holds no
-search. Writes nothing: every file is opened for reading; the scheduler is
-only queried.
+search, and [block 29] with `REFUSED: this configuration has the searches
+<names>: give --search <name>` on a configuration with a `searches` list
+without --search or with a name it does not list (on one whose `searches`
+is null, --search is refused the same way). Writes nothing: every file is
+opened for reading; the scheduler is only queried.
 
 Stdlib only. Pure ASCII, LF only; Python 3.6 syntax.
 """
@@ -53,6 +60,7 @@ import config as C                      # noqa: E402
 import pbs as PBS                       # noqa: E402
 import state as ST                      # noqa: E402
 import stages.common as CM              # noqa: E402
+import stages.runs as R                 # noqa: E402  (block 29: --search)
 from stages.search import SearchStage   # noqa: E402
 
 STATUS_ORDER = ("examining", "running", "waiting", "failed", "killed", "ok")
@@ -69,14 +77,29 @@ _RUNNER_EXITED = re.compile(r"^runner exited (-?[0-9]+)$")
 # Loading: facts only
 # ---------------------------------------------------------------------------
 
-def load_search(cfg):
-    """(stage, state or None, the search stage's record, {job id: job record})."""
+def load_search(cfg, stage_name="search"):
+    """(stage, state or None, the search stage's record, {job id: job record}).
+    [block 29] `stage_name`: the stage's name in the state (`search_<q>` for
+    search q of a configuration with a searches list; `cfg` its view)."""
     stage = SearchStage()
     wr = cfg.data["paths"]["work_root"]
     state = ST.State.load(wr) if os.path.isdir(wr) else None
-    rec = (state.data.get("stages", {}).get("search") if state is not None else None) or {}
+    rec = (state.data.get("stages", {}).get(stage_name) if state is not None else None) or {}
     jobs = dict((j.get("id"), j) for j in rec.get("jobs", []))
     return stage, state, rec, jobs
+
+
+def pick_search(cfg, name):
+    """[block 29] (the configuration or the view of search `name`, the
+    search stage's name in the state, None) or (None, None, the REFUSED
+    line): a configuration with a searches list needs the name of one of
+    them; one with `searches` null (the single search) takes none
+    (stages/runs.py pick_search)."""
+    try:
+        view, stage_name = R.pick_search(cfg, name)
+    except ValueError as exc:
+        return None, None, str(exc)
+    return view, stage_name, None
 
 
 def ledger_only_trials(stage, cfg):
@@ -523,6 +546,8 @@ def _one_trial(cfg, stage, f):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--config", required=True)
+    ap.add_argument("--search", default=None, metavar="NAME",
+                    help="the search, on a configuration with a searches list (block 29)")
     ap.add_argument("--qstat", action="store_true")
     ap.add_argument("--trial", default=None)
     args = ap.parse_args(argv)
@@ -534,11 +559,21 @@ def main(argv=None):
     if "search" not in cfg.data:
         print("SEARCH REPORT: %s has no search block" % args.config)
         return 2
-    stage, state, rec, jobs = load_search(cfg)
+    # [block 29] the search of a configuration with a searches list: its view
+    base = cfg
+    cfg, stage_name, refused = pick_search(base, args.search)
+    if refused:
+        print(refused)
+        return 2
+    stage, state, rec, jobs = load_search(cfg, stage_name)
     dirs = stage._dirs(cfg)
     trials = (rec.get("sub") or {}).get("trials") if rec else None
     print("search report %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
     print("configuration %s (config_version %s)" % (cfg.path, cfg.data.get("config_version")))
+    if cfg is not base:
+        print("search %s (campaign %s), the stage %s of a configuration with the searches %s"
+              % (args.search, cfg.data["search"]["campaign"], stage_name,
+                 ", ".join(q["name"] for q in base.data["searches"])))
     print("campaign folder %s" % dirs["campaign"])
     if state is None:
         print("state: none under %s; the trials the ledger and the pending folder name"
