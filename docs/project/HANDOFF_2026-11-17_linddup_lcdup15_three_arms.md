@@ -18,6 +18,7 @@ Tags: `[LOG D-nnn]` the decision log on `main`; `[CODE SBI@ee8b382 file]` read i
 | 2026-11-18 | v12. The user's message of 12:26 Europe/Rome: D-155 -- S2's quiet window (D-112) is 1 h, not 6 h. Built and pushed: SBI `sci/pipeline` `23c17ad` (`linddup.json` `sim.plan_args` `--quiet-hours 1`, sha256 `970b21288b930a12`; the run sheet's N5 and N6, N6's inputs check with `--quiet-hours 1`; the inputs-check suite). Sec. 7's "6 h after the kill" marked corrected. Log v1.151 on `main`. |
 | 2026-11-18 | v13. The user's paste of 13:21 Europe/Rome from `dvlogin02` `[CLUSTER, the user's paste]`: the campaign's arrays deleted (`qdel 1942752[] 1942753[]`, then `ARRAYS GONE`); SBI pulled to `23c17ad` and the inputs-check suite 8 of 9; N4: 5,984 topology folders, none without `topology_meta.json`, 476,027 simulation files, 22 without their json. New subsection "The campaign at 13:21" in sec. 7. |
 | 2026-11-18 | v14. The user's paste of 13:32 `[CLUSTER, the user's paste]`: N5 moved the 22 simulation files without their json (and no topology folder) to `campaign_lcdup15_rho1300_neur_n01_set_aside`, the folders' times kept. The user asked to run the rest now: N6-N9 handed over with the timing note of sec. 7. |
+| 2026-11-18 | v15. The user's paste of 13:44 `[CLUSTER, the user's paste]`: N7's dry run clean (exit 0; every line the run sheet names, no REFUSE, STOP or FAILED), then N8 submitted the sequencer, job `2099686.pbsserver01` (`pl_linddup`), log `/davinci-1/home/ldellamea/pipeline/linddup/driver/driver.1.log`. N6 was not run. Submitted at 13:44, before the 1 h window had passed for the tasks the kill cut (sec. 7). |
 
 ## 1. The task
 
@@ -220,7 +221,8 @@ The order of the stages, and what to expect at each:
 - SBI was pulled to `sci/pipeline` `23c17ad`; `test_smoke_inputs_check.py`: 8 of 9 checks pass. N1-N3 were run before (their output not pasted).
 - N4: no LindDUP job in the queue; topology folders 5,984 (5,673 at 18:52 on 2026-11-17), without `topology_meta.json` 0; simulation files 476,027, without their json 22.
 - N5, 13:32: `MOVED 0 topology folder(s) and 22 simulation file(s) to .../campaign_lcdup15_rho1300_neur_n01_set_aside (the folders' times kept)` `[CLUSTER, the user's paste]`.
-- Next: N6 and N8 not before about 14:25, so that S2's first round plans every task, the ones the kill cut included; a run started earlier leaves those tasks out of the bank unless a later round plans them (D-112's Implies).
+- 13:43-13:44: N7's dry run clean; N8 submitted the sequencer `2099686.pbsserver01` at 13:44:03 `[CLUSTER, the user's paste]`; N6 not run. S2's test-task plan, made before about 14:21, leaves out the tasks the kill cut; whether its array's plan does too depends on when the test task ends: the log line `sim_redetection: [plan] being written : <n> task(s) ...` at the array's launch says how many tasks this bank misses (0 if the array plans after about 14:21) `[reasoning; CODE SBI@23c17ad stages/inputs.py, Sbi-extractor@0ff531d sim_reextract_plan.py]`.
+- (superseded by the line above) Next: N6 and N8 not before about 14:25, so that S2's first round plans every task, the ones the kill cut included; a run started earlier leaves those tasks out of the bank unless a later round plans them (D-112's Implies).
 
 ### Still open
 
