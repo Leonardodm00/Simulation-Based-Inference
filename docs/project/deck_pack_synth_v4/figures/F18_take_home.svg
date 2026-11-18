@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-11-18T10:08:00.346284</dc:date>
+    <dc:date>2026-11-18T12:08:34.455346</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -40,7 +40,7 @@ Q 9.5976 24.1128 9.5976 38.5092
 L 9.5976 288.0468 
 Q 9.5976 302.4432 23.994 302.4432 
 z
-" clip-path="url(#pc1b8a1be2f)" style="fill: #f0efec"/>
+" clip-path="url(#p7c5c28f16e)" style="fill: #f0efec"/>
    </g>
    <g id="patch_3">
     <path d="M 15.35616 36.58968 
@@ -53,7 +53,7 @@ Q 9.5976 24.1128 9.5976 29.87136
 L 9.5976 30.83112 
 Q 9.5976 36.58968 15.35616 36.58968 
 z
-" clip-path="url(#pc1b8a1be2f)" style="fill: #2a78d6"/>
+" clip-path="url(#p7c5c28f16e)" style="fill: #2a78d6"/>
    </g>
    <g id="patch_4">
     <path d="M 262.01448 302.4432 
@@ -66,7 +66,7 @@ Q 247.61808 24.1128 247.61808 38.5092
 L 247.61808 288.0468 
 Q 247.61808 302.4432 262.01448 302.4432 
 z
-" clip-path="url(#pc1b8a1be2f)" style="fill: #f0efec"/>
+" clip-path="url(#p7c5c28f16e)" style="fill: #f0efec"/>
    </g>
    <g id="patch_5">
     <path d="M 253.37664 36.58968 
@@ -79,7 +79,7 @@ Q 247.61808 24.1128 247.61808 29.87136
 L 247.61808 30.83112 
 Q 247.61808 36.58968 253.37664 36.58968 
 z
-" clip-path="url(#pc1b8a1be2f)" style="fill: #2a78d6"/>
+" clip-path="url(#p7c5c28f16e)" style="fill: #2a78d6"/>
    </g>
    <g id="patch_6">
     <path d="M 500.03496 302.4432 
@@ -92,7 +92,7 @@ Q 485.63856 24.1128 485.63856 38.5092
 L 485.63856 288.0468 
 Q 485.63856 302.4432 500.03496 302.4432 
 z
-" clip-path="url(#pc1b8a1be2f)" style="fill: #f0efec"/>
+" clip-path="url(#p7c5c28f16e)" style="fill: #f0efec"/>
    </g>
    <g id="patch_7">
     <path d="M 491.39712 36.58968 
@@ -105,7 +105,7 @@ Q 485.63856 24.1128 485.63856 29.87136
 L 485.63856 30.83112 
 Q 485.63856 36.58968 491.39712 36.58968 
 z
-" clip-path="url(#pc1b8a1be2f)" style="fill: #e34948"/>
+" clip-path="url(#p7c5c28f16e)" style="fill: #e34948"/>
    </g>
    <g id="patch_8">
     <path d="M 738.05544 302.4432 
@@ -118,7 +118,7 @@ Q 723.65904 24.1128 723.65904 38.5092
 L 723.65904 288.0468 
 Q 723.65904 302.4432 738.05544 302.4432 
 z
-" clip-path="url(#pc1b8a1be2f)" style="fill: #f0efec"/>
+" clip-path="url(#p7c5c28f16e)" style="fill: #f0efec"/>
    </g>
    <g id="patch_9">
     <path d="M 729.4176 36.58968 
@@ -131,7 +131,7 @@ Q 723.65904 24.1128 723.65904 29.87136
 L 723.65904 30.83112 
 Q 723.65904 36.58968 729.4176 36.58968 
 z
-" clip-path="url(#pc1b8a1be2f)" style="fill: #52514e"/>
+" clip-path="url(#p7c5c28f16e)" style="fill: #52514e"/>
    </g>
    <g id="patch_10">
     <path d="M 23.994 460.8036 
@@ -144,7 +144,7 @@ Q 9.5976 321.6384 9.5976 336.0348
 L 9.5976 446.4072 
 Q 9.5976 460.8036 23.994 460.8036 
 z
-" clip-path="url(#pc1b8a1be2f)" style="fill: #e7e4f4"/>
+" clip-path="url(#p7c5c28f16e)" style="fill: #e7e4f4"/>
    </g>
    <g id="text_1">
     <text style="font-weight: 600; font-size: 15.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="23.03424" y="68.141628" transform="rotate(-0 23.03424 68.141628)">Optimisation</text>
@@ -203,10 +203,10 @@ z
     <text style="font-size: 12.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="23.994" y="387.610159" transform="rotate(-0 23.994 387.610159)">• run the searches longer?   • the flow's edge support: bound 5 or 10?   • confirm that the 18 flagged windows are the contaminated ones</text>
    </g>
    <g id="text_15">
-    <text style="font-size: 12.5px; font-family: 'Inter'; text-anchor: start; fill: #52514e" x="23.994" y="423.121279" transform="rotate(-0 23.994 423.121279)">To discuss: a ranking criterion that does not push the terms towards off; a second ensemble per arm,</text>
+    <text style="font-size: 12.5px; font-family: 'Inter'; text-anchor: start; fill: #52514e" x="23.994" y="423.121279" transform="rotate(-0 23.994 423.121279)">To discuss: full ensembles at a fixed larger term weight (in 6-pass trials larger weights also</text>
    </g>
    <g id="text_16">
-    <text style="font-size: 12.5px; font-family: 'Inter'; text-anchor: start; fill: #52514e" x="23.994" y="447.115279" transform="rotate(-0 23.994 447.115279)">to measure the seed noise of an ensemble rather than of a single member</text>
+    <text style="font-size: 12.5px; font-family: 'Inter'; text-anchor: start; fill: #52514e" x="23.994" y="447.115279" transform="rotate(-0 23.994 447.115279)">worsened the cohort score); a second ensemble per arm, to measure an ensemble's seed noise</text>
    </g>
   </g>
   <g id="text_17">
@@ -214,7 +214,7 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="pc1b8a1be2f">
+  <clipPath id="p7c5c28f16e">
    <rect x="0" y="0" width="959.76" height="475.2"/>
   </clipPath>
  </defs>

@@ -541,11 +541,14 @@ def fig18_take_home():
     ax.text(2.5, 9.6, "\u2022 run the searches longer?   \u2022 the flow's edge support: "
             "bound 5 or 10?   \u2022 confirm that the 18 flagged windows are the "
             "contaminated ones", fontsize=12.5, color=S.INK, va="center")
-    ax.text(2.5, 5.9, "To discuss: a ranking criterion that does not push the terms "
-            "towards off; a second ensemble per arm,", fontsize=12.5, color=S.INK2,
-            va="center")
-    ax.text(2.5, 3.4, "to measure the seed noise of an ensemble rather than of a single "
-            "member", fontsize=12.5, color=S.INK2, va="center")
+    # [corrected 2026-11-18] was: "To discuss: a ranking criterion that does not push
+    # the terms towards off; ..." -- in the 6-pass trials a larger weight also worsened
+    # the cohort score (study doc of 2026-11-18, check 5), so the criterion is not the
+    # whole reason the weights are small.
+    ax.text(2.5, 5.9, "To discuss: full ensembles at a fixed larger term weight (in 6-pass "
+            "trials larger weights also", fontsize=12.5, color=S.INK2, va="center")
+    ax.text(2.5, 3.4, "worsened the cohort score); a second ensemble per arm, to measure "
+            "an ensemble's seed noise", fontsize=12.5, color=S.INK2, va="center")
     S.footer(fig, FOOT % "summary of the results document (synth v4 evaluation, 2026-11-16)")
     S.save(fig, OUT, "F18_take_home")
 
