@@ -17,6 +17,7 @@ Tags: `[LOG D-nnn]` the decision log on `main`; `[CODE SBI@ee8b382 file]` read i
 | 2026-11-17 | v11. The user's paste of 18:52 Europe/Rome from `dvlogin04` `[CLUSTER, the user's paste]`. It ran the listing line sent mid-build, the earlier form of N4. The campaign's arrays `1942752[]` (cfd, 192 cores) and `1942753[]` (cpu, 48 cores) were still queued, state B, named `lcdup_cam*`. There were 5,673 topology folders and 0 without `topology_meta.json`. Sec. 9 is updated. The lines are to run on 2026-11-18; a reminder is set for 09:00. |
 | 2026-11-18 | v12. The user's message of 12:26 Europe/Rome: D-155 -- S2's quiet window (D-112) is 1 h, not 6 h. Built and pushed: SBI `sci/pipeline` `23c17ad` (`linddup.json` `sim.plan_args` `--quiet-hours 1`, sha256 `970b21288b930a12`; the run sheet's N5 and N6, N6's inputs check with `--quiet-hours 1`; the inputs-check suite). Sec. 7's "6 h after the kill" marked corrected. Log v1.151 on `main`. |
 | 2026-11-18 | v13. The user's paste of 13:21 Europe/Rome from `dvlogin02` `[CLUSTER, the user's paste]`: the campaign's arrays deleted (`qdel 1942752[] 1942753[]`, then `ARRAYS GONE`); SBI pulled to `23c17ad` and the inputs-check suite 8 of 9; N4: 5,984 topology folders, none without `topology_meta.json`, 476,027 simulation files, 22 without their json. New subsection "The campaign at 13:21" in sec. 7. |
+| 2026-11-18 | v14. The user's paste of 13:32 `[CLUSTER, the user's paste]`: N5 moved the 22 simulation files without their json (and no topology folder) to `campaign_lcdup15_rho1300_neur_n01_set_aside`, the folders' times kept. The user asked to run the rest now: N6-N9 handed over with the timing note of sec. 7. |
 
 ## 1. The task
 
@@ -218,7 +219,8 @@ The order of the stages, and what to expect at each:
 - The arrays `1942752[]` and `1942753[]` were deleted just before 13:21 (`qdel`, then no qstat line: `ARRAYS GONE`). The campaign's last writes are therefore about 13:20, and S2's 1 h window (D-155) covers every task from about 14:21 `[reasoning]`.
 - SBI was pulled to `sci/pipeline` `23c17ad`; `test_smoke_inputs_check.py`: 8 of 9 checks pass. N1-N3 were run before (their output not pasted).
 - N4: no LindDUP job in the queue; topology folders 5,984 (5,673 at 18:52 on 2026-11-17), without `topology_meta.json` 0; simulation files 476,027, without their json 22.
-- Next: N5 sets the 22 files aside (no folder to move), then N6 and N8 not before about 14:25, so that S2's first round plans every task, the ones the kill cut included; a run started earlier leaves those tasks out of the bank unless a later round plans them (D-112's Implies).
+- N5, 13:32: `MOVED 0 topology folder(s) and 22 simulation file(s) to .../campaign_lcdup15_rho1300_neur_n01_set_aside (the folders' times kept)` `[CLUSTER, the user's paste]`.
+- Next: N6 and N8 not before about 14:25, so that S2's first round plans every task, the ones the kill cut included; a run started earlier leaves those tasks out of the bank unless a later round plans them (D-112's Implies).
 
 ### Still open
 
