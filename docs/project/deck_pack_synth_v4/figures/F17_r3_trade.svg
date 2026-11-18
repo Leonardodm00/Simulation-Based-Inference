@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="959.76pt" height="475.2pt" viewBox="0 0 959.76 475.2" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-11-18T10:07:58.724041</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 475.2 
+L 959.76 475.2 
+L 959.76 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 86.3784 394.416 
+L 945.3636 394.416 
+L 945.3636 66.528 
+L 86.3784 66.528 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_1"/>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_1">
+      <path d="M 86.3784 361.6272 
+L 945.3636 361.6272 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke: #e6e5e1; stroke-linecap: round"/>
+     </g>
+     <g id="line2d_2">
+      <defs>
+       <path id="m0a2e7207b5" d="M 0 0 
+L -3.5 0 
+" style="stroke: #52514e; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#m0a2e7207b5" x="86.3784" y="361.6272" style="fill: #52514e; stroke: #52514e; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 13px; font-family: 'Inter'; text-anchor: end; fill: #52514e" x="79.3784" y="367.924075" transform="rotate(-0 79.3784 367.924075)">−0.4</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_3">
+      <path d="M 86.3784 296.0496 
+L 945.3636 296.0496 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke: #e6e5e1; stroke-linecap: round"/>
+     </g>
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#m0a2e7207b5" x="86.3784" y="296.0496" style="fill: #52514e; stroke: #52514e; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 13px; font-family: 'Inter'; text-anchor: end; fill: #52514e" x="79.3784" y="302.346475" transform="rotate(-0 79.3784 302.346475)">−0.2</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_5">
+      <path d="M 86.3784 230.472 
+L 945.3636 230.472 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke: #e6e5e1; stroke-linecap: round"/>
+     </g>
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#m0a2e7207b5" x="86.3784" y="230.472" style="fill: #52514e; stroke: #52514e; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 13px; font-family: 'Inter'; text-anchor: end; fill: #52514e" x="79.3784" y="236.768875" transform="rotate(-0 79.3784 236.768875)">0.0</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_7">
+      <path d="M 86.3784 164.8944 
+L 945.3636 164.8944 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke: #e6e5e1; stroke-linecap: round"/>
+     </g>
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#m0a2e7207b5" x="86.3784" y="164.8944" style="fill: #52514e; stroke: #52514e; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 13px; font-family: 'Inter'; text-anchor: end; fill: #52514e" x="79.3784" y="171.191275" transform="rotate(-0 79.3784 171.191275)">0.2</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_9">
+      <path d="M 86.3784 99.3168 
+L 945.3636 99.3168 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke: #e6e5e1; stroke-linecap: round"/>
+     </g>
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#m0a2e7207b5" x="86.3784" y="99.3168" style="fill: #52514e; stroke: #52514e; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <text style="font-size: 13px; font-family: 'Inter'; text-anchor: end; fill: #52514e" x="79.3784" y="105.613675" transform="rotate(-0 79.3784 105.613675)">0.4</text>
+     </g>
+    </g>
+    <g id="text_6">
+     <text style="font-size: 15px; font-family: 'Inter'; fill: #52514e" transform="translate(24.994572 333.489188) rotate(-90)">contribution to the mean NLL</text>
+     <text style="font-size: 15px; font-family: 'Inter'; fill: #52514e" transform="translate(43.143986 355.105594) rotate(-90)">difference on R3 (nats per window)</text>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 122.480677 230.472 
+L 199.664854 230.472 
+L 199.664854 342.575805 
+L 122.480677 342.575805 
+z
+" clip-path="url(#p509bb63ff5)" style="fill: #1baf7a"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 246.971285 230.472 
+L 324.155463 230.472 
+L 324.155463 127.702402 
+L 246.971285 127.702402 
+z
+" clip-path="url(#p509bb63ff5)" style="fill: #1baf7a; opacity: 0.55"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 371.461894 230.472 
+L 448.646071 230.472 
+L 448.646071 239.806207 
+L 371.461894 239.806207 
+z
+" clip-path="url(#p509bb63ff5)" style="fill: #52514e"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 570.646868 230.472 
+L 647.831045 230.472 
+L 647.831045 265.116451 
+L 570.646868 265.116451 
+z
+" clip-path="url(#p509bb63ff5)" style="fill: #eb6834"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 695.137477 230.472 
+L 772.321654 230.472 
+L 772.321654 217.138943 
+L 695.137477 217.138943 
+z
+" clip-path="url(#p509bb63ff5)" style="fill: #eb6834; opacity: 0.55"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 819.628085 230.472 
+L 896.812263 230.472 
+L 896.812263 251.783394 
+L 819.628085 251.783394 
+z
+" clip-path="url(#p509bb63ff5)" style="fill: #52514e"/>
+   </g>
+   <g id="line2d_11">
+    <path d="M 199.664854 342.575805 
+L 246.971285 342.575805 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke-dasharray: 2,2; stroke-dashoffset: 0; stroke: #52514e"/>
+   </g>
+   <g id="line2d_12">
+    <path d="M 324.155463 239.806207 
+L 371.461894 239.806207 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke-dasharray: 2,2; stroke-dashoffset: 0; stroke: #52514e"/>
+   </g>
+   <g id="line2d_13">
+    <path d="M 647.831045 265.116451 
+L 695.137477 265.116451 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke-dasharray: 2,2; stroke-dashoffset: 0; stroke: #52514e"/>
+   </g>
+   <g id="line2d_14">
+    <path d="M 772.321654 251.783394 
+L 819.628085 251.783394 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke-dasharray: 2,2; stroke-dashoffset: 0; stroke: #52514e"/>
+   </g>
+   <g id="line2d_15">
+    <path d="M 86.3784 230.472 
+L 945.3636 230.472 
+" clip-path="url(#p509bb63ff5)" style="fill: none; stroke: #52514e; stroke-width: 1.2; stroke-linecap: round"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 86.3784 394.416 
+L 86.3784 66.528 
+" style="fill: none; stroke: #e6e5e1; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(97.813078 413.309092)">306 ordinary windows</text>
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(110.896828 431.481944)">-0.36 per window</text>
+   </g>
+   <g id="text_8">
+    <text style="font-weight: 600; font-size: 13px; font-family: 'Inter'; text-anchor: middle; fill: #0b0b0b" x="161.072765" y="361.727315" transform="rotate(-0 161.072765 361.727315)">-0.34</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(229.312436 413.324092)">18 flagged windows</text>
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(234.146186 431.481944)">+5.64 per window</text>
+   </g>
+   <g id="text_10">
+    <text style="font-weight: 600; font-size: 13px; font-family: 'Inter'; text-anchor: middle; fill: #0b0b0b" x="285.563374" y="118.0089" transform="rotate(-0 285.563374 118.0089)">+0.31</text>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(369.917733 414.480967)">all 324: the tie</text>
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(379.25242 433.596944)">D̄ = -0.028</text>
+   </g>
+   <g id="text_12">
+    <text style="font-weight: 600; font-size: 13px; font-family: 'Inter'; text-anchor: middle; fill: #0b0b0b" x="410.053983" y="258.957717" transform="rotate(-0 410.053983 258.957717)">-0.03</text>
+   </g>
+   <g id="text_13">
+    <text style="font-weight: 600; font-size: 15px; font-family: 'Inter'; text-anchor: middle; fill: #0b0b0b" x="285.563374" y="76.36464" transform="rotate(-0 285.563374 76.36464)">A5 − A1  (S-A5-R3 against S-A1)</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(545.979269 413.309092)">306 ordinary windows</text>
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(561.966457 431.481944)">-0.11 per window</text>
+   </g>
+   <g id="text_15">
+    <text style="font-weight: 600; font-size: 13px; font-family: 'Inter'; text-anchor: middle; fill: #0b0b0b" x="609.238957" y="284.267961" transform="rotate(-0 609.238957 284.267961)">-0.11</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(677.478628 413.324092)">18 flagged windows</text>
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(682.693003 431.481944)">+0.73 per window</text>
+   </g>
+   <g id="text_17">
+    <text style="font-weight: 600; font-size: 13px; font-family: 'Inter'; text-anchor: middle; fill: #0b0b0b" x="733.729565" y="207.445441" transform="rotate(-0 733.729565 207.445441)">+0.04</text>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(818.083924 414.480967)">all 324: the tie</text>
+    <text style="font-size: 12px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(827.420486 433.596944)">D̄ = -0.065</text>
+   </g>
+   <g id="text_19">
+    <text style="font-weight: 600; font-size: 13px; font-family: 'Inter'; text-anchor: middle; fill: #0b0b0b" x="858.220174" y="270.934904" transform="rotate(-0 858.220174 270.934904)">-0.06</text>
+   </g>
+   <g id="text_20">
+    <text style="font-weight: 600; font-size: 15px; font-family: 'Inter'; text-anchor: middle; fill: #0b0b0b" x="733.729565" y="76.36464" transform="rotate(-0 733.729565 76.36464)">A2 − A1  (S-A2-R3 against S-A1)</text>
+   </g>
+   <g id="text_21">
+    <text style="font-size: 12px; font-family: 'Inter'; text-anchor: start; fill: #52514e" x="92.60293" y="381.684829" transform="rotate(-0 92.60293 381.684829)">below 0: the term arm is better</text>
+   </g>
+  </g>
+  <g id="text_22">
+   <text style="font-size: 9px; font-family: 'Inter'; text-anchor: end; fill: #8a8984" x="954.9612" y="469.227502" transform="rotate(-0 954.9612 469.227502)">synth v4 deck | &lt;stem&gt;_R3.npz (nll_rows, lc2st_stat); donor-cluster bootstrap | evaluation of 2026-11-16 | 2026-11-18</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p509bb63ff5">
+   <rect x="86.3784" y="66.528" width="858.9852" height="327.888"/>
+  </clipPath>
+ </defs>
+</svg>

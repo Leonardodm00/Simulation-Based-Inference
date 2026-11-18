@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="959.76pt" height="475.2pt" viewBox="0 0 959.76 475.2" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-11-18T10:08:00.346284</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 475.2 
+L 959.76 475.2 
+L 959.76 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 23.994 302.4432 
+L 220.7448 302.4432 
+Q 235.1412 302.4432 235.1412 288.0468 
+L 235.1412 38.5092 
+Q 235.1412 24.1128 220.7448 24.1128 
+L 23.994 24.1128 
+Q 9.5976 24.1128 9.5976 38.5092 
+L 9.5976 288.0468 
+Q 9.5976 302.4432 23.994 302.4432 
+z
+" clip-path="url(#pc1b8a1be2f)" style="fill: #f0efec"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 15.35616 36.58968 
+L 229.38264 36.58968 
+Q 235.1412 36.58968 235.1412 30.83112 
+L 235.1412 29.87136 
+Q 235.1412 24.1128 229.38264 24.1128 
+L 15.35616 24.1128 
+Q 9.5976 24.1128 9.5976 29.87136 
+L 9.5976 30.83112 
+Q 9.5976 36.58968 15.35616 36.58968 
+z
+" clip-path="url(#pc1b8a1be2f)" style="fill: #2a78d6"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 262.01448 302.4432 
+L 458.76528 302.4432 
+Q 473.16168 302.4432 473.16168 288.0468 
+L 473.16168 38.5092 
+Q 473.16168 24.1128 458.76528 24.1128 
+L 262.01448 24.1128 
+Q 247.61808 24.1128 247.61808 38.5092 
+L 247.61808 288.0468 
+Q 247.61808 302.4432 262.01448 302.4432 
+z
+" clip-path="url(#pc1b8a1be2f)" style="fill: #f0efec"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 253.37664 36.58968 
+L 467.40312 36.58968 
+Q 473.16168 36.58968 473.16168 30.83112 
+L 473.16168 29.87136 
+Q 473.16168 24.1128 467.40312 24.1128 
+L 253.37664 24.1128 
+Q 247.61808 24.1128 247.61808 29.87136 
+L 247.61808 30.83112 
+Q 247.61808 36.58968 253.37664 36.58968 
+z
+" clip-path="url(#pc1b8a1be2f)" style="fill: #2a78d6"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 500.03496 302.4432 
+L 696.78576 302.4432 
+Q 711.18216 302.4432 711.18216 288.0468 
+L 711.18216 38.5092 
+Q 711.18216 24.1128 696.78576 24.1128 
+L 500.03496 24.1128 
+Q 485.63856 24.1128 485.63856 38.5092 
+L 485.63856 288.0468 
+Q 485.63856 302.4432 500.03496 302.4432 
+z
+" clip-path="url(#pc1b8a1be2f)" style="fill: #f0efec"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 491.39712 36.58968 
+L 705.4236 36.58968 
+Q 711.18216 36.58968 711.18216 30.83112 
+L 711.18216 29.87136 
+Q 711.18216 24.1128 705.4236 24.1128 
+L 491.39712 24.1128 
+Q 485.63856 24.1128 485.63856 29.87136 
+L 485.63856 30.83112 
+Q 485.63856 36.58968 491.39712 36.58968 
+z
+" clip-path="url(#pc1b8a1be2f)" style="fill: #e34948"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 738.05544 302.4432 
+L 934.80624 302.4432 
+Q 949.20264 302.4432 949.20264 288.0468 
+L 949.20264 38.5092 
+Q 949.20264 24.1128 934.80624 24.1128 
+L 738.05544 24.1128 
+Q 723.65904 24.1128 723.65904 38.5092 
+L 723.65904 288.0468 
+Q 723.65904 302.4432 738.05544 302.4432 
+z
+" clip-path="url(#pc1b8a1be2f)" style="fill: #f0efec"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 729.4176 36.58968 
+L 943.44408 36.58968 
+Q 949.20264 36.58968 949.20264 30.83112 
+L 949.20264 29.87136 
+Q 949.20264 24.1128 943.44408 24.1128 
+L 729.4176 24.1128 
+Q 723.65904 24.1128 723.65904 29.87136 
+L 723.65904 30.83112 
+Q 723.65904 36.58968 729.4176 36.58968 
+z
+" clip-path="url(#pc1b8a1be2f)" style="fill: #52514e"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 23.994 460.8036 
+L 935.766 460.8036 
+Q 950.1624 460.8036 950.1624 446.4072 
+L 950.1624 336.0348 
+Q 950.1624 321.6384 935.766 321.6384 
+L 23.994 321.6384 
+Q 9.5976 321.6384 9.5976 336.0348 
+L 9.5976 446.4072 
+Q 9.5976 460.8036 23.994 460.8036 
+z
+" clip-path="url(#pc1b8a1be2f)" style="fill: #e7e4f4"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 600; font-size: 15.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="23.03424" y="68.141628" transform="rotate(-0 23.03424 68.141628)">Optimisation</text>
+   </g>
+   <g id="text_2">
+    <text style="font-weight: 600; font-size: 13.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="23.03424" y="105.38735" transform="rotate(-0 23.03424 105.38735)">worked, not finished</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(23.03424 175.769503)">every search went from worse</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(23.03424 195.821506)">than the prior to 3-4 nats</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(23.03424 216.153142)">better; 4 of 5 finalists came</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(23.03424 237.244879)">from the last round</text>
+   </g>
+   <g id="text_4">
+    <text style="font-weight: 600; font-size: 15.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="261.05472" y="68.141628" transform="rotate(-0 261.05472 68.141628)">Training</text>
+   </g>
+   <g id="text_5">
+    <text style="font-weight: 600; font-size: 13.5px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(261.05472 105.38735)">members overfit;</text>
+    <text style="font-weight: 600; font-size: 13.5px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(261.05472 125.69048)">the ensemble repairs it</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(261.05472 175.658034)">averaging 5 members gains</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(261.05472 195.998319)">0.7-1.1 nats; the ensemble is</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(261.05472 217.090056)">calibrated to conservative</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(261.05472 237.187223)">inside the box</text>
+   </g>
+   <g id="text_7">
+    <text style="font-weight: 600; font-size: 15.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="499.0752" y="68.141628" transform="rotate(-0 499.0752 68.141628)">Calibration</text>
+   </g>
+   <g id="text_8">
+    <text style="font-weight: 600; font-size: 13.5px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(499.0752 105.193288)">good inside,</text>
+    <text style="font-weight: 600; font-size: 13.5px; font-family: 'Inter'; fill: #0b0b0b" transform="translate(499.0752 125.611378)">fails at the box edges</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(499.0752 176.961066)">10.8 % of simulated truths lie</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(499.0752 195.812858)">within 0.0067 of an edge,</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(499.0752 215.976329)">where the flow puts almost</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(499.0752 235.977403)">no mass</text>
+   </g>
+   <g id="text_10">
+    <text style="font-weight: 600; font-size: 15.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="737.09568" y="68.141628" transform="rotate(-0 737.09568 68.141628)">Comparison</text>
+   </g>
+   <g id="text_11">
+    <text style="font-weight: 600; font-size: 13.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="737.09568" y="106.573874" transform="rotate(-0 737.09568 106.573874)">no arm wins or loses</text>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(737.09568 175.970339)">0 of 15 differences resolved;</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(737.09568 196.851631)">the searches chose small</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(737.09568 215.840837)">term weights; on R3 the tie</text>
+    <text style="font-size: 12.3px; font-family: 'Inter'; fill: #52514e" transform="translate(737.09568 237.181457)">hides a trade</text>
+   </g>
+   <g id="text_13">
+    <text style="font-weight: 600; font-size: 14.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="23.994" y="352.826578" transform="rotate(-0 23.994 352.826578)">Open before any verdict on the arms</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 12.5px; font-family: 'Inter'; text-anchor: start; fill: #0b0b0b" x="23.994" y="387.610159" transform="rotate(-0 23.994 387.610159)">• run the searches longer?   • the flow's edge support: bound 5 or 10?   • confirm that the 18 flagged windows are the contaminated ones</text>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 12.5px; font-family: 'Inter'; text-anchor: start; fill: #52514e" x="23.994" y="423.121279" transform="rotate(-0 23.994 423.121279)">To discuss: a ranking criterion that does not push the terms towards off; a second ensemble per arm,</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 12.5px; font-family: 'Inter'; text-anchor: start; fill: #52514e" x="23.994" y="447.115279" transform="rotate(-0 23.994 447.115279)">to measure the seed noise of an ensemble rather than of a single member</text>
+   </g>
+  </g>
+  <g id="text_17">
+   <text style="font-size: 9px; font-family: 'Inter'; text-anchor: end; fill: #8a8984" x="954.9612" y="469.227502" transform="rotate(-0 954.9612 469.227502)">synth v4 deck | summary of the results document (synth v4 evaluation, 2026-11-16) | 2026-11-18</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pc1b8a1be2f">
+   <rect x="0" y="0" width="959.76" height="475.2"/>
+  </clipPath>
+ </defs>
+</svg>
