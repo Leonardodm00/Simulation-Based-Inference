@@ -1154,7 +1154,8 @@ cd /davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_final
 
 # N5. your call: set N4's folders and files aside, into the sibling folder ..._set_aside (outside the campaign
 #     glob; nothing deleted), keeping each parent folder's modification time: S2's plan leaves out every task
-#     changed in the last 6 h (D-112), and a removal would otherwise count as a change. A topology that loses a
+#     changed in the last 1 h (D-112; 6 h until 2026-11-18, D-155), and a removal would otherwise count as a
+#     change. A topology that loses a
 #     file without json was partial already (its json files are fewer than its task dispatched), so the bank
 #     drops it whole either way (D-143) and records it in the plan. Pass lines: MOVED <a> topology folder(s)
 #     and <b'> simulation file(s) ... (b' = b less the files inside the moved folders), then N4's line again
@@ -1167,10 +1168,12 @@ cd /davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_final
 #     topologies (NOTE: <n> partial topologies in <m> task(s), <s> simulations: the bank plan drops them whole),
 #     searches (NOTE "3 search(es): A1: S-A1, max_cores 148; A2: S-A2-only, max_cores 148; A5: S-A5-only,
 #     max_cores 148; the caps add up to 444 cores against resources.max_cores 444 (the sequencer's job takes 4 of
-#     them)" -- so each arm runs 3 jobs of 48, 432 cores in all), being written (OK: no task changed within 6 h ...: S2 plans all
-#     <n>; a NOTE names tasks touched in the last 6 h, which S2's first round would leave out), and the task and
-#     simulation counts. Paste it whole.
-cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/inputs_check.py --project linddup --json ~/inputs_check_linddup.json 2>&1 | tee ~/inputs_check_linddup.txt
+#     them)" -- so each arm runs 3 jobs of 48, 432 cores in all), being written (OK: no task changed within 1 h ...: S2 plans all
+#     <n>; a NOTE names tasks touched in the last 1 h, which S2's first round would leave out), and the task and
+#     simulation counts. Paste it whole. [2026-11-18, D-155: S2's window is 1 h (was 6 h), and the check is
+#     given the same window (--quiet-hours 1), so a campaign last changed between 1 h and 6 h ago gives no
+#     campaign WARN; run N6 at least 1 h after the arrays' removal (N5 keeps the folders' times).]
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/tools/inputs_check.py --project linddup --quiet-hours 1 --json ~/inputs_check_linddup.json 2>&1 | tee ~/inputs_check_linddup.txt
 
 # N7. the dry run (submits nothing); pass: exit 0, no REFUSE, STOP or FAILED line, and the lines
 #     real_extraction: would be skipped; sim_redetection: would run (the array at CONCURRENCY 9 of 48 cores);

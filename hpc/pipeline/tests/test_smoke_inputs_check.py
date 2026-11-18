@@ -30,7 +30,7 @@ Checks (specs/SPEC.md blocks 9 and 32, "Test oracles")
                         (D-144..D-146); topology metadata OK; partial
                         topologies NOTE with 0; the searches NOTE (A1, A2,
                         A5 at 148 cores, 444 against 444); the plan's
-                        --quiet-hours 6 leaves nothing out (D-112); the job
+                        --quiet-hours 1 leaves nothing out (D-112, D-155); the job
                         protocol's files on both sides (D-113); exit 0 and
                         the last line
     test_partial        T32c: a partial topology (2 of K files) is a NOTE
@@ -43,7 +43,7 @@ Checks (specs/SPEC.md blocks 9 and 32, "Test oracles")
     test_being_written  D-112: one task changed just now is named as left
                         out, not sampled (3 files, its conn_prob values
                         absent), no WARN; iteration files 10 h apart give
-                        the pace WARN against --quiet-hours 6
+                        the pace WARN against --quiet-hours 1 (D-155)
     test_reference      read_scalars equals numpy.load's own 0-d members on a
                         file holding arrays too; the counts equal an os.walk
                         count of iter_*.npz; the scan's iter_*.json and
@@ -562,8 +562,9 @@ def test_known_answer():
         assert rows["batches"]["text"] == "%s 0" % CAMP
         assert rows["registry"]["status"] == "OK" and rows["window"]["text"].endswith("W 18000")
         assert rows["cohort manifest"]["status"] == "OK" and rows["S2 profile"]["status"] == "OK"
-        # D-112: linddup.json's plan_args --quiet-hours 6; the month-old tree: nothing left out
-        assert s["plan_quiet_hours"] == 6.0 and s["being_written"] == [], s
+        # D-112: linddup.json's plan_args --quiet-hours 1 (D-155, 2026-11-18; was 6); the
+        # month-old tree: nothing left out
+        assert s["plan_quiet_hours"] == 1.0 and s["being_written"] == [], s
         assert rows["being written"]["status"] == "OK" and "S2 plans all 2" in rows["being written"]["text"]
         assert rows["plan option"]["status"] == "OK", rows["plan option"]
         assert rows["pace"]["status"] == "NOTE" and "95% under 0.00 h" in rows["pace"]["text"], rows["pace"]
@@ -650,10 +651,10 @@ def test_being_written():
         assert rc == 0 and not fails(doc) and not warns(doc), doc
         assert s["being_written"] == [name] and s["sampled"] == 3, s
         bw = rows["being written"]
-        assert bw["status"] == "NOTE" and bw["text"].startswith("1 of 2 task(s) changed less than 6 h ago") \
+        assert bw["status"] == "NOTE" and bw["text"].startswith("1 of 2 task(s) changed less than 1 h ago") \
             and name in bw["text"], bw
         assert s["members"]["conn_prob"] == {"files": 3, "nan": 0, "distinct": 3}, s["members"]
-        # the pace: task 0's files written 10 h apart (a month ago), against the plan's 6 h
+        # the pace: task 0's files written 10 h apart (a month ago), against the plan's 1 h (D-155)
         base = time.time() - 30 * 86400.0
         files = sorted(os.path.join(dp, f) for dp, _d, fns in os.walk(_task(root, 0))
                        for f in fns if f.startswith("iter_") and f.endswith(".npz"))
@@ -663,7 +664,7 @@ def test_being_written():
         warn = [r for r in doc["checks"] if r["status"] == "WARN"]
         assert rc == 0 and [r["check"] for r in warn] == ["pace"], warn
         assert "the longest 10.00 h (in %s/%s)" % (CAMP, TASKS[0][0]) in warn[0]["text"], warn
-        assert "--quiet-hours 6 is not longer than most gaps" in warn[0]["text"], warn
+        assert "--quiet-hours 1 is not longer than most gaps" in warn[0]["text"], warn
     finally:
         cleanup(root)
 

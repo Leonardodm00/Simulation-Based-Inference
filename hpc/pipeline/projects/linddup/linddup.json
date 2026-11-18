@@ -1,5 +1,5 @@
 {
-  "_comment": "The LindDUP data set's pipeline configuration, v11 (2026-11-17; decisions D-104..D-109, D-112..D-114 and D-138..D-151 of docs/project/SBI_decisions_and_ideas_log.md on SBI main). LindDUP (D-104): the joint DSN+NPE stack trained on the LindaColloDUP15 campaign lcdup15_rho1300_neur_n01 (D-138: it replaces MEAMA completely; neurons only, 159 CAdEx cells, 180 s; trained as it is, D-139) and the DUP15HD recordings (DATA_C control and DATA_P DUP, the cohort of record extracted_v2). Three arms, each searched and fitted on the same banks (D-140, D-148 (1)): A1, A2 and A5, each with 148 cores (D-141). Every key is required; a key starting with '_' documents the key after it and is ignored. Values not yet read on the data are marked [to verify]: tools/inputs_check.py reads them on davinci before the first submission.",
+  "_comment": "The LindDUP data set's pipeline configuration, v11 (2026-11-17; decisions D-104..D-109, D-112..D-114, D-138..D-151 and D-155 of docs/project/SBI_decisions_and_ideas_log.md on SBI main; 2026-11-18, D-155: S2's quiet window 1 h, was 6 h). LindDUP (D-104): the joint DSN+NPE stack trained on the LindaColloDUP15 campaign lcdup15_rho1300_neur_n01 (D-138: it replaces MEAMA completely; neurons only, 159 CAdEx cells, 180 s; trained as it is, D-139) and the DUP15HD recordings (DATA_C control and DATA_P DUP, the cohort of record extracted_v2). Three arms, each searched and fitted on the same banks (D-140, D-148 (1)): A1, A2 and A5, each with 148 cores (D-141). Every key is required; a key starting with '_' documents the key after it and is ignored. Values not yet read on the data are marked [to verify]: tools/inputs_check.py reads them on davinci before the first submission.",
   "config_version": 11,
   "dataset": "linddup",
   "_paths": "Where everything lives on davinci (absolute; no '~'). The two repositories are the checkouts Giulia uses; every LindDUP folder carries linddup (D-104).",
@@ -23,13 +23,13 @@
     "extract_root": "/davinci-1/home/ldellamea/Deep Summary Network/Deep_bio/extracted_v2",
     "cohort_map": "/davinci-1/home/ldellamea/SBI/hpc/pipeline/projects/linddup/linddup_cohort_map.csv"
   },
-  "_sim": "S2, the re-detection of lcdup15_rho1300_neur_n01 at the DUP15HD probe (n_side 3 and fs 10110.09 from the manifest, pitch 60 um D-021, edge 25 um D-024: the Sbi-extractor profile linddup.sh, overridden here). 815 tasks (163 cfd of 6,144 simulations, 652 cpu of 1,536; 442,473 simulations on 2026-11-17 [CLUSTER]); the arrays removed by the user, so no task is being written. Before S2, a topology folder without topology_meta.json must be moved out of its sweep folder: the virtual MEA stops on its whole task otherwise (the ANN reply of 2026-11-17, sec. 2.2). Jobs on intel (D-141): 48 cores, 12 h per task [estimate: a cfd task re-detects 128 simulations per core], 9 at once under the cap.",
+  "_sim": "S2, the re-detection of lcdup15_rho1300_neur_n01 at the DUP15HD probe (n_side 3 and fs 10110.09 from the manifest, pitch 60 um D-021, edge 25 um D-024: the Sbi-extractor profile linddup.sh, overridden here). 815 tasks (163 cfd of 6,144 simulations, 652 cpu of 1,536; 442,473 simulations on 2026-11-17 [CLUSTER]); the arrays removed by the user, so no task is being written. Before S2, a topology folder without topology_meta.json must be moved out of its sweep folder: the virtual MEA stops on its whole task otherwise (the ANN reply of 2026-11-17, sec. 2.2). plan_args: S2's plan leaves out every task changed less than 1 h before it and plans again at each round (D-112; 1 h since 2026-11-18, D-155, was 6 h). Jobs on intel (D-141): 48 cores, 12 h per task [estimate: a cfd task re-detects 128 simulations per core], 9 at once under the cap.",
   "sim": {
     "sim_main": "/davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP",
     "campaign_glob": "campaign_lcdup15_rho1300_neur_n01",
     "out_root": "/davinci-1/home/ldellamea/ANN/MEA_analysis/mea_out_linddup_lcdup15",
     "tools": "/davinci-1/home/ldellamea/ANN/MEA_analysis",
-    "plan_args": "--quiet-hours 6",
+    "plan_args": "--quiet-hours 1",
     "test_walltime": "12:00:00",
     "walltime": "12:00:00",
     "ncpus": 48,

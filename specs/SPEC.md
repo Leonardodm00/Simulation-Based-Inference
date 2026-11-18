@@ -34,7 +34,8 @@ Paths this spec covers (files, directories ending in `/`, or globs):
 - `hpc/pipeline/projects/linddup/linddup.json` -- the LindDUP project's
   configuration (config v10; added 2026-10-29, D-104..D-109; v2 of the
   file the same day: `sim.plan_args` `--quiet-hours 6` (D-112), the
-  search's `gp_seed` 1 and `max_concurrent_trials` 25, Giulia's (D-114))
+  search's `gp_seed` 1 and `max_concurrent_trials` 25, Giulia's (D-114);
+  [2026-11-18: `sim.plan_args` `--quiet-hours 1`, D-155])
 - the changes the later blocks make under `hpc/joint/` (listed per block in
   sec. 5 as they are written; the rest of `hpc/joint/` is their input, not
   under test here): `hpc/joint/stage1/latent_bank.py` (`ShardIndex`,
