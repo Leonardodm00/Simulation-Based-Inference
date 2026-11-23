@@ -1212,6 +1212,119 @@ close. Do not change `replicate.*` while A5's search runs: the pair rule is not 
 identity (SPEC block 29's note S2), so the search would continue under another rule. A stopped search
 that is reset (`tools/search_reset.py --search <q>`) has its stop request set aside with its rounds.
 
+### the evaluation of a recorded project (2026-11-23, blocks 33-38, D-159..D-165)
+
+The evaluation of a recorded project is a tool beside the pipeline, as the synthetic one is
+(`hpc/pipeline/evaluation/`; `specs/SPEC.md` sec. 2.6): it reads the best fits' members and the banks and
+writes under the `out_root` of `projects/<tag>/<tag>_rec_eval.json`. One command, `submit_rec_eval.sh
+--project <tag>`, submits what is missing: one sampling job per complete ensemble (`ev_rec_sample.py`), the
+report after them (`ev_rec_report.py`: the metrics, the figures, `REC_REPORT.md`), and, for a synthetic
+project read as recorded whose file has `validate_against`, the validation after the report
+(`ev_rec_validate.py`, next section). It can be run again at any time: what is done or queued is not
+submitted twice, and an ensemble whose best fit is not complete is named and left for a later run. Each job
+is `jobs/eval_run.pbs` in `envs.train`; its command is in `<out_root>/jobs/<unit>.argv`, its log in
+`<out_root>/jobs/logs/<unit>.log` (`sample_<q>_<arm>.log`, `report.log`, `validate.log`), its id in
+`<out_root>/jobs/ledger.json`; the job names are `er_s<i>` (the i-th complete ensemble), `er_report` and
+`er_valid`. In the lines below, `<tag>` is the project and `<out_root>` the `out_root` of its
+`<tag>_rec_eval.json`.
+
+```
+# R1. the code; pass: the last line names the block-38 commit or a later one
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin sci/pipeline && git log --oneline -1
+
+# R2. the cluster-side check of the launcher and the job script (no training; a few seconds): ASCII and LF,
+#     bash -n, the launcher's imports; pass lines "1 of 1 checks pass", twice (the first check SKIPs, "0 of 1",
+#     on a python older than 3.10: paste it)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && python3 hpc/pipeline/tests/test_smoke_rec_jobs.py test_r38d_static 2>&1 | tail -1; python3 hpc/pipeline/tests/test_smoke_evaluation.py test_e22b_job_script 2>&1 | tail -1
+
+# R3. the dry run (submits nothing, writes nothing); pass: exit 0, no REFUSE or ABORT line, one "sample:<name>
+#     would be submitted" per complete ensemble, "report would be submitted" with "-W depend=afterok:<the
+#     samplings>", a "not complete:" line per best fit still training, and "REC EVAL DRY RUN: <n> job(s) would
+#     be submitted, <d> done, <l> live; nothing written". Paste the lines
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_rec_eval.sh --project <tag> --dry-run 2>&1 | grep -E "REFUSE|ABORT|would be submitted|depend|not complete|nothing to|done|live|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+
+# R4. the submission, only on that dry run; pass line: REC EVAL SUBMIT OK: <n> job(s) submitted, <d> done, <l> live
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_rec_eval.sh --project <tag>
+
+# R5. any time: the jobs, then their pass lines. Each log ends with "EVAL JOB EXIT: 0"; a sampling's has
+#     "REC SAMPLE OK: <stem> (<k> file(s), M=<M>, n_post=<n_post>, ...)", the report's "REC METRICS OK: ...",
+#     "REC FIGURES OK: <m> figure(s)" and "REC REPORT OK". A REFUSE line names its cause. Paste the lines
+qstat -u ldellamea | grep er_ ; grep -h "REC SAMPLE OK\|REC METRICS OK\|REC FIGURES OK\|REC REPORT OK\|REFUSE\|EVAL JOB EXIT" <out_root>/jobs/logs/*.log
+
+# R6. run again once they ended; pass line: REC EVAL SUBMIT OK: 0 job(s) submitted, <d> done, 0 live
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_rec_eval.sh --project <tag>
+```
+
+`--what sample,report,validate` names the units to consider (default: sample and report, and validate as
+well for a project read as recorded with `validate_against`; `--what validate` for any other project is
+refused, exit 3). `--resample <name>,...` or `--resample all` samples ensembles again although done; the
+report then goes after them. A sampling is stale, and submitted again, when its `<stem>_sample.json` was
+made with other sampling values (`seed`, `n_post`, `as_recorded`, `sim_draw_rows_per_donor`, the gate's
+sets) or its best fit's `BEST_FIT_COMPLETE.json` changed; the report when `REC_REPORT_COMPLETE.json` records
+other samples or report values (`seed`, `edge_eps`, the gate's `factors` and `alpha`, `bootstrap_n`, `level`,
+`dpi`, `formats`). A sampling that refuses (a `REFUSE:` line in its log, exit 3) writes nothing, and PBS then
+drops the report queued after it: once the cause is fixed, R3 and R4 again. Exit codes of the launcher: 0, 2
+(the arguments or the configurations), 3 (a refusal; nothing submitted), 4 (a qsub failed; the jobs
+submitted before it are in the ledger).
+
+### synth: the validation of the recorded path (D-162) (2026-11-23, blocks 33-38)
+
+D-162's validation on davinci: the synthetic project read as recorded (`projects/synth/synth_rec_eval.json`:
+`as_recorded` true, every row of D_sim a draw row, the synthetic evaluation's `seed`, `n_post`, `batch_rows`
+and `oracle_tol`), evaluated by the new path under `/davinci-1/home/ldellamea/runs/synth/evaluation_rec`, then
+compared with the synthetic evaluation of "synth: the evaluation of the relaunch" above (`validate_against`:
+`/davinci-1/home/ldellamea/runs/synth/evaluation`) by `ev_rec_validate.py`: on D_sim, for every ensemble,
+|NLL_new - NLL_old| <= 0.002 nats on every row, the expected coverage within 0.01 on every point of the
+grid, the SBC verdicts, the Holm rejections and TARP's two verdicts unchanged (`specs/SPEC.md` sec. 2.6,
+"The validation"). The jobs: five samplings (8 cores, 64gb, at most 24 h each), the report after them
+(8 cores, 64gb, 24 h) and the validation after the report (1 core, 8gb, 1 h), on the queue intel. Nothing of
+the synthetic evaluation or of the pipeline is written. The verdict is in
+`/davinci-1/home/ldellamea/runs/synth/evaluation_rec/VALIDATION.json`.
+
+```
+# D1. the code; pass: the last line names the block-38 commit or a later one
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin sci/pipeline && git log --oneline -1
+
+# D2. the cluster-side check (no training; a few seconds); pass lines "1 of 1 checks pass", twice (the first
+#     SKIPs, "0 of 1", on a python older than 3.10: paste it)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && python3 hpc/pipeline/tests/test_smoke_rec_jobs.py test_r38d_static 2>&1 | tail -1; python3 hpc/pipeline/tests/test_smoke_evaluation.py test_e22b_job_script 2>&1 | tail -1
+
+# D3. read-only: the synthetic evaluation it compares with; pass: both files listed, no "No such file"
+ls -l /davinci-1/home/ldellamea/runs/synth/evaluation/metrics/METRICS.json /davinci-1/home/ldellamea/runs/synth/evaluation/REPORT_COMPLETE.json
+
+# D4. the dry run (submits nothing, writes nothing); pass: exit 0, no REFUSE or ABORT line, no "not complete"
+#     line, five "sample:<name> would be submitted" (S-A1:A1, S-A2-R0:A2, S-A5-R0:A5, S-A2-R3:A2, S-A5-R3:A5),
+#     "report would be submitted" with "-W depend=afterok:<sample_S-A1_A1>:...:<sample_S-A5-R3_A5>",
+#     "validate would be submitted" with "-W depend=afterok:<report>", and "REC EVAL DRY RUN: 7 job(s) would be
+#     submitted, 0 done, 0 live; nothing written". Paste the lines
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_rec_eval.sh --project synth --dry-run 2>&1 | grep -E "REFUSE|ABORT|would be submitted|depend|not complete|nothing to|done|live|DRY RUN"; echo "exit ${PIPESTATUS[0]}"
+
+# D5. the submission, only on that dry run; pass line: REC EVAL SUBMIT OK: 7 job(s) submitted, 0 done, 0 live
+cd ~/SBI && bash hpc/pipeline/evaluation/submit_rec_eval.sh --project synth
+
+# D6. any time: the jobs (er_s0 ... er_s4, er_report, er_valid), then the samplings' pass lines: each log ends
+#     with "EVAL JOB EXIT: 0" and has "REC SAMPLE OK: <stem> (<k> file(s), M=5, n_post=1000, <n> draw row(s)
+#     of <n>, oracle max ... nats, ... s)", the two row counts equal. Paste the lines
+qstat -u ldellamea | grep er_ ; grep -h "REC SAMPLE OK\|REFUSE\|EVAL JOB EXIT" /davinci-1/home/ldellamea/runs/synth/evaluation_rec/jobs/logs/sample_*.log
+
+# D7. once the report ended: "REC METRICS OK: 5 ensemble(s), ...", "REC FIGURES OK: <m> figure(s)", "REC REPORT
+#     OK" and "EVAL JOB EXIT: 0". Paste the lines
+grep -h "REC METRICS OK\|REC FIGURES OK\|REC REPORT OK\|REFUSE\|EVAL JOB EXIT" /davinci-1/home/ldellamea/runs/synth/evaluation_rec/jobs/logs/report.log
+
+# D8. once the validation ended: its log has "REC VALIDATION OK: 5 ensemble(s)", or one "FAIL: <ensemble>: ..."
+#     line per failure and "REC VALIDATION FAILED: <k> failure(s) over <n> ensemble(s)"; then "EVAL JOB EXIT:
+#     0" (or 3). The launcher run again prints "validate done (validated: OK, 5 ensemble(s))" (or "validated:
+#     FAILED, <k> failure(s), see .../VALIDATION.json") and "REC EVAL SUBMIT OK: 0 job(s) submitted, 7 done,
+#     0 live". Paste both outputs whole
+grep -h "REC VALIDATION\|FAIL:\|REFUSE\|EVAL JOB EXIT" /davinci-1/home/ldellamea/runs/synth/evaluation_rec/jobs/logs/validate.log; cd ~/SBI && bash hpc/pipeline/evaluation/submit_rec_eval.sh --project synth 2>&1 | grep -E "validate|SUBMIT OK|REFUSE|ABORT"
+```
+
+The validation is done once `VALIDATION.json` names the synthetic evaluation and the sha256 of the current
+`evaluation_rec/metrics/METRICS.json`: it is not submitted again, whatever its verdict (a failed comparison
+of unchanged files fails again). To repeat it, delete that file and run D4 and D5. A report run again (a
+sampling resampled, a report value changed) writes new metrics; the run after it submits the validation
+again.
+
 ## Tests
 
 ```
