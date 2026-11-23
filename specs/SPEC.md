@@ -7138,6 +7138,10 @@ plan; Confirmed: yes 2026-11-17]
 | `python3 hpc/pipeline/tests/test_smoke_runs.py`, `test_smoke_stop.py` | blocks 29 and 30 under the fake PBS | none for the config, graph and cap checks; the training environment for the end to end | minutes |
 | `python3 hpc/joint/stage3/smoke_test_rep_pairs.py` | block 31: the replicate pair rule and the runner's flags | the training environment (torch, sbi, zuko) | about a minute |
 | `bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what data [--dry-run]` | block 23: the data overview's job (`ev_dataview.py`): the windows, the eight statistics, theta and the PCA of the synthetic data set, nine figures | davinci (the tests: the reduced project under the fake PBS) | about a minute on 4,000 + 648 windows |
+| `python3 hpc/pipeline/tests/test_smoke_rec_plan.py`, `test_smoke_rec_gate.py`, `test_smoke_rec_sample.py`, `test_smoke_rec_metrics.py`, `test_smoke_rec_report.py`, `test_smoke_rec_jobs.py` | blocks 33-38 (2026-11-23): the evaluation of a recorded project -- the view and the fixture, the gate, the sampler, the quantities and the validation tool, the figures and the report, the jobs under the fake PBS; each prints a PASS / FAIL table and its last line `<k> of <n> checks pass` | the training environment (torch, sbi, zuko, scikit-optimize, scikit-learn, matplotlib); `REC_FIXTURE=<dir>` reuses a fixture tree built before, `REC_KEEP=1` keeps the one a run builds | the fixture about 90 s once; then seconds to a few minutes each |
+| `python3 hpc/pipeline/evaluation/ev_rec_sample.py --config <tag>.json --eval-config <tag>_rec_eval.json --ensemble <name> [--out DIR]`, then `ev_rec_report.py --config ... --eval-config ...` | blocks 35-37 by hand: one ensemble's samples, then the metrics, the figures, `REC_REPORT.md` and `REC_REPORT_COMPLETE.json`; pass lines `REC SAMPLE OK`, `REC METRICS OK`, `REC FIGURES OK`, `REC REPORT OK` | `rec_fixture.fixture()`'s `cfg_rec` and `ecfg_rec` (the recorded kind) or `cfg` and `ecfg_as` (a synthetic project read as recorded), with `out_root` in a temporary directory | seconds per ensemble on the fixture |
+| `python3 hpc/pipeline/evaluation/ev_rec_validate.py --old <synthetic out_root> --new <as-recorded out_root> [--record FILE]` | block 36: D-162's validation of the recorded path against the synthetic evaluation; pass line `REC VALIDATION OK: <n> ensemble(s)` | the fixture's `old_out` and an as-recorded run of `cfg` with `ecfg_as` | under a second |
+| `bash hpc/pipeline/evaluation/submit_rec_eval.sh --project <tag> [--dry-run] [--what sample,report,validate] [--resample <name>,...]` | block 38: the launcher of a recorded project's evaluation on PBS; `--project synth` is D-162's validation on davinci (`synth_rec_eval.json`) | davinci (the tests: the fixture under the fake PBS, `SKIP_CONDA=1`) | seconds; the jobs hours |
 
 ## 7. Not executable in the sandbox
 
@@ -7166,6 +7170,17 @@ its check B4 in the sandbox -- scipy 1.18.1's `kstest(x, "norm",
 args=...)` raises a TypeError, on the code before block 11 as after it --
 so its checks from B4 on were not run here; blocks 11-14 do not touch the
 generator it tests (`bench_burst_generator.py`).
+
+Blocks 33-38 (2026-11-23): the sandbox installs python 3.13, torch 2.15.0, sbi 0.27.0,
+zuko 1.6.0, scikit-optimize 0.10.2, pytorch-metric-learning 2.9.0, numpy 2.5, scipy 1.18,
+scikit-learn 1.9 and matplotlib 3.11 (CPU) and runs them on `rec_fixture`'s reduced
+synthetic project (8 report networks, 16 rows, 2 members, n_post 40; a null set of 2 rows,
+so `gate.alpha` 0.5 and `gate.n_null_min` 1 there). Not executable here: a recorded
+project's real banks (the extractor's, on davinci), and D-162's validation at full size
+(`submit_rec_eval.sh --project synth`: five ensembles of five members, n_post 1,000,
+against `/davinci-1/home/ldellamea/runs/synth/evaluation`), whose cluster tolerances
+(sec. 2.6, "The validation") are therefore untested until that run; the sandbox tests
+its bit-for-bit form on the fixture (R35a, R36d, R38b).
 
 ## 8. Open questions
 
