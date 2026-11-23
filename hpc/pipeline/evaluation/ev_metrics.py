@@ -126,16 +126,18 @@ def coverage_summary(curve, betas=BETAS):
     return {"signed_area": area, "max_abs_dev": float(np.max(np.abs(dev))), "at": at}
 
 
-def sbc_block(theta_ref, draws, level, seed):
+def sbc_block(theta_ref, draws, level, seed, axes=None):
     """SBC per axis (npe_diagnostics), the Holm family at 1 - level, the
     ECDF differences of the normalised ranks with the KS band, and the rank
-    histogram with its per-bin binomial band."""
+    histogram with its per-bin binomial band. [block 36] `axes`: the axes'
+    names, one per column; None names the bench's ten axes (AXES)."""
+    names = AXES if axes is None else tuple(axes)
     th = np.asarray(theta_ref, dtype=np.float64)
     ps = np.asarray(draws, dtype=np.float64)
     n, n_post = ps.shape[0], ps.shape[1]
-    res = ND.simulation_based_calibration(th, ps, param_names=AXES, seed=int(seed))
+    res = ND.simulation_based_calibration(th, ps, param_names=names, seed=int(seed))
     alpha = round(1.0 - level, 10)
-    fam = ND.holm_bonferroni([r.ks_pvalue for r in res], alpha=alpha, names=AXES)
+    fam = ND.holm_bonferroni([r.ks_pvalue for r in res], alpha=alpha, names=names)
     ranks = np.stack([r.ranks for r in res], axis=1).astype(np.int64)        # (n, 10)
     u = ranks / float(n_post)
     ecdf = (u[:, :, None] <= BETAS[None, None, :]).mean(axis=0)            # (10, 101)
@@ -186,15 +188,16 @@ def recovery_arrays(theta_ref, draws):
             "contraction": 1.0 - sigma ** 2 / SIGMA0_SQ}
 
 
-def recovery_summary(theta_ref, rec, rows):
+def recovery_summary(theta_ref, rec, rows, axes=None):
     """Per axis over `rows`: the contraction 1 - mean sigma^2 / (1/12), the
     90 % interval's coverage, the z-scores' mean and SD, the RMSE of the
-    posterior mean, the mean posterior SD."""
+    posterior mean, the mean posterior SD. [block 36] `axes`: the axes'
+    names, one per column; None names the bench's ten axes (AXES)."""
     t = np.asarray(theta_ref, dtype=np.float64)[rows]
     s = rec["sigma"][rows]
     z = rec["zeta"][rows]
     inside = (rec["q05"][rows] <= t) & (t <= rec["q95"][rows])
-    return {"n_rows": int(np.sum(rows)), "axes": list(AXES),
+    return {"n_rows": int(np.sum(rows)), "axes": list(AXES if axes is None else axes),
             "contraction": [float(x) for x in 1.0 - np.mean(s ** 2, axis=0) / SIGMA0_SQ],
             "interval90_coverage": [float(x) for x in inside.mean(axis=0)],
             "zeta_mean": [float(x) for x in np.nanmean(z, axis=0)],
