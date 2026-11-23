@@ -6627,7 +6627,9 @@ plan; Confirmed: yes 2026-11-17]
   the printed lines are the same with and without it.
 - Rule (sec. 2.6; every seed is `seed_of(seed, "metrics", <stem>, <data
   set>, <what>)`, block 20's, so that the as-recorded numbers are block
-  20's):
+  20's [corrected 2026-11-23 at block 36's gate: the paired bootstrap's
+  seed is block 27's, `seed_of(seed, "paired", <name>, "sim")`, which R36d
+  requires; the sentence above named one form for all]):
   - an ensemble whose sample is absent, or was made with other
     `sample_params`, is left out and named;
   - D_sim, with block 20's functions (`nll_block`, `hpd_ranks`,
@@ -6778,7 +6780,110 @@ plan; Confirmed: yes 2026-11-17]
   the gate's reference taken from the null rows; `axes` ignored.
 - Confirmed: yes 2026-11-23 (D-160..D-163; the example well and the SBC
   and TARP criterion of the validation, D-164).
-- Status: drafted 2026-11-23.
+- Status: smoke-tested 2026-11-23 (7 of 7 checks, `test_smoke_rec_metrics.py`,
+  R36d and R36g with block 35's sampler on the merged tree; the six
+  mutations each caught: `<=` in (R1) by R36a; the edge split over the
+  draw rows by R36c and R36d; the pooled draws weighted unequally by R36b;
+  the well's SD divided by sqrt(n_g) by R36b; the gate's reference from
+  the null rows by R36c; `axes` ignored by R36d and R36f; and, for
+  `--record`, `ok` always true by R36e). Measured: R36a, exact posterior,
+  max |C_E - beta| 0.0100 against the bound 0.0318; cut support, pi_edge
+  0.1328 against 0.1261 (1.3 standard errors), C_E^edge = 0 for every beta
+  < 1, C_E^int within 0.0085 of the diagonal, C_E(0.95) 0.8227 against
+  0.8239; (R2) within 1.1e-16. R36b: the worst quantile 3.38 Monte Carlo
+  standard errors from its value; the pooled SD of a well of 8 windows
+  0.05013 and of 2 windows 0.05022 against s = 0.05. R36d (D-162's second
+  target, in the sandbox, through block 35's sampler): 3 ensembles, the
+  largest NLL difference 0 nats, every other difference 0, the paired
+  files equal to block 27's; `ev_rec_validate` passes on the two trees.
+- Build notes (2026-11-23, plumbing; none changes the science):
+  - `edge_split`'s `betas=None` means `ev_metrics.BETAS`;
+  - the example well is chosen by `ev_metrics.example_donors` on the
+    wells' mean T (ties by the well's id);
+  - `ev_rec_validate`: a tree without `metrics/METRICS.json` is a failure
+    line (exit 3), a path that is not a directory an argument error (exit
+    2); two trees without any ensemble are a failure; TARP's verdict is
+    null when its `ks_p` is null; `--record` (the contract of wave C)
+    written by the orchestrator at the gate, checked in R36e;
+  - the workers' thread limit is `threadpoolctl`'s, one thread per worker;
+  - a comparison whose two samples differ in `rows`, `theta_ref` or
+    `donor` is not made and is named; the comparisons the view does not
+    make (`ev_rec_plan.comparisons`' second list) are listed in
+    `comparisons_left_out` with `E` and `E_ref` null.
+- The keys as written (2026-11-23; wave C's contract, part 2: block 37
+  reads these and nothing else of block 36):
+  - `METRICS.json`: `schema` "rec_eval_metrics_index/1", `config`,
+    `eval_config`, `view_kind`, `ensembles` (a dict from the ensemble's
+    name to `stem`, `arm`, `search`, `campaign`, `banks`, `datasets` =
+    ["sim"] + the banks), `left_out` (a list of `ensemble`, `why`),
+    `files`, `comparisons` (a list of `name`, `kind`, `E`, `E_ref`,
+    `search`, `search_ref`, `arm`, `arm_ref`, `datasets` = ["sim"],
+    `paired` = {"sim": the JSON's path}), `comparisons_left_out` (a list
+    of `comparison`, `E`, `E_ref`, `why`), `report_inputs`, `seconds`;
+  - `<stem>_sim.json`: `schema`, `ensemble`, `stem`, `search`,
+    `campaign`, `arm`, `dataset` "sim", `n`, `n_cal` (S_cal: the
+    calibration rows in the box), `n_calib`, `n_d`, `n_in_box`,
+    `n_networks`, `M`, `n_post`, `p`, `axes` (`names`, `bounds` or null),
+    `level`, `sample`; `nll` (`mean`, `members`, `members_sd`, `n_rows`,
+    `n_donors`, `n_out_of_box`); `coverage` (`at` with the keys "0.50",
+    "0.68", "0.90", "0.95", `signed_area`, `max_abs_dev`, `n_rows`,
+    `band`, `ks_p`, `verdict`, `members`: per member `at`, `signed_area`,
+    `max_abs_dev`); `sbc` (`ks_p`, `verdict`, `holm_adjusted_p`,
+    `holm_rejected`, each a list over the axes, `holm_alpha`,
+    `n_rejected`, `n_rows`, `n_post`, `mean_rank_frac`,
+    `ks_band_halfwidth`, `hist_level`); `tarp` (`x` and `random`, each
+    with `ks_p`, `max_dev`, `reference_mode`, `notes`); `recovery`
+    (`axes`, `n_rows`, `contraction`, `interval90_coverage`, `zeta_mean`,
+    `zeta_sd`, `rmse`, `sigma_mean`, lists over the axes, `sigma0`);
+    `edge` (`n_cal`, `n_edge`, `n_int`, `pi_edge`, `pi_edge_expected`,
+    `eps`, `p`, `edge` and `interior`: each null or `at`, `signed_area`,
+    `max_abs_dev`; `r2_max_abs_dev`, `nll_edge_n`, `nll_edge_mean`,
+    `nll_int_n`, `nll_int_mean`, `caution`); `gate` (`alpha`, `k_gate`,
+    `level`, `size_mean`, `size_lo`, `size_hi`, `n_ref`, `n_rank`,
+    `n_null`, `n_check`, `factors`, `bandwidths` and `median` (per
+    member), `check`: `n`, `n_flagged`, `share`, `ci` [lo, hi], `level`;
+    `note`);
+  - `<stem>_sim.npz`: `rows`, `donor`, `cls`, `well`, `in_box`, `calib`,
+    `draw`, `edge` (n,); `theta_ref` (n, p); `betas` (101,); `nll_rows`
+    (n,), `donor_ids`, `donor_nll` (the networks); `gamma` (n,);
+    `coverage`, `coverage_lo`, `coverage_hi`, `coverage_edge`,
+    `coverage_int` (101,), `coverage_members` (M, 101); `sbc_ranks`
+    (n_calib, p), `sbc_ecdf_diff` (p, 101), `sbc_hist_counts` (p, 20),
+    `sbc_hist_edges` (21,), `sbc_hist_expected`, `sbc_hist_lo`,
+    `sbc_hist_hi` (20,); `tarp_x_f`, `tarp_random_f` (n_calib,); `mhat`,
+    `sigma`, `q05`, `q95`, `zeta`, `contraction` (n, p) float32, NaN on
+    the rows without draws; `gate_role` (n,) int8, `gate_check_rows`
+    (N_chk,) (indices into the n rows), `gate_T_null` (N_null,),
+    `gate_T_check`, `gate_p_check` (N_chk,);
+  - `<stem>_<r>.json`: `schema`, `ensemble`, `stem`, `dataset` and `bank`
+    (the bank's name), `n_r`, `n_post`, `M`, `p`, `axes`, `level`,
+    `n_wells`, `well_ids`, `classes`, `batches`, `sample`; `posterior`
+    (`contraction_mean`, `contraction_q05`, `contraction_q50`,
+    `contraction_q95`, lists over the axes, `what`); `wells` (a list in
+    the order of `well_ids`: `well`, `n`, `cls`, `donor`, `batch`,
+    `first_window`, `mean`, `sd`, `q05`, `q50`, `q95` (lists over the
+    axes), `n_flagged`, `share_flagged`, `mean_T`, `what`);
+    `mixture_note`; `gate` (`alpha`, `k_gate`, `level`, `n_null`,
+    `size_mean`, `size_lo`, `size_hi`, `n`, `n_flagged`, `share`,
+    `per_class`: a list of `cls`, `n`, `n_flagged`, `share`; `per_well`:
+    a list of `well`, `n`, `n_flagged`, `share`; `note`);
+    `example_wells` (a list of `cls`, `well`, `mean_T`, `first_window`);
+    `pca` (`n_ref`, `source`);
+  - `<stem>_<r>.npz`: `rows`, `cls`, `donor`, `well`, `batch`,
+    `subregion`, `window_idx`, `rep_group`, `contaminated` (n_r,); `mhat`,
+    `sigma`, `q05`, `q50`, `q95`, `contraction` (n_r, p) float32;
+    `well_ids`, `well_n` (G,), `well_mean`, `well_sd`, `well_q05`,
+    `well_q50`, `well_q95` (G, p); `gate_t`, `gate_r`, `gate_p_member` (M,
+    n_r), `gate_T`, `gate_p` (n_r,), `gate_flag` (n_r,) bool;
+    `pca_coords` (M, N_ref + n_r, 2) float32, `pca_evr` (M, 2),
+    `pca_source` (N_ref + n_r,) (0: a reference row of D_sim, 1: a window
+    of the bank);
+  - `paired_<name>_sim.json`: block 27's keys (`Dbar`, `ci`, `se`,
+    `sigma_seed`, `two_sigma_seed`, `ci_excludes_0`,
+    `beyond_2_sigma_seed`, `resolved`, `lower_nll_ensemble`, `n_rows`,
+    `n_donors`, `n_boot`, `level`, `E`, `E_ref`, `arm`, `arm_ref`, `kind`,
+    ...) with `schema` "rec_eval_metrics/1" and `groups`; its `.npz`:
+    `donor_ids`, `delta_d`, `se_d`.
 
 ### Block 37: the figures and the report of a recorded project (added 2026-11-23; D-159, D-160; roadmap tool, step S2, wave 1)
 
@@ -6843,7 +6948,11 @@ plan; Confirmed: yes 2026-11-17]
   row, interior, edge, each member), C_E at 0.50, 0.68, 0.90, 0.95 for the
   three curves with pi_edge and its expected value and, in one line, sec.
   2.6's caution on the split curves, SBC's rejected axes,
-  TARP's two verdicts, the contraction per axis on D_sim and on each bank;
+  TARP's two verdicts [2026-11-23, wave C's contract: block 36 writes
+  each mode's `ks_p` and no verdict, so the report prints the `ks_p` and
+  the verdict `ks_p < 1 - level`, `ev_rec_validate`'s definition, the one
+  comparison the report makes], the contraction per axis on D_sim and on
+  each bank;
   the gate's sizes, k_gate, the size band and its mean, its check share
   with its interval, and per bank the flagged share per class and the
   wells in decreasing order of their share, with one line saying that a

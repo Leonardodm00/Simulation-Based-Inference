@@ -6,7 +6,7 @@ targets, and block 36; decisions D-162, D-163 (4), D-164).
     python3 hpc/pipeline/evaluation/ev_rec_validate.py \\
         --old <out_root of the synthetic evaluation> \\
         --new <out_root of the as-recorded evaluation> \\
-        [--nll-tol 0.002] [--coverage-tol 0.01]
+        [--nll-tol 0.002] [--coverage-tol 0.01] [--record FILE]
 
 Compares, for each ensemble, on D_sim: the NLL of every row, the expected
 coverage on the grid, the SBC verdicts and Holm rejections, TARP's two
@@ -19,12 +19,20 @@ reference mode is "ks_p < 1 - level", `level` the new tree's
 `<stem>_sim.json` level (block 20 writes no verdict for TARP); the SBC
 verdicts are the `verdict` and `holm_rejected` lists of the two files.
 
+--record FILE writes the verdict to FILE, pass or fail (RECORD_KEYS; a
+temporary name, then renamed): block 38's launcher tells a current
+validation from a stale one by its `metrics_index_sha256`, the digest of
+the new tree's metrics/METRICS.json read before anything is compared.
+The exit codes and the printed lines are the same with and without it.
+
 Reads JSON and NPZ files only (numpy); no other part of the pipeline.
 
 Pure ASCII, LF only.
 """
 
 import argparse
+import datetime
+import hashlib
 import json
 import math
 import os
@@ -36,6 +44,10 @@ EXIT_ARGS, EXIT_FAIL = 2, 3
 NLL_TOL = 0.002          # nats per row (D-163 (4))
 COVERAGE_TOL = 0.01      # on every point of the grid (D-163 (4))
 TARP_MODES = ("x", "random")
+RECORD_SCHEMA = "rec_eval_validation/1"
+# the keys of the file --record writes (block 36, the contract of wave C)
+RECORD_KEYS = ("schema", "old", "new", "ok", "n_ensembles", "failures", "nll_tol",
+               "coverage_tol", "metrics_index_sha256", "finished")
 
 
 def _read_json(path):
@@ -165,6 +177,36 @@ def validate(old_root, new_root, nll_tol=NLL_TOL, coverage_tol=COVERAGE_TOL):
     return len(both), failures
 
 
+def metrics_index_sha256(root):
+    """The sha256 of <root>/metrics/METRICS.json (hex), or None when that
+    file is absent."""
+    p = os.path.join(root, "metrics", "METRICS.json")
+    if not os.path.isfile(p):
+        return None
+    h = hashlib.sha256()
+    with open(p, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def write_record(path, old_root, new_root, n, failures, nll_tol, coverage_tol, digest):
+    """Writes the verdict's record (RECORD_KEYS) to `path`: a temporary name,
+    then renamed. `digest`: metrics_index_sha256(new_root), read before the
+    comparison."""
+    rec = {"schema": RECORD_SCHEMA, "old": os.path.abspath(old_root),
+           "new": os.path.abspath(new_root), "ok": not failures, "n_ensembles": int(n),
+           "failures": list(failures), "nll_tol": float(nll_tol),
+           "coverage_tol": float(coverage_tol), "metrics_index_sha256": digest,
+           "finished": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    with open(path + ".tmp", "w") as fh:
+        json.dump(rec, fh, indent=1, sort_keys=True)
+    os.replace(path + ".tmp", path)
+    return rec
+
+
 def main(argv=None):
     """The command line: 0 with the pass line, EXIT_ARGS, EXIT_FAIL."""
     ap = argparse.ArgumentParser(description=__doc__,
@@ -173,6 +215,8 @@ def main(argv=None):
     ap.add_argument("--new", required=True, help="the out_root of the as-recorded evaluation")
     ap.add_argument("--nll-tol", type=float, default=NLL_TOL, help="nats per row")
     ap.add_argument("--coverage-tol", type=float, default=COVERAGE_TOL)
+    ap.add_argument("--record", default=None,
+                    help="write the verdict to this file, pass or fail (block 38's launcher)")
     try:
         args = ap.parse_args(argv)
     except SystemExit as exc:
@@ -182,7 +226,11 @@ def main(argv=None):
         print("ARGS: %s" % ("not a directory: %s" % ", ".join(bad) if bad
                             else "the tolerances must be >= 0"), flush=True)
         return EXIT_ARGS
+    digest = metrics_index_sha256(args.new)        # before anything is compared
     n, failures = validate(args.old, args.new, args.nll_tol, args.coverage_tol)
+    if args.record:
+        write_record(args.record, args.old, args.new, n, failures, args.nll_tol,
+                     args.coverage_tol, digest)
     if failures:
         for f in failures:
             print("FAIL: %s" % f, flush=True)

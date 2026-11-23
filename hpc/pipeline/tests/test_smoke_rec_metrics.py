@@ -755,6 +755,34 @@ def test_r36e_validate():
     _edit_npz(os.path.join(new, "metrics", "A_A1_sim.npz"), "rows", lambda a: a[::-1])
     n, f = RV.validate(old, new)
     assert len(f) == 1 and "rows of D_sim differ" in f[0], f
+    # --record (the contract of wave C): the verdict's file, pass or fail, with the
+    # digest of the new tree's METRICS.json computed here with hashlib; the exit
+    # codes are those without it
+    import hashlib
+    for tag, want_rc, want_ok, n_fail in (("same", 0, True, 0), ("nll", RV.EXIT_FAIL, False, 1)):
+        new = os.path.join(root, tag)
+        rec_path = os.path.join(root, "records", "VALIDATION_%s.json" % tag)
+        assert RV.main(["--old", old, "--new", new, "--record", rec_path]) == want_rc
+        with open(rec_path) as fh:
+            rec = json.load(fh)
+        assert sorted(rec) == sorted(RV.RECORD_KEYS), sorted(rec)
+        assert rec["schema"] == "rec_eval_validation/1" and rec["ok"] is want_ok, rec
+        assert rec["n_ensembles"] == 2 and len(rec["failures"]) == n_fail, rec
+        assert rec["old"] == os.path.abspath(old) and rec["new"] == os.path.abspath(new)
+        assert rec["nll_tol"] == RV.NLL_TOL and rec["coverage_tol"] == RV.COVERAGE_TOL
+        with open(os.path.join(new, "metrics", "METRICS.json"), "rb") as fh:
+            assert rec["metrics_index_sha256"] == hashlib.sha256(fh.read()).hexdigest()
+        assert not os.path.exists(rec_path + ".tmp")
+    if n_fail:
+        assert rec["failures"][0].startswith("B:A2: nll row 7 "), rec["failures"]
+    # a new tree without its METRICS.json: a failure, the digest null
+    new = fresh("noindex")
+    os.remove(os.path.join(new, "metrics", "METRICS.json"))
+    rec_path = os.path.join(root, "records", "VALIDATION_noindex.json")
+    assert RV.main(["--old", old, "--new", new, "--record", rec_path]) == RV.EXIT_FAIL
+    with open(rec_path) as fh:
+        rec = json.load(fh)
+    assert rec["ok"] is False and rec["metrics_index_sha256"] is None, rec
     # the arguments
     assert RV.main(["--old", old]) == RV.EXIT_ARGS
     assert RV.main(["--old", old, "--new", os.path.join(root, "nope")]) == RV.EXIT_ARGS
