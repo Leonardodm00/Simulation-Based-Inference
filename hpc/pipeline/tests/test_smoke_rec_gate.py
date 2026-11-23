@@ -16,12 +16,13 @@ Checks
     test_r34e_power        the flagged share against the displacement
     test_r34f_roles        assign_roles: groups, caps, order, determinism, refusal
     test_r34g_edges        non-finite input refused; no test row
+    test_r34h_size_law     the size given the null set, Beta(10, 90), on p_member
 
 Run
     python3 hpc/pipeline/tests/test_smoke_rec_gate.py [check ...]
         Prints a PASS / FAIL / ERROR / TODO / SKIP table, then the full
         message of every failure. Exit 1 if any check failed, errored or
-        is still TODO. Needs numpy and scipy; about 10 s on 2 cores.
+        is still TODO. Needs numpy and scipy; about 25 s on 2 cores.
 
 Pure ASCII, LF only.
 """
@@ -250,16 +251,58 @@ def test_r34d_size():
     p = out["p"]
     lines = []
     ok = True
+    N_null = S["null"].shape[1]
     for a in (0.05, 0.1, 0.5):
         share = float(np.mean(p <= a))
-        sd = np.sqrt(a * (1 - a) / 4000.0)
-        # bounds of SPEC R34d: 3 binomial SDs of the 4,000 test points; the
-        # lower one 0.01 wider for the grain 1 / 501 and the ties of T
-        lo, hi = a - 3 * sd - 0.01, a + 3 * sd
+        # bounds of SPEC R34d (amended, D-165): given the null set the size is
+        # Beta(k_a, N_null + 1 - k_a) (R10), of mean k_a / (N_null + 1) and SD
+        # about sqrt(a (1 - a) / (N_null + 2)); the 4,000 test points add the
+        # binomial term a (1 - a) / 4000; 3 SDs of the sum. The lower bound is
+        # 0.01 wider for the ties of T (multiples of 1 / 2500), which count
+        # against the window in (R8) and make the gate more conservative
+        k_a = int(np.floor(a * (N_null + 1)))
+        s_a = np.sqrt(a * (1 - a) * (1.0 / 4000 + 1.0 / (N_null + 2)))
+        lo = k_a / (N_null + 1.0) - 3 * s_a - 0.01
+        hi = k_a / (N_null + 1.0) + 3 * s_a
         lines.append("a=%.2f share=%.4f bounds [%.4f, %.4f]" % (a, share, lo, hi))
         ok = ok and (lo <= share <= hi)
     print("  R34d: " + "; ".join(lines))
     assert ok, "\n".join(lines)
+
+
+def test_r34h_size_law():
+    """the size given the null set, (R10), on the member's own p-value (specs/SPEC.md block 34)."""
+    # The toy of R34d with M = 1; one reference set (800) and one rank set
+    # (500); 300 independent null sets of N_null = 99; one set of 2,000 test
+    # points shared by all null sets. For each null set, the share of test
+    # points with p_member <= 0.1, from ev_gate.gate itself.
+    # (R10): k = floor(0.1 x 100) = 10, the size given the null set is
+    # Beta(10, 90), mean 0.1, SD sqrt(10 x 90 / (100^2 x 101)) = 0.0299.
+    # Tolerance of the mean, 0.026: 3 x 0.0299 / sqrt(300) = 0.0052 for the
+    # 300 null sets, plus 3 sqrt(0.1 x 0.9 / 2000) = 0.020 for the one set of
+    # test points, whose binomial error shifts every share alike.
+    # Tolerance of the SD, 20 %: the relative standard error of an SD over
+    # 300 sets is about 1 / sqrt(2 x 299) = 4 % (more with the Beta's mild
+    # excess kurtosis); the shared test points move the mean, not the spread
+    # (their own binomial term within a share is sqrt(q (1 - q) / 2000) per
+    # set, small against 0.0299). t_m is continuous: no ties.
+    rng = _rng(8)
+    Q = special_ortho_group.rvs(16, random_state=rng)[None]
+    z_ref = _toy(rng, 800, Q)[0]
+    z_rank = _toy(rng, 500, Q)[0]
+    z_test = _toy(rng, 2000, Q)[0]
+    shares = np.empty(300)
+    for b in range(300):
+        z_null = _toy(rng, 99, Q)[0]
+        pm = ev_gate.gate(z_ref, z_rank, z_null, z_test, FACTORS)["p_member"][0]
+        shares[b] = np.mean(pm <= 0.1)
+    sd_beta = np.sqrt(10.0 * 90.0 / (100.0 ** 2 * 101.0))
+    mean, sd = float(shares.mean()), float(shares.std(ddof=1))
+    msg = ("mean of 300 shares %.4f (want 0.1 +- 0.026); SD %.4f (want %.4f +- 20 %%, "
+           "ratio %.3f)" % (mean, sd, sd_beta, sd / sd_beta))
+    print("  R34h: " + msg)
+    assert abs(mean - 0.1) <= 0.026, msg
+    assert abs(sd / sd_beta - 1.0) <= 0.20, msg
 
 
 def test_r34e_power():
@@ -418,7 +461,7 @@ def test_r34g_edges():
     assert t0.shape == (0,) and t0.dtype == np.float64
 
 
-CHECKS = [("test_r34a_reference", test_r34a_reference), ("test_r34b_by_hand", test_r34b_by_hand), ("test_r34c_null_as_test", test_r34c_null_as_test), ("test_r34d_size", test_r34d_size), ("test_r34e_power", test_r34e_power), ("test_r34f_roles", test_r34f_roles), ("test_r34g_edges", test_r34g_edges)]
+CHECKS = [("test_r34a_reference", test_r34a_reference), ("test_r34b_by_hand", test_r34b_by_hand), ("test_r34c_null_as_test", test_r34c_null_as_test), ("test_r34d_size", test_r34d_size), ("test_r34e_power", test_r34e_power), ("test_r34f_roles", test_r34f_roles), ("test_r34g_edges", test_r34g_edges), ("test_r34h_size_law", test_r34h_size_law)]
 
 
 def main():
