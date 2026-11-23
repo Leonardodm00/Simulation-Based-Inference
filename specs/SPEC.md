@@ -6141,8 +6141,8 @@ plan; Confirmed: yes 2026-11-17]
     `ev_rec_data.recording(view, name) -> dict` with `x` (n, W) float32,
     `cls`, `donor`, `well`, `batch`, `subregion`, `window_idx`, `rep_group`
     (n,) int64, `contaminated` (n,) bool, `sidecar`, `paths`;
-    `ev_rec_data.axes_of(sidecar) -> (names, bounds)`: `names` a list of p
-    strings, `bounds` a (p, 2) float64 array or None.
+    `ev_rec_data.axes_of(sidecar, p) -> (names, bounds)`: `names` a list of
+    p strings, `bounds` a (p, 2) float64 array or None.
   - `rec_fixture.fixture() -> dict` (built once per process; `REC_FIXTURE`
     reuses a tree built before, `REC_KEEP=1` keeps the one it builds).
 - Rule (sec. 2.6, "The view of a project" and "The data sets"):
@@ -6241,8 +6241,8 @@ plan; Confirmed: yes 2026-11-17]
     `theta` key, `rep_group` -1; on the as-recorded view the same keys and
     no `theta`; a bank of arm S refused; `axes_of` on the simulated bank's
     sidecar and on a sidecar without names.
-- Confirmed: D-159, D-162, D-163 for the rule; the configuration's values
-  marked Claude's are open (sec. 8, Q-R2, Q-R5).
+- Confirmed: yes 2026-11-23 (D-159, D-162, D-163; the configuration's
+  values that were Claude's, D-164).
 - Status: drafted 2026-11-23.
 
 ### Block 34: the gate (added 2026-11-23; D-161, D-163 (4); roadmap tool, step S2, wave 1)
@@ -6336,9 +6336,8 @@ plan; Confirmed: yes 2026-11-17]
   the null rows ranked against themselves in place of the rank rows; `>`
   for `>=` in (R8); the missing +1; the bandwidths from the reference and
   the test points pooled; the rank and null groups sharing networks.
-- Confirmed: D-161, D-163 (4) for the statistic, the sets' disjointness,
-  the reference's cap and the kernel; the dealing of the networks and the
-  other caps are Claude's (sec. 8, Q-R2).
+- Confirmed: yes 2026-11-23 (D-161, D-163 (4); the dealing of the
+  networks and the other caps, D-164).
 - Status: drafted 2026-11-23.
 
 ### Block 35: the sampler on a recorded project (added 2026-11-23; D-159, D-160, D-162, D-163; roadmap tool, step S2, wave 1)
@@ -6440,7 +6439,7 @@ plan; Confirmed: yes 2026-11-17]
   unsorted; the gate's
   roles from the calibration rows alone; a `theta` key written to a
   recording's file.
-- Confirmed: D-159, D-160, D-162, D-163.
+- Confirmed: yes 2026-11-23 (D-159, D-160, D-162, D-163).
 - Status: drafted 2026-11-23.
 
 ### Block 36: the quantities of a recorded project and the validation tool (added 2026-11-23; D-160..D-163; roadmap tool, step S2, wave 1)
@@ -6597,8 +6596,8 @@ plan; Confirmed: yes 2026-11-17]
   split over the draw rows in place of S_cal; the pooled draws weighted by
   window length in place of equally; the well's SD divided by sqrt(n_g);
   the gate's reference taken from the null rows; `axes` ignored.
-- Confirmed: D-160..D-163 for the rule; the example well and the SBC and
-  TARP criterion of the validation are Claude's (sec. 8, Q-R3, Q-R4).
+- Confirmed: yes 2026-11-23 (D-160..D-163; the example well and the SBC
+  and TARP criterion of the validation, D-164).
 - Status: drafted 2026-11-23.
 
 ### Block 37: the figures and the report of a recorded project (added 2026-11-23; D-159, D-160; roadmap tool, step S2, wave 1)
@@ -6669,8 +6668,9 @@ plan; Confirmed: yes 2026-11-17]
     many figures as `FIGURES.md` lists; no metrics refused (exit 3).
   Mutations: the gate's figures dropped; a quantile computed in the
   figures; a table reading a sample file in place of the metrics.
-- Confirmed: D-159, D-160 for the report's wording; the list of figures is
-  Claude's proposal.
+- Confirmed: yes 2026-11-23 (D-159, D-160 for the report's wording; the
+  plan of the wave, D-164). The list of figures is Claude's and can change
+  with the user's reading of the first report.
 - Status: drafted 2026-11-23.
 
 ### Block 38: the jobs and the run sheet of a recorded project's evaluation (added 2026-11-23; D-159, D-162; roadmap tool, step S2, wave 1)
@@ -6742,7 +6742,7 @@ plan; Confirmed: yes 2026-11-17]
   Mutations: the report not after the samplings; the sampling's values
   ignored in the staleness test; the validation submitted for a recorded
   view; live jobs ignored.
-- Confirmed: D-159, D-162; the resources are Claude's (sec. 8, Q-R5).
+- Confirmed: yes 2026-11-23 (D-159, D-162; the resources, D-164).
 - Status: drafted 2026-11-23.
 
 ## 6. Pipeline entry points
@@ -6808,24 +6808,26 @@ generator it tests (`bench_burst_generator.py`).
   ensemble statistic), D-162 (the validation target), D-163 (the draw rows,
   no L-C2ST, the comparisons, n_post, the edge width, the gate's reference
   and the disjoint sets, the threshold as a value of the configuration, the
-  tolerances). Still open, Claude's proposals in brackets:
+  tolerances), D-164 (the build plan; Q-R2..Q-R5 confirmed as proposed,
+  2026-11-23). Q-R1 and Q-R6 are still open; Claude's proposals in
+  brackets:
   - Q-R1 how the share of flagged windows of a well, of a class or of a
     bank is read, the windows of a well sharing a culture [no test in wave
     1: the share is reported beside alpha_gate; D-161 leaves it open];
-  - Q-R2 the gate's values the user did not fix: the proportions in which
+  - [closed 2026-11-23 by D-164: confirmed as proposed] Q-R2 the gate's values the user did not fix: the proportions in which
     the networks are dealt, (0.4, 0.25, 0.25, 0.1) for the reference, the
     rank, the null and the check rows; the caps of the rank and null sets,
     1,000 each; one row per network in the rank, null and check sets; the
     smallest null set accepted, 50 rows [values of the configuration, so
     changing one changes no code];
-  - Q-R3 how SBC and TARP are compared on the cluster in the validation
+  - [closed 2026-11-23 by D-164: confirmed as proposed] Q-R3 how SBC and TARP are compared on the cluster in the validation
     [each axis's verdict, the Holm family's rejections and TARP's two
     verdicts unchanged; the user fixed the NLL's and the coverage's
     tolerances only];
-  - Q-R4 the example well of each class in the figures [the well whose mean
+  - [closed 2026-11-23 by D-164: confirmed as proposed] Q-R4 the example well of each class in the figures [the well whose mean
     T over its windows is the median over the class's wells: an ordinary
     well for the gate, chosen without looking at the posteriors];
-  - Q-R5 the jobs' resources [sample 8 cores, 64gb, 24 h; report 8 cores,
+  - [closed 2026-11-23 by D-164: confirmed as proposed] Q-R5 the jobs' resources [sample 8 cores, 64gb, 24 h; report 8 cores,
     64gb, 24 h: block 22's];
   - Q-R6 the predictive check on recordings, wave 2 [not specified: the
     contract "a simulation at a given theta, re-detected as the bank's
