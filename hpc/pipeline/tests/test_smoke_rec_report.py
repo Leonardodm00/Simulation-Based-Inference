@@ -642,13 +642,14 @@ def _check_complete(cfg, ecfg_path, rec, lines):
     assert disk["comparisons"] == [c["name"] for c in idx["comparisons"]]
     listed = [l for l in open(disk["figures_index"]).read().splitlines() if l.startswith("- `")]
     assert disk["n_figures"] == len(listed) > 0, (disk["n_figures"], len(listed))
+    # the three files' paths, each under its own key (block 37, "the keys")
     for k in ("report", "metrics_index", "figures_index"):
-        assert os.path.isfile(disk["report"][k]), disk["report"]
-    assert disk["report"]["report"] == os.path.join(ecfg.out_root, RR.REPORT_MD)
+        assert isinstance(disk[k], str) and os.path.isfile(disk[k]), (k, disk[k])
+    assert disk["report"] == os.path.join(ecfg.out_root, RR.REPORT_MD)
     assert sorted(disk["seconds"]) == ["figures", "metrics", "report"]
     # written last
     t_last = os.path.getmtime(path)
-    for p_ in (disk["report"]["report"], disk["metrics_index"], disk["figures_index"]):
+    for p_ in (disk["report"], disk["metrics_index"], disk["figures_index"]):
         assert os.path.getmtime(p_) <= t_last, p_
     return disk
 

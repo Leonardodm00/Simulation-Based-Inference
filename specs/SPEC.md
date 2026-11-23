@@ -6985,7 +6985,41 @@ plan; Confirmed: yes 2026-11-17]
 - Confirmed: yes 2026-11-23 (D-159, D-160 for the report's wording; the
   plan of the wave, D-164). The list of figures is Claude's and can change
   with the user's reading of the first report.
-- Status: drafted 2026-11-23.
+- Status: smoke-tested 2026-11-23 (4 of 4 checks, `test_smoke_rec_report.py`;
+  the three mutations each caught: the gate's figures dropped by R37a; a
+  quantile computed in the figures by R37b; a table reading a sample file
+  by R37c, whose run without the samples and the `.npz` files also catches
+  the variant that keeps the JSON key in the table's comment). Measured on
+  the fixture: the recorded-kind project 37 figures, the as-recorded one
+  62 (png and pdf); the report 2,597 numbers in 41 tables and 5,105 in 74,
+  each equal to the JSON value it names at the printed precision; the
+  scale check draws the per-bank figures for 14 axes, 300 wells in 4
+  classes and 10 members.
+- Build notes (2026-11-23, plumbing; none changes the science):
+  - every table of `REC_REPORT.md` is preceded by an HTML comment `<!--
+    cells {...} -->` that names, cell by cell, the metrics' JSON file and
+    key the printed value was read from (R37c parses it); the three
+    derived cells are TARP's verdict (`ks_p < 1 - level`), the names of
+    the axes SBC rejects, and block 20's verdict line of a paired file;
+  - "no title inside the image" is read as no figure title (suptitle);
+    panel titles stay;
+  - `cal_sbc_hist`, `acc_recovery`, `acc_zscore` are block 21's functions
+    on D_sim, `cmp_nll`, `cmp_forest` and `across/dbar` block 28's, with
+    "donor" relabelled "simulated network"; `cal_sbc_ecdf` and `cal_tarp`
+    are redrawn here so that a null `ks_p` does not stop the figure;
+  - a class's hue and marker are block 21's three, by the class id modulo
+    3: more than three classes repeat them (a palette of more classes is
+    the user's call when a project has them);
+  - the wells' mixtures are printed and drawn in the unit box, each axis's
+    declared range beside its name; no value is mapped to the declared
+    coordinate (the metrics do not hold it);
+  - `gate_null` draws the distributions of T without a threshold line
+    (the k_gate-th largest null value is not in the metrics); the windows
+    flagged by the gate are marked in `gate_windows` and `gate_members`
+    from `gate_flag`;
+  - `REC_REPORT_COMPLETE.json`'s `report` is the path of `REC_REPORT.md`
+    (the block wrote a dict of the three paths; corrected by the
+    orchestrator at the gate, with R37d).
 
 ### Block 38: the jobs and the run sheet of a recorded project's evaluation (added 2026-11-23; D-159, D-162; roadmap tool, step S2, wave 1)
 
@@ -7110,7 +7144,31 @@ plan; Confirmed: yes 2026-11-17]
   ignored in the staleness test; the validation submitted for a recorded
   view; live jobs ignored.
 - Confirmed: yes 2026-11-23 (D-159, D-162; the resources, D-164).
-- Status: drafted 2026-11-23.
+- Status: smoke-tested 2026-11-23 (4 of 4 checks, `test_smoke_rec_jobs.py`,
+  on the merged tree with the real programs: R38b, three samplings, the
+  report after them and the validation after the report through the fake
+  PBS, every exit 0, `REC VALIDATION OK: 3 ensemble(s)` -- D-162's two
+  targets end to end through the jobs, in the sandbox; R38c, two samplings
+  and the report, no validation unit. The four mutations each caught: the
+  report not after the samplings by R38a, R38b and R38c; the sampling's
+  values ignored by R38b; the validation for a recorded view by R38c; live
+  jobs ignored by R38b; and, for the gate's rule, the validation not after
+  a report of the same run by R38b).
+- Build notes (2026-11-23, plumbing; none changes the science):
+  - `er_s<i>`: i is the ensemble's position among the view's complete
+    ensembles, in the configuration's order;
+  - a validation record whose `metrics/METRICS.json` is absent is stale;
+    `old` is compared with `validate_against` as absolute paths;
+  - `--what validate` without `report` reads the report's state and its
+    live job to place the validation, and never submits the report;
+  - `--resample` without `sample` in `--what` is ignored (block 22's);
+  - R38a's resources and `ROADMAP_STAGE` per unit are checked on a second
+    dry run, the committed `synth_rec_eval.json`'s values on the fixture's
+    as-recorded project, the committed `synth.json` having no complete
+    best fit in the sandbox;
+  - the run sheets pull the branch `sci/tool`, where blocks 33-38 are
+    (a fast-forward of `sci/pipeline`); which branch the cluster's
+    checkout follows is the user's call.
 
 ## 6. Pipeline entry points
 

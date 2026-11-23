@@ -498,7 +498,7 @@ def run(cfg_path, ecfg_path, ncpus=None, log=print):
            "comparisons": [c["name"] for c in idx["comparisons"]], "n_figures": len(figs),
            "pass_lines": [pass_line("REC METRICS OK"), pass_line("REC FIGURES OK"), own],
            "metrics_index": mpath, "figures_index": fpath,
-           "report": {"report": md, "metrics_index": mpath, "figures_index": fpath},
+           "report": md,
            "seconds": {"metrics": round(t1 - t0, 1), "figures": round(t2 - t1, 1),
                        "report": round(t3 - t2, 1)},
            "finished": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
