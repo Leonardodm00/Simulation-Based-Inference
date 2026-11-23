@@ -1,0 +1,84 @@
+# Roadmap of the subproject tool. Source of truth for the stages and the
+# theory statuses; the implementation statuses are computed by
+# specs/roadmap/roadmap.py (never written by hand).
+#
+# Created 2026-11-23 from the user's plan (decision D-157): one
+# implementation step S<k> per plan step (a group; its blocks are added while
+# the step is carried out, with `roadmap.py add block`). No theory group for
+# now (the user's answer of 2026-11-23): one is added, with `roadmap.py add
+# step --theory-summary` or by hand, only when the user names what has to be
+# understood. The pipeline's own SPEC blocks 1-32 belong to the roadmap
+# `synth` on `sci/pipeline` and are not stages here.
+schema: 1
+name: tool
+title: "The tool: the engine, the model bundle and its card, the viewer (D-157)"
+repo: Leonardodm00/Simulation-Based-Inference
+branch: sci/tool
+spec: specs/SPEC.md
+hpc_branch: hpc-status
+stale_after_hours: 48      # a running HPC marker older than this is reported as failing
+
+theory: []
+
+implementation:
+  # ---- steps of the plan (groups; blocks are added under them as they are written)
+  - id: S1
+    title: "Contracts and design"
+    summary: "The tool's specification: the model bundle, and four plug-in contracts (the bank format a simulator writes, the recording adapter, the simulator at a given theta, the scheduler)."
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+  - id: S2
+    title: "Evaluation for recordings"
+    summary: "For any recorded project: the posteriors on the real windows; the calibration on its held-out simulations, with contraction and the edge rows apart; the per-window gate; the predictive check through the project's own simulator, per member; the report and its figures. Built in two waves: everything but the predictive check first."
+    depends_on: [S1]
+    needs_theory: []
+    needs_hpc: true
+  - id: S3
+    title: "The model bundle and its card"
+    summary: "A trained ensemble as one self-contained, safely loadable package (weights, architecture, prior box with axis names and units, extraction parameters, held-out evaluation, reference embeddings) and its card: a predefined file the author fills, checked by a validator."
+    depends_on: [S1, S2]
+    needs_theory: []
+    needs_hpc: false
+  - id: S4
+    title: "Recordings and the MEA device"
+    summary: "Recording adapters, the device layout, and the extraction configuration turned into subregions and windows, runnable on a laptop."
+    depends_on: [S1]
+    needs_theory: []
+    needs_hpc: false
+  - id: S5
+    title: "The engine on any cluster"
+    summary: "The non-GUI command line; one scheduler interface with several back ends; a setup probe that finds the scheduler, the queues and the environment tools, runs a test job and writes a site profile the user can edit."
+    depends_on: [S1]
+    needs_theory: []
+    needs_hpc: true
+  - id: S6
+    title: "The viewer (GUI)"
+    summary: "Load a bundle and recordings, get posteriors with the three checks. Views: the device with its electrodes and the chosen subregions, traces and windows, posteriors, checks, wells and conditions compared."
+    depends_on: [S3, S4]
+    needs_theory: []
+    needs_hpc: false
+  - id: S7
+    title: "Layers of use"
+    summary: "Guided, standard and expert modes; plain and formal explanations inside the interface; presets, a glossary, tutorials, an example data set and an example bundle."
+    depends_on: [S6]
+    needs_theory: []
+    needs_hpc: false
+  - id: S8
+    title: "Community hub"
+    summary: "Where bundles are shared: submission with the mandatory card, automatic validation, versions, licence and citation; browsing from the viewer."
+    depends_on: [S3]
+    needs_theory: []
+    needs_hpc: false
+  - id: S9
+    title: "Test on LindDUP"
+    summary: "The whole chain end to end on LindDUP's best fits (evaluation, bundle, viewer): LindDUP is the test of the tool, not its design target."
+    depends_on: [S2, S3, S5, S6]
+    needs_theory: []
+    needs_hpc: true
+  - id: S10
+    title: Release
+    summary: "Installable packages, a licence, continuous integration, the documentation and the final audit."
+    depends_on: [S7, S8, S9]
+    needs_theory: []
+    needs_hpc: false
