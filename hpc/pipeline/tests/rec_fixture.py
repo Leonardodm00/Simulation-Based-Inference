@@ -26,7 +26,9 @@ What is built, in `root`:
     rec_eval_as.json         as_recorded true, the synthetic evaluation's
                              seed, n_post, batch_rows and oracle_tol,
                              sim_draw_rows_per_donor null, gate.n_null_min
-                             1, validate_against the synthetic out_root
+                             1 and gate.alpha 0.5 (amendment 2, D-165: the
+                             null set has 2 rows, so k_gate = 1),
+                             validate_against the synthetic out_root
     synth_rec.json           the committed linddup.json with `dataset`,
                              `paths` and `searches` replaced: dataset synth,
                              the synthetic project's roots, the searches
@@ -34,11 +36,13 @@ What is built, in `root`:
     banks_root/synth_real/   its recording bank: cohort R0's shards with
                              theta of zero columns and a sidecar of arm R
     rec_eval.json            as_recorded false, sim_draw_rows_per_donor 1,
-                             gate.n_null_min 1
+                             gate.n_null_min 1, gate.alpha 0.5
 
 Each step is skipped when its outputs exist, so a tree given by
 REC_FIXTURE=<dir> is completed rather than rebuilt (it must hold a
-synth.json with n_theta 160). REC_KEEP=1 keeps the tree this process builds
+synth.json with n_theta 160); the three configuration files the fixture
+writes (rec_eval_as.json, synth_rec.json, rec_eval.json) are rewritten
+when their JSON content is not the one it writes now (amendment 2). REC_KEEP=1 keeps the tree this process builds
 and prints where. Needs the training environment (torch, sbi, zuko,
 scikit-optimize); `need_training_env()` raises unittest.SkipTest without
 it. Not pipeline code: a test fixture.
@@ -172,7 +176,7 @@ def rec_eval_dict(out_root, **over):
          "edge_eps": 0.006693,
          "gate": {"donor_fracs": [0.4, 0.25, 0.25, 0.1], "n_ref": 800, "n_rank": 1000,
                   "n_null": 1000, "n_null_min": 1, "rows_per_donor": 1,
-                  "factors": [0.25, 0.5, 1, 2, 4], "alpha": 0.05},
+                  "factors": [0.25, 0.5, 1, 2, 4], "alpha": 0.5},
          "bootstrap_n": 200, "level": 0.95, "dpi": 60, "formats": ["png"], "ncpus": 2,
          "validate_against": None,
          "jobs": {"queue": "test",
@@ -186,24 +190,33 @@ def rec_eval_dict(out_root, **over):
     return d
 
 
+def _write_if_changed(path, obj):
+    """Writes `obj` unless the file holds that JSON content already
+    (amendment 2: a reused tree's configuration of other values is
+    rewritten)."""
+    if os.path.isfile(path):
+        try:
+            if _read_json(path) == obj:
+                return path
+        except ValueError:
+            pass
+    _write_json(path, obj)
+    return path
+
+
 def _ecfg_as(root, ecfg_old):
     """rec_eval_as.json: the synthetic project read as recorded (D-162)."""
-    path = os.path.join(root, "rec_eval_as.json")
-    if not os.path.isfile(path):
-        old = _read_json(ecfg_old)
-        _write_json(path, rec_eval_dict(
-            os.path.join(root, "rec_eval_as_out"), seed=old["seed"], n_post=old["n_post"],
-            batch_rows=old["batch_rows"], oracle_tol=old["oracle_tol"], as_recorded=True,
-            sim_draw_rows_per_donor=None, validate_against=old["out_root"]))
-    return path
+    old = _read_json(ecfg_old)
+    return _write_if_changed(os.path.join(root, "rec_eval_as.json"), rec_eval_dict(
+        os.path.join(root, "rec_eval_as_out"), seed=old["seed"], n_post=old["n_post"],
+        batch_rows=old["batch_rows"], oracle_tol=old["oracle_tol"], as_recorded=True,
+        sim_draw_rows_per_donor=None, validate_against=old["out_root"]))
 
 
 def _cfg_rec(root, cfg):
     """synth_rec.json: the committed linddup.json with its dataset, paths
     and searches replaced by the synthetic project's."""
     path = os.path.join(root, "synth_rec.json")
-    if os.path.isfile(path):
-        return path
     syn = _read_json(cfg)
     d = _read_json(LINDDUP)
     d["dataset"] = syn["dataset"]
@@ -213,8 +226,7 @@ def _cfg_rec(root, cfg):
     d["paths"] = paths
     d["searches"] = [{"name": q["name"], "campaign": q["campaign"], "max_cores": None}
                      for q in syn["synthetic"]["searches"]]
-    _write_json(path, d)
-    return path
+    return _write_if_changed(path, d)
 
 
 def _real_bank(cfg):
@@ -251,11 +263,8 @@ def _real_bank(cfg):
 
 
 def _ecfg_rec(root):
-    path = os.path.join(root, "rec_eval.json")
-    if not os.path.isfile(path):
-        _write_json(path, rec_eval_dict(os.path.join(root, "rec_eval_out"), as_recorded=False,
-                                        sim_draw_rows_per_donor=1))
-    return path
+    return _write_if_changed(os.path.join(root, "rec_eval.json"), rec_eval_dict(
+        os.path.join(root, "rec_eval_out"), as_recorded=False, sim_draw_rows_per_donor=1))
 
 
 # ------------------------------------------------------------- fixture ---
