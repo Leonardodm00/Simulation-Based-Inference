@@ -6552,7 +6552,34 @@ plan; Confirmed: yes 2026-11-17]
   roles from the calibration rows alone; a `theta` key written to a
   recording's file.
 - Confirmed: yes 2026-11-23 (D-159, D-160, D-162, D-163).
-- Status: drafted 2026-11-23.
+- Status: smoke-tested 2026-11-23 (5 of 5 checks, `test_smoke_rec_sample.py`; the five
+  mutations each caught: the seed without its `+ k` by R35a and R35b; the
+  members in another order by R35a and R35b, or refused by the oracle;
+  `draw_idx` unsorted by R35a, R35b and R35c; the roles from the
+  calibration rows alone by R35b; a `theta` key by R35b and R35c).
+  Measured on the fixture: as recorded, `draws` bit for bit and every
+  other array of R35a equal to block 19's (largest difference 0); with
+  k_draw = 1, `logq_ref_members` within 1.1e-5 nats and `z` within 2.7e-7
+  (scale 0.78) of the as-recorded run's; the mixture at the draws within
+  9e-6 nats of the members' in float64.
+- Build notes (2026-11-23, plumbing; none changes the science):
+  - a gate group that receives no network (`ev_gate.assign_roles` raises
+    ValueError) is a refusal, exit 3, nothing written;
+  - `gate.networks` in `<stem>_sample.json` is the list (reference, rank,
+    null, check) of the numbers of networks DEALT to the groups (block
+    34's rule: floor(f G + 1e-9) for the first three, the rest to the
+    fourth); the number of networks that received a row is smaller only
+    where a cap (`n_ref`, `n_rank`, `n_null`) binds;
+  - `oracle_max_abs_nats`, `oracle_mean_abs_nats`: lists in member order,
+    the mean of the absolute differences; the oracle runs on every row of
+    D_sim, so a row outside the open box refuses, as in block 19;
+  - an error of the project's configuration (`config.ConfigError`) exits
+    3 like a refusal;
+  - `members` holds `ev_models.rebuild`'s whole info dict; `sim_bank` is
+    the list of the simulated bank's shard paths, `bank_globs` maps each
+    recording bank's name to its glob;
+  - the rows of D_sim that are not draw rows are read one shard of the
+    bank at a time.
 
 ### Block 36: the quantities of a recorded project and the validation tool (added 2026-11-23; D-160..D-163; roadmap tool, step S2, wave 1)
 
