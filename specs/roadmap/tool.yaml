@@ -82,3 +82,57 @@ implementation:
     depends_on: [S7, S8, S9]
     needs_theory: []
     needs_hpc: false
+  - id: I33
+    title: "the view of a recorded project, its data and the evaluation's configuration"
+    summary: "Reads any recorded project as its ensembles, its simulated bank and its recording bank (and a synthetic project as if it were recorded, for the validation); the held-out rows, the draw rows, a recording bank's windows with their ids and no parameter; the evaluation's configuration; the tests' fixture (drafted)."
+    block: 33
+    parent: S2
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I34
+    title: "the gate"
+    summary: "Per window: each member's distance of its embedding to reference simulated embeddings, ranked against held-out simulated windows; the ranks averaged over the members into one statistic, with its p-value from a third set of held-out simulated networks (D-161) (drafted)."
+    block: 34
+    parent: S2
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I35
+    title: "the sampler on a recorded project"
+    summary: "One cluster job per ensemble: the members rebuilt and checked against their own per-row NLL; on the held-out simulations the NLL on every row and the draws on the draw rows; on the recordings the draws and their densities; the embeddings and the gate's roles; saved as .npz (drafted)."
+    block: 35
+    parent: S2
+    depends_on: [I33, I34]
+    needs_theory: []
+    needs_hpc: true
+    jobs: ["hpc/pipeline/evaluation/jobs/eval_run.pbs"]
+  - id: I36
+    title: "the quantities of a recorded project and the validation tool"
+    summary: "NLL, expected coverage, SBC, TARP, recovery and contraction on the held-out simulations, with the edge rows apart; per recorded window the posterior's summaries and contraction; per well the mixture over its windows; the gate's p-values and flagged shares; the arms compared on the simulations; and the tool that checks the new path against the synthetic evaluation (drafted)."
+    block: 36
+    parent: S2
+    depends_on: [I34, I35]
+    needs_theory: []
+    needs_hpc: true
+    jobs: ["hpc/pipeline/evaluation/jobs/eval_run.pbs"]
+  - id: I37
+    title: "the figures and the report of a recorded project"
+    summary: "The figures per ensemble, recording bank and comparison, drawn from the metrics alone, and one report of tables that states numbers and draws no conclusion (drafted)."
+    block: 37
+    parent: S2
+    depends_on: [I36]
+    needs_theory: []
+    needs_hpc: true
+    jobs: ["hpc/pipeline/evaluation/jobs/eval_run.pbs"]
+  - id: I38
+    title: "the jobs and the run sheet of a recorded project's evaluation"
+    summary: "The launcher: one sampling job per ensemble, the report after them, and for the synthetic project read as recorded the validation after the report; the run sheets (drafted)."
+    block: 38
+    parent: S2
+    depends_on: [I35, I36, I37]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
