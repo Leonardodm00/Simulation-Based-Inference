@@ -6997,7 +6997,15 @@ plan; Confirmed: yes 2026-11-17]
   validation on davinci: `as_recorded` true, `sim_draw_rows_per_donor`
   null, `seed`, `n_post`, `batch_rows` and `oracle_tol` those of
   `synth_eval.json`, `validate_against` its `out_root`, an `out_root` of
-  its own beside it), the README's run sheets "the evaluation of a recorded
+  its own beside it) [2026-11-23, wave C's contract, its other values:
+  `out_root` `/davinci-1/home/ldellamea/runs/synth/evaluation_rec`;
+  `edge_eps` and the `gate` those of block 33's list (0.006693; [0.4,
+  0.25, 0.25, 0.1], 800, 1000, 1000, 50, 1, [0.25, 0.5, 1, 2, 4], 0.05);
+  `bootstrap_n`, `level`, `dpi`, `formats`, `ncpus` those of
+  `synth_eval.json`; `jobs`: its queue (`intel`, D-137), `sample` and
+  `report` 8 cores, 64gb, 24 h (Q-R5), `validate` 1 core, 8gb, 1 h
+  (Claude's: it reads two trees of JSON and NPZ files)], the README's
+  (`hpc/pipeline/README.md`) run sheets "the evaluation of a recorded
   project" and "synth: the validation of the recorded path (D-162)",
   `hpc/pipeline/tests/test_smoke_rec_jobs.py` (new; checks R38*). The job
   script is block 22's `jobs/eval_run.pbs`, unchanged.
