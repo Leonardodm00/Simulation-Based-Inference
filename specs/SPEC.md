@@ -6234,7 +6234,12 @@ plan; Confirmed: yes 2026-11-17]
   samples and metrics of it (blocks 19-20, with their calibration bank);
   (3) `rec_eval_as.json`, the as-recorded configuration with the synthetic
   evaluation's `seed`, `n_post`, `batch_rows`, `sim_draw_rows_per_donor`
-  null and `gate.n_null_min` 1; (4) a recorded-kind project on the same
+  null and `gate.n_null_min` 1; [amended 2026-11-23, contract amendment 2,
+  after D-165: both of the fixture's configurations have `gate.n_null_min`
+  1 and `gate.alpha` 0.5 -- with 8 report networks the null set has 2 rows,
+  and k_gate (R9) is 0 at alpha 0.05, a refusal, and 1 at 0.5; a
+  configuration file of a reused tree whose content is not the one the
+  fixture writes is rewritten] (4) a recorded-kind project on the same
   runs: a configuration made from the committed `linddup.json` with its
   `dataset`, `paths` and `searches` replaced (the synthetic project's
   dataset, roots and its two searches as recorded searches), and its
@@ -6273,9 +6278,32 @@ plan; Confirmed: yes 2026-11-17]
     `theta` key, `rep_group` -1; on the as-recorded view the same keys and
     no `theta`; a bank of arm S refused; `axes_of` on the simulated bank's
     sidecar and on a sidecar without names.
+- Build notes (2026-11-23, accepted at the gate; none changes the rule):
+  a number of the configuration is accepted as an int or a float, a bool
+  never; the fixture's values the entry did not state are seed 4242,
+  `n_post` 40, `batch_rows` 16, `bootstrap_n` 200, dpi 60, formats png,
+  queue `test`, `oracle_tol` the synthetic evaluation's (1e-4) as recorded
+  and 2e-3 for the recorded kind, the `out_root`s `<root>/rec_eval_as_out`
+  and `<root>/rec_eval_out`, `validate_against` the synthetic evaluation's
+  `out_root` in `rec_eval_as.json`; the recorded configuration is
+  `<root>/synth_rec.json`, its searches S-A1 (S-A1) and S-A2-R0 (S-A2) with
+  `max_cores` null; the recorded bank keeps cohort R0's sidecar but for
+  `param_names` [], `bounds_theta` [] and arm R; a tree given by
+  `REC_FIXTURE` is completed, not rebuilt, and one whose `n_theta` is not
+  160 is refused; in a recorded view a search of a campaign that nests A1
+  takes its own ensemble as its A1 reference only when that ensemble is of
+  arm A1, and the S-A1 search's otherwise (sec. 2.6); the test's runner
+  calls `rec_fixture.cleanup()`.
 - Confirmed: yes 2026-11-23 (D-159, D-162, D-163; the configuration's
   values that were Claude's, D-164).
-- Status: drafted 2026-11-23.
+- Status: smoke-tested 2026-11-23 (`test_smoke_rec_plan.py` R33a-f: 6 of 6
+  pass `[SANDBOX]`, 86 s with the fixture built from scratch -- the reduced
+  project to PIPELINE DONE in 76 s, 8 networks and 16 rows in its report
+  split --, 3 s on a kept tree; `ev_rec_config` and `ev_rec_plan` import
+  with numpy, torch and scipy blocked; five mutations -- `draw_rows` with k
+  + 1, the comparisons reversed, a `theta` key in `recording`, the split
+  not checked, the fractions' tolerance 0.2 -- each caught). Read against
+  this entry by the orchestrator and merged at `df02780`.
 
 ### Block 34: the gate (added 2026-11-23; D-161, D-163 (4); roadmap tool, step S2, wave 1)
 
@@ -6403,7 +6431,15 @@ plan; Confirmed: yes 2026-11-17]
   the test points pooled; the rank and null groups sharing networks.
 - Confirmed: yes 2026-11-23 (D-161, D-163 (4); the dealing of the
   networks and the other caps, D-164).
-- Status: drafted 2026-11-23.
+- Status: smoke-tested 2026-11-23 (`test_smoke_rec_gate.py` R34a-h: 8 of 8
+  pass in 22 s `[SANDBOX]`; R34a within 1e-12 of `mmd2_multiscale`,
+  Spearman -1; R34d's shares 0.0462, 0.0953, 0.5262 at a = 0.05, 0.1, 0.5
+  inside the amended bounds; R34e's flagged shares 0.0525, 0.0695, 0.1255,
+  0.3967, 0.9680 at 0, 2, 4, 8, 16 SDs; R34h's mean 0.0969 and SD 0.0298
+  against Beta(10, 90)'s 0.1 and 0.0299; the six mutations each caught, by
+  R34b, R34b-c-e, R34b-c, R34b-c, R34a-b and R34f). The implementer stopped
+  once, on R34d's bound (D-165, contract amendment 1). Read against this
+  entry by the orchestrator and merged at `f1544ec`.
 
 ### Block 35: the sampler on a recorded project (added 2026-11-23; D-159, D-160, D-162, D-163; roadmap tool, step S2, wave 1)
 
