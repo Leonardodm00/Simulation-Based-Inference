@@ -947,6 +947,18 @@ def test_r36g_end_to_end():
     finally:
         with open(pj, "w") as fh:
             fh.write(keep)
+    # [2026-11-23, after the final check, F5] a sample made from another best fit than the
+    # folder's current one is left out and named (the launcher calls it stale, block 38)
+    keep = open(pj).read()
+    try:
+        _edit_json(pj, lambda d: d.__setitem__("best_fit_complete_sha256", "0" * 64))
+        idx3 = RM.compute(F["cfg_rec"], ecfg_path, ncpus=1, log=lambda t: None)
+        lo = [x for x in idx3["left_out"] if x["ensemble"] == e0.name]
+        assert lo and lo[0]["why"].startswith("sampled from another best fit"), idx3["left_out"]
+        assert e0.name not in idx3["ensembles"]
+    finally:
+        with open(pj, "w") as fh:
+            fh.write(keep)
     # none current: a refusal, exit 3
     other = _write_ecfg(ecfg_path, out, "rec_eval_other.json", seed=ecfg.seed + 1)
     try:
@@ -957,13 +969,99 @@ def test_r36g_end_to_end():
     assert RM.main(["--config", F["cfg_rec"], "--eval-config", other]) == RM.EXIT_REFUSE
 
 
+# ------------------------------------------------------------------ R36h ---
+
+def test_r36h_out_of_box():
+    """rows of D_sim outside the open box: counted, out of the NLL and the coverage (specs/SPEC.md block 36)."""
+    np = _np()
+    import ev_rec_config
+    import ev_rec_metrics as RM
+    import ev_rec_plan
+    import ev_rec_report
+    import ev_rec_sample
+    F = rec_fixture.fixture()
+    root = _tmpdir("h")
+    name, stem = "S-A1:A1", "S-A1_A1"
+    # the unmodified project, then a copy with a draw row and another row on the boundary
+    out0 = os.path.join(root, "plain", "out")
+    os.makedirs(os.path.dirname(out0))
+    ec0 = _write_ecfg(F["ecfg_rec"], out0, "rec_eval.json")
+    ev_rec_sample.run(F["cfg_rec"], ec0, name, log=lambda t: None)
+    RM.compute(F["cfg_rec"], ec0, names=[name], ncpus=1, log=lambda t: None)
+    m0 = os.path.join(out0, "metrics")
+    z0 = np.load(os.path.join(m0, "%s_sim.npz" % stem))
+    n = z0["rows"].shape[0]
+    i_d = int(np.flatnonzero(z0["calib"])[1])
+    i_o = int(np.flatnonzero(~z0["draw"])[0])
+    box = os.path.join(root, "box")
+    os.makedirs(box)
+    cfg = rec_fixture.boundary_copy(box, [(z0["rows"][i_d], 3, 1.0), (z0["rows"][i_o], 8, 0.0)])
+    out = os.path.join(box, "out")
+    ec = _write_ecfg(F["ecfg_rec"], out, "rec_eval.json")
+    prov = ev_rec_sample.run(cfg, ec, name, log=lambda t: None)
+    assert prov["n_out_of_box"] == 2
+    lines = []
+    RM.compute(cfg, ec, names=[name], ncpus=1, log=lines.append)
+    assert lines[-1].startswith("REC METRICS OK: "), lines
+    m = os.path.join(out, "metrics")
+    with open(os.path.join(m, "%s_sim.json" % stem)) as fh:
+        js = json.load(fh)
+    with open(os.path.join(m0, "%s_sim.json" % stem)) as fh:
+        js0 = json.load(fh)
+    z = np.load(os.path.join(m, "%s_sim.npz" % stem))
+    out_rows = np.zeros(n, dtype=bool)
+    out_rows[[i_d, i_o]] = True
+    assert np.array_equal(~z["in_box"], out_rows)
+    # the NLL: the two rows counted and left out, the others the unmodified run's (1e-4
+    # nats: float32 roundoff of batches of another composition, as in R35b)
+    assert js["nll"]["n_out_of_box"] == 2 and js["nll"]["n_rows"] == n - 2, js["nll"]
+    assert js0["nll"]["n_out_of_box"] == 0 and js0["nll"]["n_rows"] == n, js0["nll"]
+    assert js["n_in_box"] == n - 2
+    assert np.all(np.isnan(z["nll_rows"][out_rows])) or not np.any(np.isfinite(
+        z["nll_rows"][out_rows])), z["nll_rows"][out_rows]
+    _close(z["nll_rows"][~out_rows], z0["nll_rows"][~out_rows], 1e-4, "nll of the other rows")
+    want_mean = float(np.mean(z["nll_rows"][~out_rows]))
+    assert abs(js["nll"]["mean"] - want_mean) <= 1e-12, (js["nll"]["mean"], want_mean)
+    # S_cal loses the calibration row outside the box; gamma is NaN there
+    assert js["n_calib"] == js0["n_calib"] and js["n_cal"] == js0["n_cal"] - 1, (js["n_cal"],
+                                                                                 js0["n_cal"])
+    assert js["coverage"]["n_rows"] == js["n_cal"] == js["edge"]["n_cal"]
+    assert np.isnan(z["gamma"][i_d]) and np.isnan(z["gamma"][i_o])
+    in_cal = z["calib"] & z["in_box"]
+    assert np.all(np.isfinite(z["gamma"][in_cal])) and int(in_cal.sum()) == js["n_cal"]
+    # gamma of the other rows of S_cal: the unmodified run's (the same draws; the
+    # densities at theta_i within the roundoff above cannot move a rank here)
+    assert np.array_equal(z["gamma"][in_cal], z0["gamma"][in_cal])
+    want_curve = np.mean(z["gamma"][in_cal][:, None] <= z["betas"][None, :], axis=0)
+    _close(z["coverage"], want_curve, 1e-12, "C_E over S_cal without the row outside the box")
+    # SBC and TARP keep every calibration row (they do not use the density at theta_i)
+    assert js["sbc"]["n_rows"] == js["n_calib"] and z["sbc_ranks"].shape[0] == js["n_calib"]
+    # the row at theta_k = 1: every draw is below it, its SBC rank on that axis is n_post
+    k_cal = int(np.flatnonzero(np.flatnonzero(z["calib"]) == i_d)[0])
+    assert z["sbc_ranks"][k_cal, 3] == js["n_post"], z["sbc_ranks"][k_cal]
+    # the gate does not use theta: its statistics are the unmodified run's
+    for k in ("gate_role", "gate_T_null", "gate_T_check", "gate_p_check"):
+        assert np.array_equal(z[k], z0[k]), k
+    # the report job on it: no error, the count in the report's text
+    rec = ev_rec_report.run(cfg, ec, ncpus=1, log=lambda t: None)
+    assert rec["ensembles"] == [name] and rec["n_figures"] > 0, rec
+    with open(rec["report"]) as fh:
+        text = fh.read()
+    assert "%d rows, %d in the box" % (n, n - 2) in text, text[:3000]
+    print("    R36h: 2 of %d rows outside the open box: n_out_of_box 2, the NLL over %d rows, "
+          "n_cal %d of %d calibration rows, gamma NaN there, SBC on %d rows; %d figure(s) and "
+          "the report written" % (n, n - 2, js["n_cal"], js["n_calib"], js["sbc"]["n_rows"],
+                                  rec["n_figures"]))
+
+
 CHECKS = [("test_r36a_edge", test_r36a_edge),
           ("test_r36b_recording", test_r36b_recording),
           ("test_r36c_gate", test_r36c_gate),
           ("test_r36d_as_recorded", test_r36d_as_recorded),
           ("test_r36e_validate", test_r36e_validate),
           ("test_r36f_axes", test_r36f_axes),
-          ("test_r36g_end_to_end", test_r36g_end_to_end)]
+          ("test_r36g_end_to_end", test_r36g_end_to_end),
+          ("test_r36h_out_of_box", test_r36h_out_of_box)]
 
 
 def main():

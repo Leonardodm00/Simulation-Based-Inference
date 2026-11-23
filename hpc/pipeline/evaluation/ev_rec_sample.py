@@ -113,7 +113,8 @@ PROVENANCE_KEYS = (
     "schema", "ensemble", "stem", "search", "campaign", "arm", "folder", "view_kind",
     "members", "banks", "bank_globs", "sim_bank", "best_fit_complete_sha256", "sample_params",
     "seeds", "oracle_max_abs_nats", "oracle_mean_abs_nats", "oracle_tol", "gate", "n",
-    "n_draw", "n_z", "M", "n_post", "p", "axes", "files", "eval_config", "config",
+    "n_draw", "n_z", "n_out_of_box", "M", "n_post", "p", "axes", "files", "eval_config",
+    "config",
     "config_sha256", "seconds", "ncpus", "torch_threads")
 
 
@@ -200,6 +201,10 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
     th = np.asarray(index.theta, dtype=np.float64)[rows]
     p = int(th.shape[1])
     in_box = np.all((th > 0.0) & (th < 1.0), axis=1)
+    n_out = int(n - in_box.sum())
+    if n_out == n:
+        raise ev_plan.RefuseError("no row of D_sim has its theta in the open box (%d row(s)): "
+                                  "nothing can be evaluated at theta_i" % n)
     donor = np.asarray(index.donor, dtype=np.int64)[rows]
     calib = np.asarray(ev_rec_data.calibration_rows(donor), dtype=bool)
     draw = np.asarray(ev_rec_data.draw_rows(donor, ecfg.sim_draw_rows_per_donor), dtype=bool)
@@ -218,6 +223,11 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
     log("  sim: %d report row(s) of %d network(s); %d draw row(s); gate %d/%d/%d/%d rows"
         % (n, int(calib.sum()), draw_idx.size, sizes["n_ref"], sizes["n_rank"],
            sizes["n_null"], sizes["n_check"]))
+    if n_out:
+        # sec. 2.6, "The rows outside the open box": q_E(theta_i | x_i) = 0 there
+        log("  sim: %d row(s) with theta outside the open box (a coordinate <= 0 or >= 1): "
+            "log q = -inf there; left out of the oracle and of every quantity at theta_i"
+            % n_out)
 
     # ---- the recording banks, read before any sampling (a refusal writes nothing)
     recs = [(r, ev_rec_data.recording(view, r)) for r in e.banks]
@@ -251,7 +261,9 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
             z[:, np.searchsorted(z_idx, idx[g])] = zg
     lq_mix = _log_mixture(lq_members, in_box)
 
-    # ---- the oracle (block 19's): each member's report-split NLL, row for row
+    # ---- the oracle (block 19's): each member's report-split NLL, row for row, on the
+    # rows in the open box (outside it the record holds the flow's finite density and
+    # the evaluation's is 0 under the box prior: nothing to compare, sec. 2.6)
     o_max, o_mean = [], []
     for k, info in enumerate(infos):
         pr = np.load(info["record"][:-len(".json")] + "_perrow.npz")
@@ -259,7 +271,7 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
         if nll.shape != (n,):
             raise ev_plan.RefuseError("member seed %d: its _perrow.npz has %d report rows, D_sim "
                                       "has %d (%s)" % (info["seed"], nll.size, n, info["record"]))
-        dif = np.abs(nll + lq_members[:, k])
+        dif = np.abs(nll[in_box] + lq_members[in_box, k])
         o_max.append(float(np.max(dif)))
         o_mean.append(float(np.mean(dif)))
         if not o_max[-1] <= ecfg.oracle_tol:
@@ -314,7 +326,7 @@ def run(cfg_path, ecfg_path, name, out=None, ncpus=None, log=print):
             "sample_params": ecfg.sample_params(), "seeds": seeds,
             "oracle_max_abs_nats": o_max, "oracle_mean_abs_nats": o_mean,
             "oracle_tol": ecfg.oracle_tol, "gate": gate, "n": n, "n_draw": int(draw_idx.size),
-            "n_z": int(z_idx.size), "M": M, "n_post": n_post, "p": p,
+            "n_z": int(z_idx.size), "n_out_of_box": n_out, "M": M, "n_post": n_post, "p": p,
             "axes": {"names": names, "bounds": None if bounds is None else bounds.tolist()},
             "files": written, "eval_config": ecfg.path, "config": cfg.path,
             "config_sha256": cfg.sha256, "seconds": round(time.time() - t0, 1), "ncpus": ncpus,

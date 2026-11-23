@@ -14,6 +14,7 @@ Checks
     test_r35c_contract       every key, shape and dtype; the same seed, identical files
     test_r35d_refusals       five refusals that write nothing
     test_r35e_mixture        the mixture density at the draws, from the members in float64
+    test_r35f_out_of_box     rows of D_sim outside the open box: left out of the oracle, counted
 
 Run
     python3 hpc/pipeline/tests/test_smoke_rec_sample.py [check ...]
@@ -433,11 +434,71 @@ def test_r35e_mixture():
           "the members in float64" % (z["draws"].shape[0], z["draws"].shape[1], d_mix, d_own))
 
 
+def test_r35f_out_of_box():
+    """rows of D_sim outside the open box are left out of the oracle, not refused (specs/SPEC.md block 35)."""
+    import numpy as np
+    import ev_plan
+    import ev_rec_sample
+    F = rec_fixture.fixture()
+    out0, prov0 = _sampled("rec", "S-A1:A1")
+    z0 = np.load(os.path.join(out0, "S-A1_A1_sim.npz"))
+    assert prov0["n_out_of_box"] == 0 and z0["in_box"].all()
+    n = z0["rows"].shape[0]
+    i_d = int(np.flatnonzero(z0["draw"])[1])          # a draw (calibration) row
+    i_o = int(np.flatnonzero(~z0["draw"])[0])         # a row without draws
+    d = _tmpdir("box")
+    # exactly 1 and exactly 0, as a label clipped to [0, 1] and stored in float32
+    cfg = rec_fixture.boundary_copy(d, [(z0["rows"][i_d], 3, 1.0), (z0["rows"][i_o], 8, 0.0)])
+    out = os.path.join(d, "samples")
+    lines = []
+    prov = ev_rec_sample.run(cfg, F["ecfg_rec"], "S-A1:A1", out=out, log=lines.append)
+    assert prov["n_out_of_box"] == 2, prov["n_out_of_box"]
+    assert any("2 row(s) with theta outside the open box" in l for l in lines), lines
+    assert max(prov["oracle_max_abs_nats"]) <= prov["oracle_tol"], prov["oracle_max_abs_nats"]
+    z = np.load(os.path.join(out, "S-A1_A1_sim.npz"))
+    want_out = np.zeros(n, dtype=bool)
+    want_out[[i_d, i_o]] = True
+    assert np.array_equal(~z["in_box"], want_out), np.flatnonzero(~z["in_box"])
+    assert np.all(np.isneginf(z["logq_ref"][want_out]))
+    assert np.all(np.isneginf(z["logq_ref_members"][want_out]))
+    assert np.all(np.isfinite(z["logq_ref"][~want_out]))
+    assert z["theta_ref"][i_d, 3] == 1.0 and z["theta_ref"][i_o, 8] == 0.0
+    keep = np.ones(z0["theta_ref"].shape, dtype=bool)
+    keep[i_d, 3] = keep[i_o, 8] = False
+    assert np.array_equal(z["theta_ref"][keep], z0["theta_ref"][keep])
+    # what does not depend on theta is the unmodified run's, the draws bit for bit
+    for k in ("rows", "donor", "well", "cls", "calib", "draw", "gate_role", "draw_idx",
+              "draws", "draw_member", "logq_draws", "logq_draws_own", "stats", "z_idx", "z"):
+        assert np.array_equal(z[k], z0[k]), k
+    # the members' densities on the other rows: 1e-4 nats, float32 roundoff of batches
+    # of another composition (the rows outside the box leave them), as in R35b
+    d_lq = float(np.max(np.abs(z["logq_ref_members"][~want_out]
+                               - z0["logq_ref_members"][~want_out])))
+    assert d_lq <= 1e-4, d_lq
+    zr = np.load(os.path.join(out, "S-A1_A1_real.npz"))
+    zr0 = np.load(os.path.join(out0, "S-A1_A1_real.npz"))
+    assert np.array_equal(zr["draws"], zr0["draws"])
+    # every row of D_sim outside the box: a refusal that writes nothing
+    d2 = _tmpdir("box_all")
+    cfg2 = rec_fixture.boundary_copy(d2, [(r, 0, 1.0) for r in z0["rows"]])
+    out2 = os.path.join(d2, "samples")
+    try:
+        ev_rec_sample.run(cfg2, F["ecfg_rec"], "S-A1:A1", out=out2, log=lambda t: None)
+        raise AssertionError("no row in the open box was not refused")
+    except ev_plan.RefuseError as exc:
+        assert "no row of D_sim has its theta in the open box" in str(exc), exc
+    assert _files_under(out2) == [], _files_under(out2)
+    print("[r35f] 2 of %d rows outside the open box (a draw row and another): sampled, "
+          "n_out_of_box 2, log q = -inf there, the draws bit for bit the unmodified run's, "
+          "the other rows' densities within %.2g nats; every row outside: refused" % (n, d_lq))
+
+
 CHECKS = [("test_r35a_as_recorded", test_r35a_as_recorded),
           ("test_r35b_recorded", test_r35b_recorded),
           ("test_r35c_contract", test_r35c_contract),
           ("test_r35d_refusals", test_r35d_refusals),
-          ("test_r35e_mixture", test_r35e_mixture)]
+          ("test_r35e_mixture", test_r35e_mixture),
+          ("test_r35f_out_of_box", test_r35f_out_of_box)]
 
 
 def main():

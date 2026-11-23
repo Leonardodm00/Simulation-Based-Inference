@@ -304,6 +304,42 @@ def fixture():
     return _FIX
 
 
+def boundary_copy(dst, edits):
+    """A copy of the recorded-kind project for the rows outside the open box
+    (specs/SPEC.md sec. 2.6; R35f, R36h): the fixture's banks copied to
+    `dst`/banks_root, the simulated bank's theta[bank row, axis] set to
+    value for each (bank row, axis, value) of `edits`; the runs stay the
+    fixture's (a member's record does not depend on these labels once it
+    is trained). Returns the copy's configuration path. Nothing of the
+    fixture's tree is written."""
+    import numpy as np
+    F = fixture()
+    cfg = _read_json(F["cfg_rec"])
+    banks = os.path.join(dst, "banks_root")
+    shutil.copytree(cfg["paths"]["banks_root"], banks)
+    sim = [d for d in sorted(os.listdir(banks)) if d.endswith("_sim")]
+    assert len(sim) == 1, sim
+    start, done = 0, 0
+    for path in sorted(glob.glob(os.path.join(banks, sim[0], "shard_*.npz"))):
+        with np.load(path) as z:
+            arrays = dict((k, z[k]) for k in z.files)
+        n = int(arrays["theta"].shape[0])
+        mine = [(int(r) - start, int(k), v) for r, k, v in edits if start <= int(r) < start + n]
+        if mine:
+            th = arrays["theta"].copy()
+            for i, k, v in mine:
+                th[i, k] = v
+            arrays["theta"] = th
+            np.savez(path, **arrays)
+            done += len(mine)
+        start += n
+    assert done == len(edits), "an edit names a bank row outside the simulated bank"
+    cfg["paths"]["banks_root"] = banks
+    path = os.path.join(dst, "synth_rec_box.json")
+    _write_json(path, cfg)
+    return path
+
+
 def cleanup():
     """Removes the tree this process built, unless REC_KEEP=1 (then prints
     where it is). A tree given by REC_FIXTURE is never removed."""

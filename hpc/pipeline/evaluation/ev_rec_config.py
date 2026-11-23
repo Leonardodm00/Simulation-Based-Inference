@@ -16,6 +16,7 @@ Pure ASCII, LF only; Python 3.6 syntax.
 """
 
 import json
+import math
 import os
 import re
 from collections import namedtuple
@@ -65,8 +66,12 @@ REPORT_PARAMS = ("seed", "edge_eps", "bootstrap_n", "level", "dpi", "formats")
 REPORT_GATE_PARAMS = ("factors", "alpha")
 
 
-_MEM = re.compile(r"^[1-9][0-9]*[kmgt]?b$")
-_WALL = re.compile(r"^[0-9]+:[0-5][0-9]:[0-5][0-9]$")
+# matched whole (fullmatch): "$" alone would accept a trailing newline
+_MEM = re.compile(r"[1-9][0-9]*[kmgt]?b")
+_WALL = re.compile(r"[0-9]+:[0-5][0-9]:[0-5][0-9]")
+# npe_misspec.bandwidth_grid takes the median distance on a subsample above this
+# many reference rows; (R5) is the median over all pairs (block 34)
+N_REF_MAX = 1000
 _FRACS_TOL = 1e-9
 
 
@@ -155,13 +160,19 @@ def _check_gate(probs, g):
                          % (_FRACS_TOL, f, sum(float(x) for x in f)))
     if "n_ref" in g:
         _int_at_least(probs, "gate.n_ref", g["n_ref"], 2)
+        if _is_int(g["n_ref"]) and g["n_ref"] > N_REF_MAX:
+            probs.append("gate.n_ref must be at most %d, got %r: above it the bandwidths' "
+                         "median distance is taken on a subsample of the reference rows, "
+                         "which is not (R5)" % (N_REF_MAX, g["n_ref"]))
     for k in ("n_rank", "n_null", "n_null_min", "rows_per_donor"):
         if k in g:
             _int_at_least(probs, "gate." + k, g[k], 1)
     if "factors" in g:
         f = g["factors"]
-        if not (isinstance(f, list) and f and all(_is_num(x) and x > 0 for x in f)):
-            probs.append("gate.factors must be a non-empty list of positive numbers, got %r" % (f,))
+        if not (isinstance(f, list) and f
+                and all(_is_num(x) and x > 0 and math.isfinite(x) for x in f)):
+            probs.append("gate.factors must be a non-empty list of positive finite numbers, "
+                         "got %r" % (f,))
     if "alpha" in g:
         _open_interval(probs, "gate.alpha", g["alpha"], 0.0, 1.0)
 
@@ -179,9 +190,9 @@ def _check_jobs(probs, jb):
             probs.append("jobs.%s must have exactly the keys ncpus, mem, walltime" % kind)
             continue
         _int_at_least(probs, "jobs.%s.ncpus" % kind, j["ncpus"], 1)
-        if not (isinstance(j["mem"], str) and _MEM.match(j["mem"])):
+        if not (isinstance(j["mem"], str) and _MEM.fullmatch(j["mem"])):
             probs.append("jobs.%s.mem must be like 32gb, got %r" % (kind, j["mem"]))
-        if not (isinstance(j["walltime"], str) and _WALL.match(j["walltime"])):
+        if not (isinstance(j["walltime"], str) and _WALL.fullmatch(j["walltime"])):
             probs.append("jobs.%s.walltime must be hh:mm:ss, got %r" % (kind, j["walltime"]))
 
 

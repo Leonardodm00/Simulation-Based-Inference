@@ -190,6 +190,16 @@ def test_r33a_config():
         ("sim_draw_rows_per_donor", {"sim_draw_rows_per_donor": 0}),
         ("sim_draw_rows_per_donor", {"sim_draw_rows_per_donor": 1.5}),
         ("gate.n_ref", {"gate": dict(ok["gate"], n_ref=1)}),
+        # [2026-11-23, after the final check: F4, F2, F3] above 1,000 reference rows the
+        # median of (R5) would be a subsample's; a non-finite factor; a trailing newline
+        ("gate.n_ref", {"gate": dict(ok["gate"], n_ref=1001)}),
+        ("gate.factors", {"gate": dict(ok["gate"], factors=[1.0, float("inf")])}),
+        ("gate.factors", {"gate": dict(ok["gate"], factors=[float("nan")])}),
+        ("jobs.sample.mem", {"jobs": dict(ok["jobs"], sample={"ncpus": 1, "mem": "64gb\n",
+                                                              "walltime": "01:00:00"})}),
+        ("jobs.report.walltime", {"jobs": dict(ok["jobs"], report={
+            "ncpus": 1, "mem": "1gb", "walltime": "01:00:00\n"})}),
+        ("n_post", {"n_post": 1000.0}),          # an integer key requires an int (S3)
         ("gate.n_rank", {"gate": dict(ok["gate"], n_rank=0)}),
         ("gate.n_null", {"gate": dict(ok["gate"], n_null=0)}),
         ("gate.n_null_min", {"gate": dict(ok["gate"], n_null_min=0)}),
@@ -208,7 +218,9 @@ def test_r33a_config():
     # the values the rules allow at their edges
     for over in ({"sim_draw_rows_per_donor": None}, {"oracle_tol": 0.1}, {"seed": 0},
                  {"validate_against": "/tmp/old_out", "as_recorded": True},
-                 {"gate": dict(ok["gate"], donor_fracs=[0.1, 0.2, 0.3, 0.4])}):
+                 {"gate": dict(ok["gate"], donor_fracs=[0.1, 0.2, 0.3, 0.4])},
+                 {"gate": dict(ok["gate"], n_ref=1000)}, {"level": 0.9},
+                 {"gate": dict(ok["gate"], factors=[1])}):
         assert RC.validate(_rec_dict(**copy.deepcopy(over))) == [], (over, RC.validate(
             _rec_dict(**over)))
     tmp = tempfile.mkdtemp(prefix="r33a_")

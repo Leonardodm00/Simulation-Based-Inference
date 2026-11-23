@@ -772,6 +772,18 @@ the recovery are those of sec. 2.5, read with theta^ref_i = theta_i.
 - The contraction of axis k on D_sim is block 20's: 1 - (the mean over the
   calibration rows i of sigma_{i,k}(E)^2) / sigma_0^2, sigma_0^2 = 1/12 the
   box prior's marginal variance.
+- The rows outside the open box [2026-11-23, after the final check, D-167]. A row of D_sim one of whose
+  theta_{i,k} is <= 0 or >= 1 is outside the open box; a bank whose labels
+  are clipped to [0, 1] and stored in float32 (the extractor's) can hold a
+  coordinate exactly 0 or 1. For such a row q_E(theta_i | x_i) = 0 under
+  the box prior, so: its log q_E(theta_i | x_i) is written -inf; it is in
+  none of the quantities defined above over "the rows whose theta_i is in
+  the open box" (the NLL, gamma_i and C_E, the edge split, the comparison
+  of two ensembles), and their number is reported (`n_out_of_box`); it is
+  in the quantities that do not use the density at theta_i (the draws,
+  SBC and TARP over the calibration rows, the recovery, the gate's
+  roles). It is never a reason to refuse the evaluation, unless no row of
+  D_sim is in the open box.
 
 **On a recording bank D_r.** On each row j: n_post draws theta^(s)_j ~
 q_E(theta | x_j) as above, and, for each axis k in {1, ..., p}, the draws'
@@ -889,8 +901,13 @@ h_{psi_m}(x) in R^{d_z} is the member's embedding of x
 
       q_gate ~ Beta(k_gate, N_null + 1 - k_gate),     (R10)
 
-  with mean k_gate / (N_null + 1) <= alpha_gate and SD close to
-  sqrt(alpha_gate (1 - alpha_gate) / (N_null + 2)). The same holds for
+  with mean m_gate = k_gate / (N_null + 1) <= alpha_gate and SD
+  sqrt(m_gate (1 - m_gate) / (N_null + 2)) exactly, which is close to
+  sqrt(alpha_gate (1 - alpha_gate) / (N_null + 2)) when m_gate is close
+  to alpha_gate [corrected 2026-11-23 after the final check, S2: the
+  second form alone stood here; at N_null = 50 and alpha_gate = 0.05,
+  k_gate = 2, the SD is 0.0269, and the second form gives 0.0302]. The
+  same holds for
   Pr[p(x) <= a] with k_a = floor(a (N_null + 1)) in the place of k_gate. T
   takes multiples of 1 / (M N_rank), so ties occur and make the gate
   slightly more conservative than (R10); t_m is continuous, and (R10) holds
@@ -6211,9 +6228,13 @@ plan; Confirmed: yes 2026-11-17]
   `as_recorded` (bool); `sim_draw_rows_per_donor` (null or an int >= 1; 1);
   `edge_eps` (in (0, 0.5); 0.006693); `gate` (exactly GATE_KEYS:
   `donor_fracs`, four positive numbers summing to 1 within 1e-9, [0.4,
-  0.25, 0.25, 0.1]; `n_ref` int >= 2, 800; `n_rank` int >= 1, 1000;
+  0.25, 0.25, 0.1]; `n_ref` int >= 2 and <= 1000, 800 [the upper bound
+  added 2026-11-23 after the final check, F4, D-167: above 1,000
+  reference rows `npe_misspec.bandwidth_grid` takes med_m on a subsample,
+  which is not (R5)]; `n_rank` int >= 1, 1000;
   `n_null` int >= 1, 1000; `n_null_min` int >= 1, 50; `rows_per_donor` int
-  >= 1, 1; `factors`, a non-empty list of positive numbers, [0.25, 0.5, 1,
+  >= 1, 1; `factors`, a non-empty list of positive finite numbers
+  [finite: 2026-11-23, F2], [0.25, 0.5, 1,
   2, 4]; `alpha` in (0, 1), 0.05); `bootstrap_n` (int > 0); `level` (in (0,
   1); 0.95); `dpi`; `formats` (among png, pdf, svg); `ncpus`;
   `validate_against` (null, or the absolute `out_root` of the synthetic
@@ -6256,6 +6277,9 @@ plan; Confirmed: yes 2026-11-17]
     `factors`, `validate_against` without `as_recorded`, a `jobs` kind
     missing); `sample_params` and `report_params` hold exactly the keys
     listed;
+    [2026-11-23, after the final check: also `gate.n_ref` 1001, a
+    non-finite factor, a `mem` and a `walltime` with a trailing newline,
+    `n_post` 1000.0, each refused; `n_ref` 1000 accepted];
   - R33b the as-recorded view equals `ev_plan.ensembles` on the fixture:
     names, stems, folders, seeds, records and cohorts, in order, and
     `comparisons` equals `ev_plan.comparisons`; the two kind mismatches
@@ -6279,8 +6303,12 @@ plan; Confirmed: yes 2026-11-17]
     no `theta`; a bank of arm S refused; `axes_of` on the simulated bank's
     sidecar and on a sidecar without names.
 - Build notes (2026-11-23, accepted at the gate; none changes the rule):
-  a number of the configuration is accepted as an int or a float, a bool
-  never; the fixture's values the entry did not state are seed 4242,
+  a number of a non-integer key (`oracle_tol`, `edge_eps`, `level`, the
+  gate's `donor_fracs`, `factors` and `alpha`) is accepted as an int or a
+  float, a bool never; an integer key requires an int (`n_post` 1000.0 is
+  refused) [clarified 2026-11-23 after the final check, S3]; a job's `mem`
+  and `walltime` are matched whole, so a trailing newline is refused
+  [2026-11-23, F3]; the fixture's values the entry did not state are seed 4242,
   `n_post` 40, `batch_rows` 16, `bootstrap_n` 200, dpi 60, formats png,
   queue `test`, `oracle_tol` the synthetic evaluation's (1e-4) as recorded
   and 2e-3 for the recorded kind, the `out_root`s `<root>/rec_eval_as_out`
@@ -6304,6 +6332,12 @@ plan; Confirmed: yes 2026-11-17]
   + 1, the comparisons reversed, a `theta` key in `recording`, the split
   not checked, the fractions' tolerance 0.2 -- each caught). Read against
   this entry by the orchestrator and merged at `df02780`.
+- Fix round (2026-11-23, after the final check, report 2026-11-23_1730: F2,
+  F3, F4, S3; D-167): `ev_rec_config.validate` refuses a non-finite
+  factor, `gate.n_ref` above 1,000 and a `mem` or `walltime` with a
+  trailing newline; `rec_fixture.boundary_copy(dst, edits)` added (a copy
+  of the recorded-kind project whose simulated bank has chosen theta
+  entries set, for R35f and R36h). 6 of 6 checks, R33a extended.
 
 ### Block 34: the gate (added 2026-11-23; D-161, D-163 (4); roadmap tool, step S2, wave 1)
 
@@ -6344,8 +6378,10 @@ plan; Confirmed: yes 2026-11-17]
     the check set. Every other row has role 0;
   - `member_statistic`: (R5), (R6), with `npe_misspec.bandwidth_grid(z_ref,
     z_ref[:0], factors=factors)` (the reference alone; that function
-    subsamples, with its own fixed generator, only above 1,000 points, so
-    never at the cap of 800) and the kernel sums of
+    subsamples, with its own fixed generator, only above 1,000 points, and
+    the configuration bounds `gate.n_ref` at 1,000 (block 33; 2026-11-23,
+    F4), so med_m is the median over all pairs, as (R5) states) and the
+    kernel sums of
     `npe_misspec.mmd2_multiscale`; computed for all n points at once;
   - `gate`: for each member, `t` on the rank, the null and the test rows
     by `member_statistic` against that member's reference; `r` by (the
@@ -6458,10 +6494,21 @@ plan; Confirmed: yes 2026-11-17]
   - the per-member functions are `ev_sample`'s (`logq_at`, `draws_of`,
     `logq_draws_of`, `embed`, `sample_set`), imported, never copied; the
     eight statistics `ev_simulate.fixed_stats`;
-  - the oracle (block 19's): each member's -log q at theta_i equals its
-    `_perrow.npz` `nll` on every row of D_sim within `oracle_tol`, row for
-    row, or the sampling refuses, naming the member, the largest and the
-    mean difference and the tolerance;
+  - the oracle (block 19's, on the rows it can be made on): each member's
+    -log q at theta_i equals its `_perrow.npz` `nll` on every row of D_sim
+    whose theta_i is in the open box, within `oracle_tol`, row for row, or
+    the sampling refuses, naming the member, the largest and the mean
+    difference and the tolerance. [2026-11-23, after the final check, D-167] The rows outside
+    the open box are left out of the oracle (the runner's record holds the
+    flow's finite density there, the evaluation's density is 0 under the
+    box prior: sec. 2.6, "The rows outside the open box"); their number is
+    logged and written (`n_out_of_box`); they keep log q = -inf and get
+    draws like any other row. No row of D_sim in the open box is a
+    refusal. Block 19 compares on every row and so refuses such a row; the
+    bench's theta is in the open box by construction (block 11's
+    amendment), so the two samplers agree on every synthetic project and
+    D-162's validation is unchanged. The length of `_perrow.npz` `nll`
+    must still be D_sim's n;
   - D_sim. The rows: `ev_rec_data.report_rows`; `calib` and `draw` by
     `calibration_rows` and `draw_rows(donor, k_draw)`; `gate_role` by
     `ev_gate.assign_roles(donor, ...)` with the configuration's gate values
@@ -6514,7 +6561,7 @@ plan; Confirmed: yes 2026-11-17]
   (= `ecfg.sample_params()`), `seeds`, `oracle_max_abs_nats` and
   `oracle_mean_abs_nats` (one value per member), `oracle_tol`, `gate`
   (`n_ref`, `n_rank`, `n_null`, `n_check`, `networks`: the four groups'
-  numbers of networks, `seed`), `n`, `n_draw`, `n_z`, `M`, `n_post`, `p`,
+  numbers of networks, `seed`), `n`, `n_draw`, `n_z`, `n_out_of_box` [2026-11-23, D-167], `M`, `n_post`, `p`,
   `axes` (`names`, `bounds` or null), `files`, `eval_config`, `config`,
   `config_sha256`, `seconds`, `ncpus`, `torch_threads`.]
 - Custom code: none.
@@ -6546,7 +6593,17 @@ plan; Confirmed: yes 2026-11-17]
   - R35e the mixture density at the draws equals log mean_m exp(log q_m)
     computed directly from the members in float64 (block 19's E19c, on a
     recording bank).
-  Mutations, each of which must fail a check: the seed without its `+ k`;
+  - R35f a row outside the open box [2026-11-23, after the final check, D-167]: on a copy of the
+    recorded-kind project's banks in which one draw row and one other
+    row of D_sim have a coordinate of theta set to exactly 1 and 0, the
+    sampling does not refuse; `n_out_of_box` is 2; `in_box` is false,
+    `logq_ref` and `logq_ref_members` -inf on those two rows; every
+    array of the unmodified run that does not hold theta is reproduced
+    (the draws bit for bit: they do not depend on theta), and
+    `logq_ref_members` on the other rows; with every row of D_sim
+    outside the box the sampling refuses and writes nothing.
+  Mutations, each of which must fail a check: the oracle on every row of
+  D_sim [2026-11-23]; the seed without its `+ k`;
   the members drawn in another order than their seeds'; `draw_idx`
   unsorted; the gate's
   roles from the calibration rows alone; a `theta` key written to a
@@ -6562,6 +6619,12 @@ plan; Confirmed: yes 2026-11-17]
   k_draw = 1, `logq_ref_members` within 1.1e-5 nats and `z` within 2.7e-7
   (scale 0.78) of the as-recorded run's; the mixture at the draws within
   9e-6 nats of the members' in float64.
+- Fix round (2026-11-23, after the final check, report 2026-11-23_1730: F1,
+  S1; D-167): the oracle on the rows in the open box, `n_out_of_box` in
+  the provenance, no row in the box a refusal; R35f added, 6 of 6 checks;
+  the mutation "the oracle on every row" is caught by R35f. Measured: 2 of
+  16 rows outside the box, the draws bit for bit the unmodified run's, the
+  other rows' densities equal (difference 0).
 - Build notes (2026-11-23, plumbing; none changes the science):
   - a gate group that receives no network (`ev_gate.assign_roles` raises
     ValueError) is a refusal, exit 3, nothing written;
@@ -6571,8 +6634,10 @@ plan; Confirmed: yes 2026-11-17]
     fourth); the number of networks that received a row is smaller only
     where a cap (`n_ref`, `n_rank`, `n_null`) binds;
   - `oracle_max_abs_nats`, `oracle_mean_abs_nats`: lists in member order,
-    the mean of the absolute differences; the oracle runs on every row of
-    D_sim, so a row outside the open box refuses, as in block 19;
+    the mean of the absolute differences, over the rows in the open box
+    [corrected 2026-11-23 after the final check, F1 and S1: this note
+    said the oracle runs on every row, so a row outside the open box
+    refuses, as in block 19; that contradicted sec. 2.6];
   - an error of the project's configuration (`config.ConfigError`) exits
     3 like a refusal;
   - `members` holds `ev_models.rebuild`'s whole info dict; `sim_bank` is
@@ -6631,7 +6696,12 @@ plan; Confirmed: yes 2026-11-17]
   seed is block 27's, `seed_of(seed, "paired", <name>, "sim")`, which R36d
   requires; the sentence above named one form for all]):
   - an ensemble whose sample is absent, or was made with other
-    `sample_params`, is left out and named;
+    `sample_params`, is left out and named; [2026-11-23, after the final check, D-167]
+    so is one whose sample was made from another best fit (its
+    `best_fit_complete_sha256` is not the sha256 of the folder's current
+    `BEST_FIT_COMPLETE.json`): the launcher already calls that sample
+    stale (block 38), and a report run by hand must not use it
+    silently;
   - D_sim, with block 20's functions (`nll_block`, `hpd_ranks`,
     `coverage_curve`, `binomial_band`, `coverage_summary`,
     `ND.expected_coverage`, `sbc_block`, `tarp_block`, `recovery_arrays`,
@@ -6774,6 +6844,14 @@ plan; Confirmed: yes 2026-11-17]
     `ev_rec_plan.comparisons`; one worker and three give the same files; a
     sample of other values is left out and named, and none current is
     refused.
+  - R36h the rows outside the open box [2026-11-23, after the final check, D-167]: on R35f's
+    sample, `nll.n_out_of_box` is 2 and `nll.n_rows` n - 2; the NLL of
+    every other row equals the unmodified run's; n_cal is one less than
+    the calibration rows; `gamma` is NaN on the draw row outside the
+    box; `coverage.n_rows` is n_cal; SBC still has every calibration
+    row; the metrics and the report are written without an error;
+    R36g's addition: a sample whose `best_fit_complete_sha256` is not
+    its folder's is left out and named.
   Mutations, each of which must fail a check: `<=` in (R1); the edge
   split over the draw rows in place of S_cal; the pooled draws weighted by
   window length in place of equally; the well's SD divided by sqrt(n_g);
@@ -6796,6 +6874,13 @@ plan; Confirmed: yes 2026-11-17]
   target, in the sandbox, through block 35's sampler): 3 ensembles, the
   largest NLL difference 0 nats, every other difference 0, the paired
   files equal to block 27's; `ev_rec_validate` passes on the two trees.
+- Fix round (2026-11-23, after the final check, report 2026-11-23_1730: F5
+  and F1's consequences; D-167): a sample made from another best fit is
+  left out and named (R36g's addition; the mutation is caught); R36h added
+  (the rows outside the open box through the metrics and the report job);
+  8 of 8 checks. Measured in R36h: the NLL over 14 of 16 rows, n_cal 7 of
+  8 calibration rows, SBC on 8, the gate's statistics unchanged, the
+  report written.
 - Build notes (2026-11-23, plumbing; none changes the science):
   - `edge_split`'s `betas=None` means `ev_metrics.BETAS`;
   - the example well is chosen by `ev_metrics.example_donors` on the

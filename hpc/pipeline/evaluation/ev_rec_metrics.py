@@ -41,7 +41,7 @@ import numpy as np
 import ev_gate
 import ev_rec_config
 import ev_rec_plan
-from ev_plan import RefuseError, seed_of
+from ev_plan import RefuseError, seed_of, sha256_file
 
 # block 20's quantities, imported, never copied (block 36, "Rule")
 import ev_metrics as EM
@@ -275,14 +275,19 @@ def _load(path):
 
 
 def sample_left_out(ecfg, e):
-    """Why ensemble e is not reported: its sample absent, or made with other
-    sample_params (block 36, "Rule"); None when its sample is current."""
+    """Why ensemble e is not reported: its sample absent, made with other
+    sample_params, or made from another best fit than the folder's current
+    one (block 36, "Rule"); None when its sample is current."""
     pj = ev_rec_plan.sample_json(ecfg, e.stem)
     if not os.path.isfile(pj):
         return "not sampled (%s absent)" % pj
     prov = _read_json(pj)
     if prov.get("sample_params") != ecfg.sample_params():
         return "sampled with other values: %s" % prov.get("sample_params")
+    bf = os.path.join(e.folder, "BEST_FIT_COMPLETE.json")
+    if not os.path.isfile(bf) or prov.get("best_fit_complete_sha256") != sha256_file(bf):
+        return ("sampled from another best fit: %s changed since the sampling (sample it "
+                "again)" % bf)
     return None
 
 
