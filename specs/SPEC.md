@@ -87,6 +87,19 @@ Paths this spec covers (files, directories ending in `/`, or globs):
   (`config.py`, the three projects' files) and
   `hpc/pipeline/projects/linddup/linddup_cohort_map.csv`
 
+- the evaluation of a recorded project (D-159..D-163; roadmap
+  `specs/roadmap/tool.yaml`, step S2, wave 1; blocks 33-38; added
+  2026-11-23, on the branch `sci/tool`): its formulation is sec. 2.6; the
+  new files under `hpc/pipeline/evaluation/` (`ev_rec_config.py`,
+  `ev_rec_plan.py`, `ev_rec_data.py`, `ev_gate.py`, `ev_rec_sample.py`,
+  `ev_rec_metrics.py`, `ev_rec_validate.py`, `ev_rec_figures.py`,
+  `ev_rec_report.py`, `ev_rec_submit.py`, `submit_rec_eval.sh`), their tests
+  and fixture (`hpc/pipeline/tests/test_smoke_rec_*.py`,
+  `hpc/pipeline/tests/rec_fixture.py`),
+  `hpc/pipeline/projects/synth/synth_rec_eval.json`, and one additive
+  change to block 20's `ev_metrics.py` (block 36). The synthetic
+  evaluation's other files are not changed
+
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
 
@@ -135,6 +148,32 @@ Deliverables: the five searches (S-A2 and S-A5 on each arm-R bank, and one
 S-A1, D-122) and their best fits, as above for any data set, every trial's record carrying the
 pseudo-real endpoint L_pseudo_real (sec. 2.4) beside the ledger's `nll`. The
 evaluation (the roadmap's step S6) is specified when it starts.
+
+### 1.2 The evaluation of a recorded project (D-159; added 2026-11-23)
+
+For a data set whose real arm is a set of recordings the pipeline ends at
+the best fit (D-083), and the evaluation of sec. 2.5 exists for the
+synthetic kind alone. This step answers, for any recorded project and each
+of its ensembles:
+
+- (i) is the ensemble faithful to its simulator on simulations it never
+  trained on: the NLL, the expected coverage, SBC, TARP and the contraction,
+  with the rows near an edge of the prior box read apart;
+- (ii) what does it return on each recorded window, and where do the
+  windows of each well put their mass;
+- (iii) does each recorded window look like anything the simulator
+  produces, as the ensemble's encoders see it (the gate);
+- (iv) do the project's arms differ on the held-out simulations.
+
+The predictive check through the project's own simulator is wave 2 and is
+not specified here (D-159). L-C2ST is not part of this step (D-163 (2)).
+
+Deliverables, per ensemble: the samples, the metrics, the figures and one
+report. They are read by the user, by the model bundle of the roadmap's
+step S3 (the held-out evaluation and the gate's reference embeddings) and
+by the viewer of step S6. LindDUP is the test of the whole chain (the
+roadmap's step S9), not the design target: no value of a particular
+project is in the code (D-159).
 
 ## 2. Mathematical formulation
 
@@ -629,6 +668,265 @@ n_post, per row i:
 The quantities' estimators, n_post, the posterior-predictive check and the
 L-C2ST settings are blocks 19 and 20's, open in sec. 8 (Q-E1..Q-E6).
 
+### 2.6 The evaluation of a recorded project (roadmap `tool`, step S2, wave 1; D-159..D-163; added 2026-11-23)
+
+Symbols of sec. 2.5 keep their meaning here: an ensemble E and its density
+q_E(theta | x), the equal-weight mixture (E1) of its members' densities;
+n_post; the NLL l_i(E); the HPD rank gamma_i(E); the expected coverage
+C_E(beta) (E2); the paired difference (E3). The symbols introduced here are
+in the Notation table. Nothing in this section holds a value of a
+particular project (D-159): the number of axes, the window length, the
+members, the wells and the classes are read from the configuration and the
+banks.
+
+**The view of a project.** The evaluation reads a project as a view: its
+ensembles, its simulated bank B_S and its recording banks.
+
+- A recorded configuration (sec. 3.1; not synthetic). The searches are
+  `stages.runs.search_views(cfg)`. Search q's ensemble is its best fit,
+  `<runs_root of q's view>/<dataset>_best`, once that folder has its
+  `BEST_FIT_COMPLETE.json`; the ensemble's arm a is its members' records'
+  `arm`, which must agree. Its name is `<q>:<a>` (stem `<q>_<a>`) when the
+  configuration has a `searches` list, and `best:<a>` (stem `best_<a>`)
+  when `searches` is null. B_S is `<banks_root>/<dataset>_sim`. There is
+  one recording bank, named `real`: `<banks_root>/<dataset>_real`.
+- A synthetic configuration read as recorded (D-162; for the validation,
+  and only when the evaluation's configuration has `as_recorded` true).
+  The ensembles are block 19's (name, stem, folder, members). B_S is the
+  synthetic simulated bank. An ensemble's recording banks are its cohorts
+  (block 19's rule), each under its cohort's name. The data module returns
+  no parameter for a recording bank, so a cohort's withheld theta* never
+  reaches the code under test.
+
+An ensemble E has M >= 1 members m = 1, ..., M, each rebuilt as block 19
+rebuilds it. p is the number of columns of B_S's `theta`, so that theta
+lies in the unit box (0, 1)^p; W is the window length in samples; d_z is
+the dimension of a member's embedding (the E of block 19's array shapes;
+written d_z here because E is the ensemble).
+
+**The data sets of an ensemble E.**
+
+- D_sim: the report rows of the members' split of B_S, in global row
+  order: rows i = 1, ..., n. Row i is a window x_i with its own parameter
+  theta_i in the unit box and its simulated network d(i) (the bank's
+  `donor`). Three subsets of D_sim are used:
+  - the calibration rows: the first row of each network (sec. 8, Q-E2);
+  - the draw rows (D-163 (1)): for each network its first k_draw rows,
+    k_draw = `sim_draw_rows_per_donor`, an integer >= 1, or every row when
+    that value is null; n_d is their number. Every calibration row is a
+    draw row;
+  - the gate rows: the rows that have a role in the gate (below).
+- D_r, for each recording bank r of E: every row of the bank, in bank
+  order: rows j = 1, ..., n_r. Row j is a window x_j with its ids -- its
+  class c(j), its well g(j), and its donor, batch, subregion, window index
+  and pair group as the bank has them -- and no parameter.
+
+**On D_sim.** l_i(E), gamma_i(E), C_E(beta), the marginal ranks, TARP and
+the recovery are those of sec. 2.5, read with theta^ref_i = theta_i.
+
+- The NLL l_i(E) = -log q_E(theta_i | x_i), for every row i of D_sim whose
+  theta_i is in the open box (every row, not the draw rows alone: D-163
+  (1)); its mean over those rows, each member's mean, and the mean per
+  network.
+- On each draw row i: n_post draws theta^(s)_i ~ q_E(theta | x_i), s = 1,
+  ..., n_post, n_post / M from each member, in member order; n_post is a
+  multiple of M (D-163 (4): n_post = 1,000).
+- Over the calibration rows whose theta_i is in the open box: C_E(beta) on
+  the grid beta = 0, 0.01, ..., 1, with the binomial band of a calibrated
+  estimator on that many independent rows; the same curve for each member;
+  SBC and TARP over the calibration rows. Over the draw rows: the recovery
+  (for each row and axis the mean mhat_{i,k}(E), the SD sigma_{i,k}(E), the
+  5 % and 95 % quantiles and the z-score), summarised over the calibration
+  rows.
+- The edge rows (D-163 (4)). With eps in (0, 1/2) the edge width
+  (`edge_eps`), row i of D_sim is an edge row if and only if
+
+      min_{k in {1, ..., p}} min(theta_{i,k}, 1 - theta_{i,k}) < eps,     (R1)
+
+  and an interior row otherwise. Let S_cal be the calibration rows whose
+  theta_i is in the open box, S_edge and S_int its edge rows and its
+  interior rows, n_cal = |S_cal| and pi_edge = |S_edge| / n_cal. For each
+  fixed beta of the grid,
+
+      C_E^edge(beta) = (1 / |S_edge|) sum_{i in S_edge} 1{ gamma_i(E) <= beta },
+      C_E^int(beta)  = (1 / |S_int|)  sum_{i in S_int}  1{ gamma_i(E) <= beta },
+
+  each written null when its set is empty. For each fixed beta, when both
+  sets are non-empty,
+
+      C_E(beta) = pi_edge C_E^edge(beta) + (1 - pi_edge) C_E^int(beta),     (R2)
+
+  exactly (the two sets partition S_cal). A caution: an estimator equal to
+  the simulator's posterior has C_E(beta) = beta, but it need not have
+  C_E^edge(beta) = beta or C_E^int(beta) = beta, since the expected
+  coverage is an average over the prior and not over a part of it. The
+  split shows where a deficit sits, read through (R2); it is not two
+  further calibration tests. The evaluation reports the three
+  curves, pi_edge beside its value under the box prior, 1 - (1 - 2 eps)^p,
+  and the mean of l_i(E) over the edge rows and over the interior rows of
+  all of D_sim's rows whose theta_i is in the open box. eps = 0.006693 is
+  the logistic function at -5, 1 / (1 + exp(5)): the flow's splines act on
+  [-5, 5] in logit space (the decision log's open call on the flow's edge
+  support), so a flow of that family puts almost no mass within eps of an
+  edge. A project whose flow has the bound b sets eps = 1 / (1 + exp(b)).
+- The contraction of axis k on D_sim is block 20's: 1 - (the mean over the
+  calibration rows i of sigma_{i,k}(E)^2) / sigma_0^2, sigma_0^2 = 1/12 the
+  box prior's marginal variance.
+
+**On a recording bank D_r.** On each row j: n_post draws theta^(s)_j ~
+q_E(theta | x_j) as above, and, for each axis k in {1, ..., p}, the draws'
+mean mhat_{j,k}(E), SD sigma_{j,k}(E), 5 %, 50 % and 95 % quantiles, and
+the contraction
+
+    chi_{j,k}(E) = 1 - sigma_{j,k}(E)^2 / sigma_0^2,     (R3)
+
+for each fixed j and k: 0 when the window's posterior on axis k is as wide
+as the prior, near 1 when it is much narrower, negative when it is wider.
+
+- The well's summary (D-160). For a well g of D_r, with its windows J_g =
+  {j : g(j) = g} and n_g = |J_g| >= 1,
+
+      mix_g(theta) = (1 / n_g) sum_{j in J_g} q_E(theta | x_j),     (R4)
+
+  for each fixed g (the s_g of D-160): the law of a draw taken from a
+  window of g picked uniformly at random. It is estimated by the pooled
+  draws {theta^(s)_j : j in J_g, s = 1, ..., n_post}, in which every window
+  weighs the same, each having n_post draws; the evaluation reports their
+  mean, SD and 5 %, 50 % and 95 % quantiles per axis. mix_g describes where
+  the windows of the well put their mass. It is NOT the posterior of the
+  well's parameter given all its windows: its width does not shrink with
+  n_g, and no interval, statistic or test is built on it as if it were
+  that posterior (D-160). Every output calls it "the mixture over the
+  well's windows", never "the well's posterior".
+- Coordinates. Every quantity above is in the unit box. The simulated
+  bank's sidecar gives each axis its name and its declared range [lo_k,
+  hi_k] in its declared coordinate (`param_names`, `bounds_theta`; the
+  natural logarithm of the parameter on a log axis, the parameter itself
+  elsewhere). A quantile u of axis k maps to lo_k + u (hi_k - lo_k) in that
+  coordinate; means and SDs are not mapped. The metrics carry the names and
+  the ranges beside the unit-box values.
+
+**The gate (D-161, D-163 (4)).** For member m and a window x, z_m(x) =
+h_{psi_m}(x) in R^{d_z} is the member's embedding of x
+(`JointDSNNPE.encode`).
+
+- The gate's sets. The networks of D_sim are dealt, by a seeded
+  permutation, into four groups in the proportions `gate.donor_fracs` =
+  (f_ref, f_rank, f_null, f_check), four positive numbers that sum to 1; no
+  network is in two groups. Each set takes rows from its group in
+  round-robin order -- every network's first row in global row order, then
+  every network's second row, and so on -- until it has its cap or the
+  group has no row left: the reference rows I_ref (cap `gate.n_ref`), the
+  rank rows I_rank (cap `gate.n_rank`), the null rows I_null (cap
+  `gate.n_null`) and the check rows I_chk (no cap). The last three take at
+  most `gate.rows_per_donor` rows of a network; the reference takes any
+  number. N_ref, N_rank, N_null and N_chk are the sizes reached. N_null
+  below `gate.n_null_min` is a refusal.
+- The kernel of member m. Let med_m be the median of the Euclidean
+  distances between the pairs of distinct reference embeddings {z_m(x_i) :
+  i in I_ref}, and (f_1, ..., f_{n_h}) = `gate.factors` (D-163 (4): (0.25,
+  0.5, 1, 2, 4), n_h = 5). With the bandwidths h_{m,b} = f_b med_m, b = 1,
+  ..., n_h,
+
+      k_m(z, z') = sum_{b=1}^{n_h} exp( - ||z - z'||^2 / (2 h_{m,b}^2) )     (R5)
+
+  for all z, z' in R^{d_z}: the sum of Gaussian kernels of
+  `hpc/npe_misspec.py` (`bandwidth_grid` on the reference embeddings alone,
+  `mmd2_multiscale`).
+- The member's statistic of a window x is the biased squared MMD between
+  the single point z_m(x) and the reference embeddings: for each fixed m
+  and x,
+
+      t_m(x) = (1 / N_ref^2) sum_{i in I_ref} sum_{i' in I_ref} k_m(z_m(x_i), z_m(x_{i'}))
+               + k_m(z_m(x), z_m(x))
+               - (2 / N_ref) sum_{i in I_ref} k_m(z_m(x_i), z_m(x)).     (R6)
+
+  Its first term does not depend on x and its second is the constant n_h,
+  so t_m(x) is large exactly when z_m(x) is, on average over the reference,
+  far from the reference embeddings.
+- The member's rank of x among the rank rows: for each fixed m and x,
+  r_m(x) = (1 / N_rank) #{ a in I_rank : t_m(x_a) < t_m(x) }, in [0, 1].
+- The ensemble statistic (D-161): for each fixed x,
+
+      T(x) = (1 / M) sum_{m=1}^{M} r_m(x).     (R7)
+
+  The ranks put the members' statistics on one scale, their embedding
+  spaces and bandwidths being different.
+- The p-values: for each fixed x and m,
+
+      p(x)   = (1 + #{ v in I_null : T(x_v) >= T(x) }) / (1 + N_null),     (R8)
+      p_m(x) = (1 + #{ v in I_null : t_m(x_v) >= t_m(x) }) / (1 + N_null),
+
+  the repository's convention (`npe_misspec._pvalue`). x is flagged if and
+  only if p(x) < alpha_gate, alpha_gate = `gate.alpha` (D-163 (4): 0.05, a
+  value of the configuration). r_m(x), p_m(x) and T(x) are reported beside
+  p(x).
+- What p(x) is. I_ref, I_rank and I_null share no network, and T is the
+  same function of (I_ref, I_rank) for a tested window x and for each row
+  of I_null. If x is a draw of the simulator's law of one window,
+  independent of the gate's rows, and the rows of I_null are draws of that
+  law from distinct networks (`gate.rows_per_donor` = 1), then T(x) and
+  (T(x_v))_{v in I_null} are exchangeable, and Pr[p(x) <= a] <= a for every
+  a in [0, 1]. With several rows of a network in I_null its values are
+  still draws of that law but no longer independent, and the bound holds
+  approximately. p(x) is blind to what the embeddings do not carry
+  (`hpc/npe_misspec.py`: the amplitude, lost where an embedding is
+  normalised).
+- The check rows I_chk are held-out simulated windows the gate did not
+  use. The share of them flagged, with its exact binomial interval at
+  `level`, is the gate's measured size on the project's own simulator; it
+  should be near alpha_gate.
+- On a recording bank: per window j, p(x_j) and the flag; per well g, the
+  number and the share of its windows flagged; the same per class and for
+  the whole bank. The windows of one well share a culture, so a well's or a
+  class's share is reported beside alpha_gate, the share expected of
+  independent windows of the simulator's law, and no test is made on it
+  (sec. 8, Q-R1).
+- The synthetic evaluation's set-level embedding check (block 20's
+  `embedding_overlap`) is not computed on recordings: its null is built
+  from independent simulated windows, and it rejects a well-specified
+  cohort whose windows share a culture (D-159; `hpc/npe_misspec.py`).
+
+**The comparisons (D-163 (3)).** For a view with several searches the
+comparisons are sec. 2.5's, on D_sim alone. For each search q whose
+campaign has a term arm A(q): (a) q's ensemble of arm A(q) against its A1
+reference -- q's own A1 ensemble when the view has one, otherwise the
+ensemble of the view's one search of campaign S-A1; (b) for every pair of
+searches (q, q') with A(q) = A2 and A(q') = A5, the ensemble of arm A2 of
+q against the ensemble of arm A5 of q'. For a comparison (E, E'), the two
+ensembles' rows of
+D_sim must be the same rows; on the rows whose theta_i is in the open box,
+d_i = l_i(E) - l_i(E'), its mean Dbar(E, E'), the bootstrap over the
+simulated networks, sigma_seed and the two clauses are block 20's (E3, the
+networks in the place of the donors). The numbers are reported with block
+20's verdict line and nothing more is derived from them (D-163 (3)). A
+comparison that cannot be made is named with its reason, never dropped
+silently.
+
+**The validation (D-162, D-163 (4)).** A synthetic project read as
+recorded, with `sim_draw_rows_per_donor` null and the synthetic
+evaluation's `seed`, `n_post` and `batch_rows`, gives the new path the rows
+and the seeds of blocks 19 and 20: member k's draws on data set D start
+from `seed_of(seed, D) + k` in both, D being `sim` or the bank's name. The
+targets:
+
+- in one environment (the sandbox; the reduced project of block 19's
+  tests): the draws of every row of D_sim and of every cohort equal block
+  19's bit for bit; l_i(E) equals block 19's within 1e-9 nats; gamma_i(E),
+  C_E(beta), the SBC ranks and p-values, TARP's curves and p-values, the
+  recovery arrays and the paired quantities equal block 20's within 1e-12
+  (the same functions on the same arrays; the tolerance covers the order
+  of floating-point sums only);
+- on the cluster (the full synthetic project; `ev_rec_validate.py`):
+  |l_i(new) - l_i(old)| <= 0.002 nats for every row i; the largest over
+  the grid of |C_new(beta) - C_old(beta)| at most 0.01, for every
+  ensemble; and (Claude's proposal, sec. 8 Q-R3) each axis's SBC verdict,
+  the Holm family's rejections and TARP's two verdicts unchanged.
+
+The quantities the existing evaluation does not have -- the edge split
+(R1), (R2), the well's summary (R4), the gate (R5)-(R8) -- have oracles of
+their own, fixed in their blocks' entries before the code.
+
 ### Notation
 
 | Symbol | Meaning | Type / shape | Units |
@@ -662,6 +960,19 @@ L-C2ST settings are blocks 19 and 20's, open in sec. 8 (Q-E1..Q-E6).
 | Delta_d(E, E'), Dbar(E, E') | donor d's paired difference of the two ensembles' donor NLLs (E3); its mean over the donors | float64 | nats per window |
 | sigma_seed | the larger of two arms' across-seed SDs of their members' L_pseudo_real (G.2) | float64 | nats per window |
 | kappa; E_kappa, E'_kappa | [2026-11-16, D-136] a comparison (sec. 2.5, "The comparisons"); its ensemble and its reference, E and E' of E3 | name `<q>` or `<q>_vs_<q'>`; ensembles `<q>:<arm>` | -- |
+| p, W, M, d_z | sec. 2.6: the axes of the simulated bank's theta; the window length; an ensemble's members; the dimension of a member's embedding | int | axes; samples; members; -- |
+| B_S, D_sim, D_r | sec. 2.6: a project's simulated bank; an ensemble's held-out simulated rows (the report split); the rows of its recording bank r | rows | -- |
+| d(i), g(j), c(j) | the simulated network of row i of D_sim (the bank's `donor`); the well and the class of row j of a recording bank | int64 | -- |
+| k_draw, n_d | the draw rows per network on D_sim (`sim_draw_rows_per_donor`; null: every row); the number of draw rows | int or null; int | rows |
+| eps; S_cal, S_edge, S_int; n_cal, pi_edge | the edge width (`edge_eps`); the calibration rows with theta in the open box, its edge rows and interior rows (R1); the size of S_cal and the share of edge rows in it | float in (0, 1/2); row sets; int, float in [0, 1] | unit box; --; rows, -- |
+| C_E^edge(beta), C_E^int(beta) | the expected coverage of ensemble E over S_edge and over S_int, for each fixed beta (R2) | float in [0, 1] or null | -- |
+| chi_{j,k}(E) | the contraction of window j of a recording bank on axis k (R3) | float <= 1 | -- |
+| J_g, n_g, mix_g(theta) | the windows of well g; their number; the mixture over the well's windows (R4), for each fixed g | row set; int >= 1; density on (0, 1)^p | --; windows; -- |
+| z_m(x) | member m's embedding of window x | (d_z,) float32 | -- |
+| I_ref, I_rank, I_null, I_chk; N_ref, N_rank, N_null, N_chk | the gate's reference, rank, null and check rows, subsets of D_sim that share no network; their sizes | row sets; int | --; rows |
+| med_m, h_{m,b}, n_h, k_m(z, z') | member m's median distance between reference embeddings; its bandwidths f_b med_m; their number; its kernel (R5) | float > 0; float > 0; int; float in (0, n_h] | embedding units; embedding units; --; -- |
+| t_m(x), r_m(x), T(x) | member m's statistic of window x (R6); its rank among the rank rows; the ensemble statistic (R7), for each fixed x | float >= 0; float in [0, 1]; float in [0, 1] | -- |
+| p(x), p_m(x), alpha_gate | the gate's p-value of window x and member m's own (R8); the gate's threshold (`gate.alpha`) | float in (0, 1]; float in (0, 1) | -- |
 
 ## 3. Data contracts
 
@@ -5792,6 +6103,646 @@ plan; Confirmed: yes 2026-11-17]
   is loaded from its file with no bytecode written into the checkouts.
   Not run on davinci.
 
+### Block 33: the view of a recorded project, its data and the evaluation's configuration (added 2026-11-23; D-159, D-162, D-163; roadmap tool, step S2, wave 1)
+
+- Modules: `hpc/pipeline/evaluation/ev_rec_config.py` (new; standard
+  library only), `ev_rec_plan.py` (new; the standard library and the
+  pipeline's own `config`, `stages.runs`, `ev_plan`: it runs on the login
+  node's python, as `ev_plan` does), `ev_rec_data.py` (new; numpy and the
+  runner's bank readers, so `envs.train`),
+  `hpc/pipeline/tests/rec_fixture.py` (new; the fixture of every
+  `test_smoke_rec_*.py`), `hpc/pipeline/tests/test_smoke_rec_plan.py` (new;
+  checks R33*).
+- Public API:
+  - `ev_rec_config.load(path) -> RecEvalConfig` (a namedtuple of KEYS and
+    `path`, with `.sub(name)`, `.sample_params()`, `.report_params()`);
+    `ev_rec_config.validate(data) -> [str]`, every problem found;
+    `RecEvalConfigError`; `KEYS`, `GATE_KEYS`, `SAMPLE_PARAMS`,
+    `REPORT_PARAMS`, `JOB_KINDS = ("sample", "report", "validate")`.
+  - `ev_rec_plan.load_view(cfg_path, ecfg) -> View`; `View` is a namedtuple
+    `(cfg, kind, ensembles, missing, sim_glob, banks)`: `kind` "recorded"
+    or "as_recorded"; `ensembles` a tuple of `RecEnsemble(name, stem,
+    search, campaign, arm, folder, seeds, records, banks)` in the
+    configuration's order (`search` the search's name, or None for a
+    recorded configuration whose `searches` is null; `banks` the names of
+    its recording banks); `missing` a tuple of `(search, folder, why)` for
+    each configured best fit that is not complete; `sim_glob` the simulated
+    bank's shards; `banks` a dict from a recording bank's name to its
+    shards' glob.
+    `ev_rec_plan.find(view, name) -> RecEnsemble`;
+    `ev_rec_plan.comparisons(view) -> ([Comparison], [(name, why)])`,
+    `Comparison` being `ev_plan`'s namedtuple;
+    `ev_rec_plan.sample_json(ecfg, stem)`;
+    `ev_rec_plan.report_inputs(view, ecfg)`. `RefuseError`, `seed_of` and
+    `sha256_file` are `ev_plan`'s, imported, never defined again.
+  - `ev_rec_data.sim_index(view) -> (ShardIndex, paths)`;
+    `ev_rec_data.report_rows` and `calibration_rows`: `ev_data`'s, imported;
+    `ev_rec_data.draw_rows(donor, k) -> (n,) bool`;
+    `ev_rec_data.recording(view, name) -> dict` with `x` (n, W) float32,
+    `cls`, `donor`, `well`, `batch`, `subregion`, `window_idx`, `rep_group`
+    (n,) int64, `contaminated` (n,) bool, `sidecar`, `paths`;
+    `ev_rec_data.axes_of(sidecar) -> (names, bounds)`: `names` a list of p
+    strings, `bounds` a (p, 2) float64 array or None.
+  - `rec_fixture.fixture() -> dict` (built once per process; `REC_FIXTURE`
+    reuses a tree built before, `REC_KEEP=1` keeps the one it builds).
+- Rule (sec. 2.6, "The view of a project" and "The data sets"):
+  - a recorded configuration with `as_recorded` true, or a synthetic one
+    with `as_recorded` false, is a refusal that names the other evaluation
+    (`submit_eval.sh` for a synthetic project read as itself);
+  - an ensemble is complete when its folder has `BEST_FIT_COMPLETE.json`,
+    whose `member_seeds` give the members; a member without its record is a
+    refusal, as are members whose `arm`, `split_seed`, `split_fracs` or
+    `split_hash` differ; two complete ensembles of one name are a refusal;
+  - the comparisons (sec. 2.6): with `TERM_ARM` and `NESTS_A1` of `ev_plan`;
+    for an as-recorded view exactly `ev_plan.comparisons`; for a recorded
+    view with a `searches` list, (a) then (b) in the configuration's order,
+    a search whose ensemble is not of its term arm, or whose reference is
+    missing, named with the reason; no search of campaign S-A1, or two, when
+    a reference is needed, is a refusal (block 27's rule); a recorded
+    configuration with `searches` null has no comparison;
+  - `draw_rows(donor, k)`: True on the first k rows of each donor in the
+    given order; every row when k is None; `draw_rows(donor, 1)` equals
+    `calibration_rows(donor)`;
+  - `recording`: the bank's shards sorted, read by `R.concat_shards`; a
+    bank whose sidecar `arm` is not "R" is a refusal; `rep_group` is -1 on
+    every row of a bank without that array; the returned dict has no
+    `theta` key (an extractor's real bank has zero columns of it; a
+    synthetic cohort's theta* is withheld from the evaluation, D-162);
+  - `axes_of`: the sidecar's `param_names` and `bounds_theta` when both
+    have p entries; otherwise the names `theta_0`, ..., `theta_{p-1}` and
+    bounds None.
+- The configuration `<tag>_rec_eval.json` (`ev_rec_config`; keys starting
+  with `_` are comments, as in the project's configuration). KEYS, with
+  the value D-163 fixed or Claude's proposal (sec. 8, Q-R2, Q-R5):
+  `out_root` (absolute); `seed` (int >= 0); `n_post` (int > 0; 1000);
+  `batch_rows` (int > 0); `oracle_tol` (nats, in (0, 0.1]; 2e-3);
+  `as_recorded` (bool); `sim_draw_rows_per_donor` (null or an int >= 1; 1);
+  `edge_eps` (in (0, 0.5); 0.006693); `gate` (exactly GATE_KEYS:
+  `donor_fracs`, four positive numbers summing to 1 within 1e-9, [0.4,
+  0.25, 0.25, 0.1]; `n_ref` int >= 2, 800; `n_rank` int >= 1, 1000;
+  `n_null` int >= 1, 1000; `n_null_min` int >= 1, 50; `rows_per_donor` int
+  >= 1, 1; `factors`, a non-empty list of positive numbers, [0.25, 0.5, 1,
+  2, 4]; `alpha` in (0, 1), 0.05); `bootstrap_n` (int > 0); `level` (in (0,
+  1); 0.95); `dpi`; `formats` (among png, pdf, svg); `ncpus`;
+  `validate_against` (null, or the absolute `out_root` of the synthetic
+  evaluation the validation compares with; not null only with
+  `as_recorded`); `jobs` (`queue`, and `ncpus`, `mem`, `walltime` for each
+  of JOB_KINDS). SAMPLE_PARAMS = `seed`, `n_post`, `as_recorded`,
+  `sim_draw_rows_per_donor` and the gate's `donor_fracs`, `n_ref`,
+  `n_rank`, `n_null`, `n_null_min`, `rows_per_donor` (what a sampling
+  depends on: a sample of other values is stale). REPORT_PARAMS = `seed`,
+  `edge_eps`, the gate's `factors` and `alpha`, `bootstrap_n`, `level`,
+  `dpi`, `formats`. `oracle_tol` is in neither: it changes no output.
+- The fixture (`rec_fixture.fixture()`), built once, a few minutes in the
+  sandbox: (1) the reduced synthetic project of block 19's tests
+  (`test_smoke_evaluation._build_project`'s searches S-A1 and S-A2-R0 with
+  `alt_best_fit`, cohorts R0 and R3, two members) with `synthetic.sim.
+  n_theta` 160 instead of 60, so that the report split has 8 networks and
+  the gate's four groups are not empty; (2) the synthetic evaluation's
+  samples and metrics of it (blocks 19-20, with their calibration bank);
+  (3) `rec_eval_as.json`, the as-recorded configuration with the synthetic
+  evaluation's `seed`, `n_post`, `batch_rows`, `sim_draw_rows_per_donor`
+  null and `gate.n_null_min` 1; (4) a recorded-kind project on the same
+  runs: a configuration made from the committed `linddup.json` with its
+  `dataset`, `paths` and `searches` replaced (the synthetic project's
+  dataset, roots and its two searches as recorded searches), and its
+  recording bank `<dataset>_real`, written from cohort R0's shards with
+  `theta` of zero columns and a sidecar of arm R; with `rec_eval.json`
+  (`as_recorded` false, `sim_draw_rows_per_donor` 1). Keys: `root`, `cfg`
+  (the synthetic configuration), `ecfg_old`, `ecfg_as`, `cfg_rec`,
+  `ecfg_rec`, `old_out` (the synthetic evaluation's `out_root`).
+- Custom code: none.
+- Test oracles (`test_smoke_rec_plan.py`):
+  - R33a the configuration: the fixture's two files load; each missing and
+    each unknown key is named; one check per value rule above (a fraction
+    list summing to 0.9, `edge_eps` 0.5, `alpha` 1, `n_post` 0, an empty
+    `factors`, `validate_against` without `as_recorded`, a `jobs` kind
+    missing); `sample_params` and `report_params` hold exactly the keys
+    listed;
+  - R33b the as-recorded view equals `ev_plan.ensembles` on the fixture:
+    names, stems, folders, seeds, records and cohorts, in order, and
+    `comparisons` equals `ev_plan.comparisons`; the two kind mismatches
+    refused;
+  - R33c the recorded view on the fixture: names `S-A1:A1` and
+    `S-A2-R0:<arm>`, one recording bank `real`, `sim_glob` the simulated
+    bank's; with `searches` set to null and one best fit, `best:<arm>`; a
+    best fit without `BEST_FIT_COMPLETE.json` listed in `missing`; a member
+    record of another arm, and one of another split hash, refused;
+  - R33d the comparisons of a recorded view, on a tree of empty best-fit
+    folders with hand-written records: searches A1 (S-A1), A2 (S-A2-only),
+    A5 (S-A5-only) give `A2`, `A5` (each against `A1:A1`) and `A2_vs_A5`,
+    in that order; without the S-A1 search, a refusal; a term search whose
+    best fit is not complete, named and left out;
+  - R33e `draw_rows` by hand on donor = (5, 5, 7, 5, 7, 9): k = 1 gives
+    rows 0, 2, 5; k = 2 gives 0, 1, 2, 4, 5; None gives all; k = 1 equals
+    `calibration_rows`;
+  - R33f `recording` on the fixture's recorded bank: the keys above and
+    their dtypes, the rows in bank order, x equal to cohort R0's, no
+    `theta` key, `rep_group` -1; on the as-recorded view the same keys and
+    no `theta`; a bank of arm S refused; `axes_of` on the simulated bank's
+    sidecar and on a sidecar without names.
+- Confirmed: D-159, D-162, D-163 for the rule; the configuration's values
+  marked Claude's are open (sec. 8, Q-R2, Q-R5).
+- Status: drafted 2026-11-23.
+
+### Block 34: the gate (added 2026-11-23; D-161, D-163 (4); roadmap tool, step S2, wave 1)
+
+- Modules: `hpc/pipeline/evaluation/ev_gate.py` (new; numpy and
+  `npe_misspec`; no torch, no file is read or written),
+  `hpc/pipeline/tests/test_smoke_rec_gate.py` (new; checks R34*; needs
+  numpy and scipy only).
+- Public API:
+  - `ROLE_NONE, ROLE_REF, ROLE_RANK, ROLE_NULL, ROLE_CHECK = 0, 1, 2, 3, 4`;
+  - `assign_roles(donor, fracs, n_ref, n_rank, n_null, rows_per_donor,
+    seed) -> role`: `donor` (n,) int, the networks of D_sim's rows in global
+    row order; `role` (n,) int8;
+  - `member_statistic(z_ref, z, factors) -> (t, bandwidths, median)`:
+    `z_ref` (N_ref, d_z), `z` (n, d_z); `t` (n,) float64, `bandwidths`
+    (n_h,) float64, `median` float;
+  - `gate(z_ref, z_rank, z_null, z_test, factors) -> dict`: inputs of shapes
+    (M, N_ref, d_z), (M, N_rank, d_z), (M, N_null, d_z), (M, n, d_z), n >=
+    0; returns `t`, `r`, `p_member` (M, n) float64, `T`, `p` (n,) float64,
+    `t_rank` (M, N_rank), `t_null` (M, N_null), `r_null` (M, N_null),
+    `T_null` (N_null,), `bandwidths` (M, n_h), `median` (M,).
+- Rule (sec. 2.6, "The gate"):
+  - `assign_roles`: the distinct networks, sorted, are permuted by
+    `numpy.random.default_rng(seed).permutation`; with G their number, the
+    first floor(f_ref G) of the permuted list are the reference group, the
+    next floor(f_rank G) the rank group, the next floor(f_null G) the null
+    group, the rest the check group; fewer than one network in a group is a
+    ValueError naming G and the fractions. A row's occurrence is its
+    position among its own network's rows in the given order (0 for the
+    first). Within a group the rows are ordered by (occurrence, position in
+    `donor`); the reference takes the first `n_ref` of them; the rank, null
+    and check sets take the rows of occurrence below `rows_per_donor`, the
+    first `n_rank` and `n_null` of them for the first two, all of them for
+    the check set. Every other row has role 0;
+  - `member_statistic`: (R5), (R6), with `npe_misspec.bandwidth_grid(z_ref,
+    z_ref[:0], factors=factors)` (the reference alone; that function
+    subsamples, with its own fixed generator, only above 1,000 points, so
+    never at the cap of 800) and the kernel sums of
+    `npe_misspec.mmd2_multiscale`; computed for all n points at once;
+  - `gate`: for each member, `t` on the rank, the null and the test rows
+    by `member_statistic` against that member's reference; `r` by (the
+    count of rank values strictly below) / N_rank, for the test rows and,
+    by the same expression, for the null rows (`r_null`); `T` and `T_null`
+    the means over the members (R7); `p` and `p_member` by (R8) with
+    `npe_misspec._pvalue`'s convention. Non-finite embeddings are a
+    ValueError: a NaN would pass every comparison silently.
+- Custom code: the member's statistic for many single points at once (one
+  kernel matrix between the reference and the points), since
+  `npe_misspec.mmd2_multiscale` takes one sample per call and a call per
+  window and member would dominate the report's time. Checked:
+  `mmd2_multiscale`, `_self_term` (used for the first term). Oracle R34a.
+- Test oracles (`test_smoke_rec_gate.py`; seeds fixed in the file):
+  - R34a `member_statistic` equals `npe_misspec.mmd2_multiscale(z_ref,
+    z[i][None, :], bandwidths, kaa)` for every point i of 50 within 1e-12
+    (float64 roundoff of two orders of the same sums), and orders the
+    points exactly as their mean kernel similarity to the reference does,
+    reversed (Spearman -1);
+  - R34b by hand, M = 1, d_z = 2, `factors` (1.0,): three reference points,
+    two rank points, two null points and one test point with coordinates
+    written in the test; t, r, T and p from loops over the definitions
+    (R5)-(R8) in float64, equal within 1e-12; a second case with M = 2
+    whose members disagree, for the mean of the ranks;
+  - R34c `gate` called with the null rows as test rows returns `T` =
+    `T_null`, `r` = `r_null`, and p_j = (1 + #{v : T_v >= T_j}) / (1 +
+    N_null) by hand (the null rows are ranked by the function that ranks a
+    tested window);
+  - R34d size, on toy embeddings of one law: a latent u ~ N(e_1, 0.35^2
+    I_16), member m's embedding (Q_m u + 0.08 xi) / ||Q_m u + 0.08 xi||
+    with Q_m a fixed random rotation and xi standard normal, M = 5, 800
+    reference, 500 rank, 500 null and 4,000 test points, every point with
+    a latent of its own: the share of test points with p <= a is at most a
+    + 3 sqrt(a (1 - a) / 4000) for a in {0.05, 0.1, 0.5}, and at least a -
+    3 sqrt(a (1 - a) / 4000) - 1 / 501 (the p-value's grain);
+  - R34e power, the same toy with the test latents displaced by delta
+    times 0.35 along e_2: the flagged share at alpha 0.05 is non-decreasing
+    in delta over (0, 2, 4, 8, 16) and above 0.9 at 16 (the single-member
+    gate of the tool's document reached 0.979 there; the bound leaves room
+    for the toy's seed);
+  - R34f `assign_roles`: on 40 networks with 1 to 5 rows each, no network
+    in two roles; the groups' sizes floor(f G) and the rest; the caps; at
+    most `rows_per_donor` rows of a network in the rank, null and check
+    sets; with `n_ref` below the reference group's size, only first rows;
+    the same roles from the same seed, others from another; the roles
+    unchanged when the rows of one network are moved together (they depend
+    on each row's network and occurrence alone); 3 networks refused;
+  - R34g non-finite input refused; n = 0 test rows returns empty arrays of
+    the right shapes.
+  Mutations, each of which must fail a check: `<=` for `<` in the rank;
+  the null rows ranked against themselves in place of the rank rows; `>`
+  for `>=` in (R8); the missing +1; the bandwidths from the reference and
+  the test points pooled; the rank and null groups sharing networks.
+- Confirmed: D-161, D-163 (4) for the statistic, the sets' disjointness,
+  the reference's cap and the kernel; the dealing of the networks and the
+  other caps are Claude's (sec. 8, Q-R2).
+- Status: drafted 2026-11-23.
+
+### Block 35: the sampler on a recorded project (added 2026-11-23; D-159, D-160, D-162, D-163; roadmap tool, step S2, wave 1)
+
+- Modules: `hpc/pipeline/evaluation/ev_rec_sample.py` (new),
+  `hpc/pipeline/tests/test_smoke_rec_sample.py` (new; checks R35*).
+- Public API: `python3 hpc/pipeline/evaluation/ev_rec_sample.py --config
+  <tag>.json --eval-config <tag>_rec_eval.json --ensemble <name> [--out
+  DIR] [--ncpus N]`: exit 0 with the pass line `REC SAMPLE OK: <stem>`, 2
+  on its arguments, 3 on a refusal, which writes nothing;
+  `ev_rec_sample.run(cfg_path, ecfg_path, name, out=None, ncpus=None,
+  log=print) -> provenance dict`.
+- Rule (sec. 2.6):
+  - the ensemble by `ev_rec_plan.find`, its members by
+    `ev_models.rebuild(record, index)` on the simulated bank's index;
+    `n_post` not a multiple of M is a refusal;
+  - the per-member functions are `ev_sample`'s (`logq_at`, `draws_of`,
+    `logq_draws_of`, `embed`, `sample_set`), imported, never copied; the
+    eight statistics `ev_simulate.fixed_stats`;
+  - the oracle (block 19's): each member's -log q at theta_i equals its
+    `_perrow.npz` `nll` on every row of D_sim within `oracle_tol`, row for
+    row, or the sampling refuses, naming the member, the largest and the
+    mean difference and the tolerance;
+  - D_sim. The rows: `ev_rec_data.report_rows`; `calib` and `draw` by
+    `calibration_rows` and `draw_rows(donor, k_draw)`; `gate_role` by
+    `ev_gate.assign_roles(donor, ...)` with the configuration's gate values
+    and the seed `seed_of(seed, "gate")`; N_null below `gate.n_null_min` is
+    a refusal. On the draw rows, `sample_set` with the seed `seed_of(seed,
+    "sim")` (member k's draws from that seed + k), which also gives their
+    densities at theta_i and their embeddings; on the other rows, log q at
+    theta_i by `logq_at`, the windows read block by block (never all of
+    D_sim's windows in memory when `sim_draw_rows_per_donor` is an
+    integer); the embeddings of the gate rows that are not draw rows by
+    `embed`. With `sim_draw_rows_per_donor` null every row is a draw row
+    and one `sample_set` call on D_sim's rows gives the arrays block 19
+    writes (the validation, sec. 2.6);
+  - D_r, for each recording bank r of the ensemble: `ev_rec_data.recording`;
+    the draws, their mixture densities, their own-member densities and the
+    embeddings by `sample_set` on every row with the seed `seed_of(seed,
+    r)`, called with no row in the box so that no density at a parameter
+    is computed; the eight statistics;
+  - outputs under `<out_root>/samples/` (or `--out`), each written to a
+    temporary name and renamed: `<stem>_sim.npz`, `<stem>_<r>.npz`,
+    `<stem>_sample.json` last.
+- `<stem>_sim.npz` (n rows of D_sim; n_d draw rows; n_z rows with an
+  embedding, the draw rows and the gate rows): `rows` (n,) int64 (bank
+  rows), `donor`, `well`, `cls` (n,) int64, `theta_ref` (n, p) float64,
+  `in_box` (n,) bool, `logq_ref_members` (n, M) float64, `logq_ref` (n,)
+  float64 (-inf where not in the box), `calib`, `draw` (n,) bool,
+  `gate_role` (n,) int8, `draw_idx` (n_d,) int64 (indices into the n rows,
+  ascending), `draws` (n_d, n_post, p) float32, `draw_member` (n_post,)
+  int64, `logq_draws`, `logq_draws_own` (n_d, n_post) float32, `stats`
+  (n_d, 8) float32, `z_idx` (n_z,) int64 (ascending), `z` (M, n_z, d_z)
+  float32.
+- `<stem>_<r>.npz` (n rows of the bank): `rows`, `cls`, `donor`, `well`,
+  `batch`, `subregion`, `window_idx`, `rep_group` (n,) int64,
+  `contaminated` (n,) bool, `draws` (n, n_post, p) float32, `draw_member`
+  (n_post,) int64, `logq_draws`, `logq_draws_own` (n, n_post) float32, `z`
+  (M, n, d_z) float32, `stats` (n, 8) float32. No `theta_ref`, `in_box` or
+  `logq_ref*`.
+- `<stem>_sample.json`: `schema` "rec_eval_sample/1", the ensemble (name,
+  stem, search, campaign, arm, folder), the members' records and their
+  checkpoints' sha256, the best fit's `BEST_FIT_COMPLETE.json` sha256, the
+  view's kind, the banks' names and globs, `sample_params`, the seeds, the
+  oracle's largest and mean difference per member, the gate's sizes
+  (N_ref, N_rank, N_null, N_chk, the networks per group), n, n_d, n_z, the
+  axes' names and bounds (`axes_of`), `files`, the timings.
+- Custom code: none.
+- Test oracles (`test_smoke_rec_sample.py`, on `rec_fixture`):
+  - R35a the validation's first target (D-162): the as-recorded sampling
+    of `S-A1:A1` and of `S-A2-R0`'s two ensembles gives, on D_sim, `draws`
+    equal bit for bit to block 19's `<stem>_sim.npz` `draws`, and
+    `theta_ref`, `in_box`, `rows`, `donor`, `well`, `cls`,
+    `logq_ref_members`, `logq_ref`, `draw_member`, `logq_draws`,
+    `logq_draws_own`, `calib`, `stats`, `z` equal to block 19's (floats
+    within 1e-9; `draw_idx` and `z_idx` the whole range); on each cohort,
+    `draws`, `logq_draws`, `logq_draws_own`, `z`, `stats` and the ids
+    equal to block 19's `<stem>_<cohort>.npz`;
+  - R35b the recorded-kind project with k_draw = 1: `draw` equals `calib`;
+    `logq_ref_members` on every row within 1e-4 nats of the as-recorded
+    run's (other batches: float32 roundoff; block 19 measured 1.1e-5);
+    `draws` (n_d, n_post, p) with n_post / M per member in member order;
+    `z_idx` the sorted union of the draw rows and the gate rows; the roles
+    those `ev_gate.assign_roles` gives for the same arguments; the file of
+    bank `real` with every key of the contract and none of `theta`,
+    `theta_ref`, `in_box`, `logq_ref`, `logq_ref_members`; its windows'
+    eight statistics equal to cohort R0's (the bank was written from it);
+  - R35c the contract: every key, shape and dtype of the three files; the
+    same seed gives identical files; another seed other draws;
+  - R35d refusals that write nothing: `n_post` not a multiple of M;
+    `oracle_tol` 1e-9 (a member then does not reproduce its record: the
+    message names `oracle_tol`); a member's record of another split hash;
+    an unknown ensemble; `gate.n_null_min` above the null set's size;
+  - R35e the mixture density at the draws equals log mean_m exp(log q_m)
+    computed directly from the members in float64 (block 19's E19c, on a
+    recording bank).
+  Mutations, each of which must fail a check: the seed without its `+ k`;
+  the members drawn in another order than their seeds'; `draw_idx`
+  unsorted; the gate's
+  roles from the calibration rows alone; a `theta` key written to a
+  recording's file.
+- Confirmed: D-159, D-160, D-162, D-163.
+- Status: drafted 2026-11-23.
+
+### Block 36: the quantities of a recorded project and the validation tool (added 2026-11-23; D-160..D-163; roadmap tool, step S2, wave 1)
+
+- Modules: `hpc/pipeline/evaluation/ev_rec_metrics.py` (new),
+  `ev_rec_validate.py` (new), one additive change to
+  `hpc/pipeline/evaluation/ev_metrics.py` (block 20's), and
+  `hpc/pipeline/tests/test_smoke_rec_metrics.py` (new; checks R36*).
+- The change to `ev_metrics.py`: `sbc_block(theta_ref, draws, level, seed,
+  axes=None)` and `recovery_summary(theta_ref, rec, rows, axes=None)`; with
+  `axes` None both name the bench's ten axes as before (`AXES`), otherwise
+  the given names, one per column. Nothing else in that file changes, and
+  no number of the synthetic evaluation changes.
+- Public API: `python3 hpc/pipeline/evaluation/ev_rec_metrics.py --config
+  <tag>.json --eval-config <tag>_rec_eval.json [--ensemble <name> ...]
+  [--ncpus N]` writes under `<out_root>/metrics/`, per ensemble,
+  `<stem>_sim.json` and `.npz`, `<stem>_<r>.json` and `.npz` for each of its
+  recording banks; per comparison `paired_<name>_sim.json` and `.npz`; and
+  `METRICS.json`, the index (the files, the ensembles reported, those left
+  out and why, the comparisons made and those not made and why, the
+  report's inputs); pass line `REC METRICS OK`; exit 2 on the arguments, 3
+  on a refusal (no ensemble with a current sample).
+  `ev_rec_metrics.compute(cfg_path, ecfg_path, names=None, ncpus=None,
+  log=print)` the same in a process. Pure functions, no file read or
+  written: `edge_rows(theta, eps) -> (n,) bool`; `edge_split(gamma, edge,
+  betas) -> dict`; `well_summary(draws, well) -> dict`;
+  `flag_shares(flag, group) -> (ids, n, k)`.
+  `python3 hpc/pipeline/evaluation/ev_rec_validate.py --old <out_root of
+  the synthetic evaluation> --new <out_root of the as-recorded evaluation>
+  [--nll-tol 0.002] [--coverage-tol 0.01]`: exit 0 with `REC VALIDATION OK:
+  <n> ensemble(s)`, 3 with one line per failure otherwise.
+- Rule (sec. 2.6; every seed is `seed_of(seed, "metrics", <stem>, <data
+  set>, <what>)`, block 20's, so that the as-recorded numbers are block
+  20's):
+  - an ensemble whose sample is absent, or was made with other
+    `sample_params`, is left out and named;
+  - D_sim, with block 20's functions (`nll_block`, `hpd_ranks`,
+    `coverage_curve`, `binomial_band`, `coverage_summary`,
+    `ND.expected_coverage`, `sbc_block`, `tarp_block`, `recovery_arrays`,
+    `recovery_summary`), imported, never copied: the NLL over every row in
+    the box, the networks as donors; gamma_i on the draw rows; C_E(beta),
+    its binomial band, the members' curves and the summaries over S_cal
+    (the calibration rows in the box); SBC and TARP over the calibration
+    rows with the project's axis names; the recovery on the draw rows,
+    summarised over the calibration rows;
+  - the edge split: `edge_rows` is (R1); `edge_split` gives pi_edge, its
+    expected value 1 - (1 - 2 eps)^p, C_E^edge and C_E^int on the grid
+    (null for an empty set), their `coverage_summary`, and the largest
+    absolute difference between the two sides of (R2); the mean NLL over
+    the edge rows and over the interior rows of every row in the box, with
+    their counts;
+  - the gate: `ev_gate.gate` on the embeddings of the roles (`gate_role`
+    1, 2, 3 of `<stem>_sim.npz`), once with the check rows as test rows and
+    once per recording bank; the flag is p < `gate.alpha`; the check rows'
+    flagged share with its exact (Clopper-Pearson) interval at `level`
+    (`scipy.stats.binomtest(...).proportion_ci`);
+  - a recording bank: per window and axis the mean, the SD, the 5 %, 50 %
+    and 95 % quantiles of its draws and chi (R3) (`recovery_arrays` with a
+    NaN reference for all but the median; its z-score is not written); per
+    axis the mean of chi over the windows and its 5 %, 50 % and 95 %
+    quantiles over the windows; per well, `well_summary`: n_g and, from the
+    pooled draws of its windows (R4), the mean, the SD (ddof 1) and the 5
+    %, 50 % and 95 % quantiles per axis, with the well's class, donor and
+    batch; `flag_shares` per well, per class and for the bank; per class
+    the example well (sec. 8, Q-R4): the well whose mean T over its windows
+    is the median over the class's wells (the lower middle one for an even
+    number), with its first window; for each member the first two
+    principal components of the bank's and the reference rows' embeddings
+    pooled (`sklearn.decomposition.PCA`, for the figure);
+  - the comparisons: `ev_rec_plan.comparisons`; for each, block 20's
+    `paired_block` on D_sim's rows in the box under both ensembles, the
+    networks as the bootstrap's groups, sigma_seed the larger of the two
+    ensembles' SDs over their members of the members' mean NLL on D_sim;
+    the two ensembles' `rows` arrays must be equal, otherwise the
+    comparison is not made and is named;
+  - NaN and inf are written as null in the JSON files (block 20's rule).
+- The files: `<stem>_sim.json` (`schema` "rec_eval_metrics/1"; the
+  ensemble; n, n_cal, n_d, M, n_post, p; the axes' names and bounds; `nll`,
+  `coverage`, `sbc`, `tarp`, `recovery` as block 20 writes them; `edge`;
+  `gate` with the sizes, the bandwidths, alpha and `check`) and its `.npz`
+  (block 20's arrays, on their rows, with `edge` (n,) bool, `coverage_edge`,
+  `coverage_int`, `gate_T_null`, `gate_T_check`, `gate_p_check`);
+  `<stem>_<r>.json` (the bank; n_r; the wells, classes and batches;
+  `posterior`, the per-axis contraction; `wells`, one entry per well;
+  `gate`, the shares; `example_wells`) and its `.npz` (`rows` and the ids;
+  `mhat`, `sigma`, `q05`, `q50`, `q95`, `contraction` (n_r, p) float32;
+  `well_ids`, `well_n`, `well_mean`, `well_sd`, `well_q05`, `well_q50`,
+  `well_q95`; `gate_t`, `gate_r`, `gate_p_member` (M, n_r), `gate_T`,
+  `gate_p` (n_r,), `gate_flag` (n_r,) bool; `pca_coords`, `pca_evr`,
+  `pca_source`); `paired_<name>_sim.json` and `.npz` as block 27's.
+- `ev_rec_validate.py` (sec. 2.6, "The validation", the cluster's targets):
+  for each ensemble both trees report, on D_sim: every row's |nll_new -
+  nll_old| at most `--nll-tol`; the largest |C_new - C_old| over the grid
+  at most `--coverage-tol`; the SBC verdict of each axis, the Holm
+  rejections and TARP's two verdicts equal (sec. 8, Q-R3). A failure line
+  names the ensemble, the quantity, the row or the beta, and the two
+  values. An ensemble in one tree only, or rows that differ, is a failure.
+- Custom code: `edge_rows`, `edge_split`, `well_summary`, `flag_shares`:
+  a few lines of numpy each; no library computes them. Oracles R36a-c.
+- Test oracles (`test_smoke_rec_metrics.py`):
+  - R36a the edge split: `edge_rows` by hand on six rows of p = 3 (a
+    coordinate at eps exactly is interior, (R1) being strict); on the toy
+    of the tool's document -- theta uniform on (0, 1)^10, x = theta + 0.15
+    xi with xi standard normal, 4,000 rows, 1,000 draws per row, seed in
+    the file -- with the exact posterior (a product of normals truncated to
+    [0, 1]): C_E within the Kolmogorov bound at 0.999 of the diagonal (no
+    such claim for C_E^edge or C_E^int: sec. 2.6's caution); with the
+    posterior's support cut to [eps, 1 - eps]^10, eps = 0.006693: pi_edge
+    within 3 standard errors of 1 - (1 - 2 eps)^10 = 0.1261, C_E^edge(beta)
+    = 0 for every beta < 1 of the grid (the truth has density 0), C_E^int
+    within 0.03 of the diagonal (the tool document's Check 1.1 measured
+    0.0069 on this toy; a property of the toy, not a theorem), and
+    C_E(0.95) within 0.02 of 0.95 (1 - pi_edge); (R2) holds within 1e-12
+    in both cases; an empty edge set gives null and no error;
+  - R36b a recording bank's quantities by definition: for windows whose
+    draws are N(mu_j, s_j^2) per axis, 4,000 draws: the mean, the SD and
+    the three quantiles within 4 Monte Carlo standard errors; chi = 1 - 12
+    sigma^2 exactly from the returned sigma; `well_summary`: the pooled
+    mean equals the mean of the windows' means (1e-6); the pooled variance
+    equals the mean of the windows' variances plus the variance of their
+    means within 1e-3 relative (the law of total variance, the finite-
+    sample factors stated in the test); for windows of one law N(mu, s^2)
+    the pooled SD of a well of 8 windows and that of a well of 2 are both
+    within 2 % of s (it does not shrink like s / sqrt(n_g)); a well of one
+    window equals that window;
+  - R36c the gate's wiring: on arrays built from the contract, the metrics'
+    `gate_T`, `gate_p` and the check rows' values equal `ev_gate.gate` on
+    the same embeddings; `flag_shares` by hand; the check share's interval
+    equal to `scipy.stats.binomtest`'s; the example well by hand on 5 wells
+    (the median of the mean T) and on 4 (the lower middle one);
+  - R36d the validation's second target (D-162): on `rec_fixture`, the
+    as-recorded metrics of each ensemble on D_sim equal block 20's
+    `<stem>_sim.json` and `.npz`: the NLL per row within 1e-9, `gamma`,
+    `coverage`, its band and the members' curves, the SBC ranks and
+    p-values, TARP's curves and p-values, the recovery arrays and summary
+    within 1e-12; the paired files of every comparison equal block 27's on
+    D_sim within 1e-12. The test's inputs are the samples block 35 writes
+    when that block is merged, and until then block 19's `<stem>_sim.npz`
+    recast in block 35's contract by the test (every row a draw row);
+  - R36e `ev_rec_validate.py`: two identical trees pass; one NLL moved by
+    0.003 fails naming the ensemble and the row; the coverage of one
+    ensemble moved by 0.02 fails; an SBC verdict flipped fails; an
+    ensemble missing from one tree fails; exit codes 0 and 3;
+  - R36f the change to `ev_metrics.py`: with `axes` None the two functions
+    return what they returned before on a fixed input (the values written
+    in the test from the unchanged code); with 14 names, 14 named axes; the
+    synthetic suite's E20a-c still pass;
+  - R36g the recorded-kind project end to end (after block 35's merge):
+    every file of `METRICS.json` exists; the comparison list equals
+    `ev_rec_plan.comparisons`; one worker and three give the same files; a
+    sample of other values is left out and named, and none current is
+    refused.
+  Mutations, each of which must fail a check: `<=` in (R1); the edge
+  split over the draw rows in place of S_cal; the pooled draws weighted by
+  window length in place of equally; the well's SD divided by sqrt(n_g);
+  the gate's reference taken from the null rows; `axes` ignored.
+- Confirmed: D-160..D-163 for the rule; the example well and the SBC and
+  TARP criterion of the validation are Claude's (sec. 8, Q-R3, Q-R4).
+- Status: drafted 2026-11-23.
+
+### Block 37: the figures and the report of a recorded project (added 2026-11-23; D-159, D-160; roadmap tool, step S2, wave 1)
+
+- Modules: `hpc/pipeline/evaluation/ev_rec_figures.py` (new; matplotlib,
+  Agg; reads the metrics and the samples and computes nothing scientific),
+  `ev_rec_report.py` (new; the report job's entry),
+  `hpc/pipeline/tests/test_smoke_rec_report.py` (new; checks R37*).
+- Public API: `python3 hpc/pipeline/evaluation/ev_rec_figures.py --config
+  ... --eval-config ...` writes `<out_root>/figures/<family>/<name>.<fmt>`
+  and `FIGURES.md`, one line per figure with a one-sentence caption; pass
+  line `REC FIGURES OK: <n> figure(s)`; exit 3 when there are no metrics.
+  `python3 hpc/pipeline/evaluation/ev_rec_report.py --config ...
+  --eval-config ... [--ncpus N]` runs block 36's `compute`, the figures,
+  then writes `<out_root>/REC_REPORT.md` and, last,
+  `REC_REPORT_COMPLETE.json` (`ev_rec_plan.report_inputs`, the three pass
+  lines, the counts); pass line `REC REPORT OK`.
+- The figures. Per ensemble, under `ensembles/<stem>/`: `cal_coverage`
+  (C_E with its band and the members' curves; C_E^edge and C_E^int beside
+  it), `cal_sbc_ecdf`, `cal_sbc_hist`, `cal_tarp`, `acc_recovery`,
+  `acc_zscore`, `acc_nll` (every row, the interior rows, the edge rows),
+  `acc_contraction` (per axis: D_sim's and each recording bank's);
+  `gate_null` (the distribution of T on the null rows, the check rows and
+  each bank's windows); and for each recording bank r: `gate_wells_<r>`
+  (each well's share of flagged windows, by class, with alpha_gate),
+  `gate_windows_<r>` (p per window, grouped by well, the flagged ones
+  marked), `gate_members_<r>` (r_m per member and window), `emb_pca_<r>`,
+  `rec_wells_<r>` (per axis, each well's mixture: its median and its 5 % to
+  95 % range, by class and batch, on the prior's range),
+  `rec_corner_<r>_c<k>` (the pooled draws of class k's example well). Per
+  comparison, under `comparisons/<name>/`: `cmp_nll` and `cmp_forest`
+  (block 28's, on D_sim). Across: `across/dbar` when there is a comparison.
+  The colours are block 21's (an arm its hue, a class its hue and marker,
+  gray for references and for D_sim as context), one y-axis per panel, the
+  legend below the panels, no title inside the image.
+- The report `REC_REPORT.md`: a header (the project, the configuration's
+  and the evaluation's files and digests, the view's kind, the ensembles
+  reported and those left out with the reason); per ensemble a section
+  with tables read from the metrics' JSON files alone -- the NLL (every
+  row, interior, edge, each member), C_E at 0.50, 0.68, 0.90, 0.95 for the
+  three curves with pi_edge and its expected value and, in one line, sec.
+  2.6's caution on the split curves, SBC's rejected axes,
+  TARP's two verdicts, the contraction per axis on D_sim and on each bank;
+  the gate's sizes, its check share with its interval, and per bank the
+  flagged share per class and the wells in decreasing order of their
+  share; the wells' mixtures per axis; then the comparisons' table (Dbar,
+  its interval, 2 sigma_seed, the two clauses). The report states numbers
+  and what each is; it draws no conclusion about a culture, a condition or
+  an arm. It writes "the mixture over the well's windows", never "the
+  well's posterior" (D-160), and "flagged by the gate", never
+  "misspecified".
+- Custom code: none.
+- Test oracles (`test_smoke_rec_report.py`, on `rec_fixture`'s recorded-
+  kind project and its as-recorded one):
+  - R37a the set of figures equals the one the rules above give (an
+    independent statement in the test), each listed in `FIGURES.md` with a
+    caption and none unlisted; every PNG's signature; a figure to PDF;
+  - R37b the figures' module imports no statistics library (scipy,
+    sklearn, torch, sbi, npe_diagnostics, bootstrap_paired, ev_metrics,
+    ev_rec_metrics, ev_gate) and calls no mean, SD, quantile or median;
+    the colours are block 21's;
+  - R37c every number of the report's tables, parsed back, equals the
+    metrics' JSON value it names at the printed precision; the header's
+    digests are the files'; neither "well's posterior" nor "misspecified"
+    occurs in the report or in `FIGURES.md`;
+  - R37d `ev_rec_report.py` end to end: the three pass lines,
+    `REC_REPORT_COMPLETE.json` with the current `report_inputs` and as
+    many figures as `FIGURES.md` lists; no metrics refused (exit 3).
+  Mutations: the gate's figures dropped; a quantile computed in the
+  figures; a table reading a sample file in place of the metrics.
+- Confirmed: D-159, D-160 for the report's wording; the list of figures is
+  Claude's proposal.
+- Status: drafted 2026-11-23.
+
+### Block 38: the jobs and the run sheet of a recorded project's evaluation (added 2026-11-23; D-159, D-162; roadmap tool, step S2, wave 1)
+
+- Modules: `hpc/pipeline/evaluation/ev_rec_submit.py` (new; the launcher,
+  standard library only), `submit_rec_eval.sh` (new; its wrapper on the
+  login node: `--project <tag>` reads `<tag>.json` and
+  `<tag>_rec_eval.json`), `hpc/pipeline/projects/synth/synth_rec_eval.json`
+  (new: the as-recorded evaluation of the synthetic project, D-162's
+  validation on davinci: `as_recorded` true, `sim_draw_rows_per_donor`
+  null, `seed`, `n_post`, `batch_rows` and `oracle_tol` those of
+  `synth_eval.json`, `validate_against` its `out_root`, an `out_root` of
+  its own beside it), the README's run sheets "the evaluation of a recorded
+  project" and "synth: the validation of the recorded path (D-162)",
+  `hpc/pipeline/tests/test_smoke_rec_jobs.py` (new; checks R38*). The job
+  script is block 22's `jobs/eval_run.pbs`, unchanged.
+- Public API: `bash hpc/pipeline/evaluation/submit_rec_eval.sh --project
+  <tag> [--dry-run] [--what sample,report,validate] [--resample
+  <name>,...|all]` (= `ev_rec_submit.py --config ... --eval-config ...`);
+  exit 0 with `REC EVAL SUBMIT OK: <n> job(s) submitted, <d> done, <l>
+  live` (`REC EVAL DRY RUN: ... nothing written`), 2 on the arguments or
+  the configurations, 3 on a refusal (nothing submitted), 4 when a qsub
+  fails.
+- Rule (block 22's, for these units): each unit is done, live (its job in
+  `<out_root>/jobs/ledger.json` queued, held or running) or submitted;
+  - `sample:<name>`, one per complete ensemble of the view: done when its
+    `<stem>_sample.json` lists files that all exist, with the current
+    `sample_params` and its best fit's current `BEST_FIT_COMPLETE.json`
+    sha256; otherwise absent or stale (the reason printed), or
+    `--resample`; an ensemble whose best fit is not complete is named, not
+    sampled;
+  - `report`, one: submitted when a sampling is submitted now or live, or
+    when `REC_REPORT_COMPLETE.json` records other inputs than
+    `ev_rec_plan.report_inputs`; after the samplings (`-W
+    depend=afterok:...`); not submitted while no ensemble is sampled or
+    being sampled;
+  - `validate`, one, only for an as-recorded view with `validate_against`:
+    `ev_rec_validate.py --old <validate_against> --new <out_root>`, after
+    the report; left out of the default `--what` otherwise;
+  - every job is `eval_run.pbs` in `envs.train` with its command in
+    `<out_root>/jobs/<unit>.argv` and its log in `<out_root>/jobs/logs/`,
+    job names of at most 15 characters (`er_s<i>`, `er_report`,
+    `er_valid`), the roadmap's markers with `ROADMAP_STAGE` I35 for the
+    samplings, I37 for the report and I36 for the validation
+    (`specs/roadmap/tool.yaml`); a program or the job script missing from
+    the checkout is a refusal; nothing of the pipeline's state is read or
+    written.
+- Custom code: none.
+- Test oracles (`test_smoke_rec_jobs.py`):
+  - R38a the launcher's dry run on the committed `synth.json` (its
+    `sbi_dir` at this checkout) and `synth_rec_eval.json`: the committed
+    resources, `ROADMAP_STAGE` per unit, the folders not complete named,
+    nothing written; the wrapper's plan equal to the launcher's; a bad
+    `--what`, an absent project; `synth_rec_eval.json` loads, with the
+    `seed`, `n_post`, `batch_rows` and `oracle_tol` of `synth_eval.json`;
+  - R38b under the fake PBS on `rec_fixture`'s as-recorded project: the
+    samplings, the report after them and the validation after the report,
+    every exit 0, the validation's pass line (the new path against the
+    fixture's synthetic evaluation: D-162's first target, end to end
+    through the jobs); run again: every unit done; `n_post` changed: the
+    samplings stale; a report value changed (dpi): the report alone stale;
+    `--resample`; a queued job live and not submitted twice;
+  - R38c under the fake PBS on the recorded-kind project: one sampling per
+    complete ensemble and the report, no `validate` unit; an ensemble
+    whose `BEST_FIT_COMPLETE.json` is removed is named and not sampled;
+  - R38d the launcher and the wrapper are ASCII and LF, the wrapper passes
+    `bash -n`, and the launcher imports the standard library and the
+    pipeline's own modules only.
+  Mutations: the report not after the samplings; the sampling's values
+  ignored in the staleness test; the validation submitted for a recorded
+  view; live jobs ignored.
+- Confirmed: D-159, D-162; the resources are Claude's (sec. 8, Q-R5).
+- Status: drafted 2026-11-23.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
@@ -5848,6 +6799,35 @@ so its checks from B4 on were not run here; blocks 11-14 do not touch the
 generator it tests (`bench_burst_generator.py`).
 
 ## 8. Open questions
+
+- The evaluation of a recorded project (sec. 2.6, blocks 33-38; raised
+  2026-11-23). Decided by the user: D-159 (first step, any recorded
+  project, two waves), D-160 (the well's summary), D-161 (the gate's
+  ensemble statistic), D-162 (the validation target), D-163 (the draw rows,
+  no L-C2ST, the comparisons, n_post, the edge width, the gate's reference
+  and the disjoint sets, the threshold as a value of the configuration, the
+  tolerances). Still open, Claude's proposals in brackets:
+  - Q-R1 how the share of flagged windows of a well, of a class or of a
+    bank is read, the windows of a well sharing a culture [no test in wave
+    1: the share is reported beside alpha_gate; D-161 leaves it open];
+  - Q-R2 the gate's values the user did not fix: the proportions in which
+    the networks are dealt, (0.4, 0.25, 0.25, 0.1) for the reference, the
+    rank, the null and the check rows; the caps of the rank and null sets,
+    1,000 each; one row per network in the rank, null and check sets; the
+    smallest null set accepted, 50 rows [values of the configuration, so
+    changing one changes no code];
+  - Q-R3 how SBC and TARP are compared on the cluster in the validation
+    [each axis's verdict, the Holm family's rejections and TARP's two
+    verdicts unchanged; the user fixed the NLL's and the coverage's
+    tolerances only];
+  - Q-R4 the example well of each class in the figures [the well whose mean
+    T over its windows is the median over the class's wells: an ordinary
+    well for the gate, chosen without looking at the posteriors];
+  - Q-R5 the jobs' resources [sample 8 cores, 64gb, 24 h; report 8 cores,
+    64gb, 24 h: block 22's];
+  - Q-R6 the predictive check on recordings, wave 2 [not specified: the
+    contract "a simulation at a given theta, re-detected as the bank's
+    simulations were" and its cost come first, D-159].
 
 - [closed 2026-11-11 by D-127: the six proposals below confirmed as they
   stand] The evaluation's open choices (sec. 2.5, blocks 19-22; raised
