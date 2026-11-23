@@ -6616,6 +6616,15 @@ plan; Confirmed: yes 2026-11-17]
   the synthetic evaluation> --new <out_root of the as-recorded evaluation>
   [--nll-tol 0.002] [--coverage-tol 0.01]`: exit 0 with `REC VALIDATION OK:
   <n> ensemble(s)`, 3 with one line per failure otherwise.
+  [2026-11-23, the contract of wave C] `--record FILE` writes the verdict
+  to FILE (a temporary name, then renamed), whether it passes or fails:
+  `schema` "rec_eval_validation/1", `old`, `new` (absolute), `ok` (bool),
+  `n_ensembles`, `failures` (the failure lines), `nll_tol`,
+  `coverage_tol`, `metrics_index_sha256` (the sha256 of
+  `<new>/metrics/METRICS.json`, read before anything is compared; null
+  when that file is absent), `finished`. Block 38's launcher tells a
+  current validation from a stale one by this file; the exit codes and
+  the printed lines are the same with and without it.
 - Rule (sec. 2.6; every seed is `seed_of(seed, "metrics", <stem>, <data
   set>, <what>)`, block 20's, so that the as-recorded numbers are block
   20's):
@@ -6786,6 +6795,28 @@ plan; Confirmed: yes 2026-11-17]
   then writes `<out_root>/REC_REPORT.md` and, last,
   `REC_REPORT_COMPLETE.json` (`ev_rec_plan.report_inputs`, the three pass
   lines, the counts); pass line `REC REPORT OK`.
+  [2026-11-23, the contract of wave C]
+  `ev_rec_figures.make_all(cfg_path, ecfg_path, log=print) -> [(name,
+  caption)]`, `name` the figure's path relative to `<out_root>/figures/`
+  without its extension (`ensembles/<stem>/cal_coverage`), in the order
+  of `FIGURES.md`; the figures' names are the module's constants
+  `ENSEMBLE_FIGURES`, `BANK_FIGURES` (one per recording bank),
+  `CORNER_FIGURE` (one per class of a bank), `COMPARISON_FIGURES`,
+  `ACROSS_FIGURES`; `FIGURES.md` holds one line per figure in block 21's
+  form, `` - `<name>.{<formats>}`: <caption>. ``, under a header that names
+  the metrics' folder, the formats, the dpi and what the metrics left
+  out. `ev_rec_report.write_report(cfg_path, ecfg_path, log=print) ->
+  path` writes `REC_REPORT.md`; `ev_rec_report.run(cfg_path, ecfg_path,
+  ncpus=None, log=print) -> record` is the report job, in this order:
+  `report_inputs` (before anything is computed), `ev_rec_metrics.compute`,
+  `make_all`, `write_report`, `REC_REPORT_COMPLETE.json`. That file's
+  keys (`ev_rec_report.COMPLETE_KEYS`): `schema` "rec_eval_report/1",
+  `inputs` (`ev_rec_plan.report_inputs(view, ecfg)`), `config`,
+  `eval_config`, `view_kind`, `ensembles` (the names reported, sorted),
+  `left_out` (the metrics index's), `comparisons` (the names made),
+  `n_figures`, `pass_lines` (the metrics', the figures' and the report's,
+  in this order), `metrics_index`, `figures_index`, `report` (the three
+  files' paths), `seconds` (`metrics`, `figures`, `report`), `finished`.
 - The figures. Per ensemble, under `ensembles/<stem>/`: `cal_coverage`
   (C_E with its band and the members' curves; C_E^edge and C_E^int beside
   it), `cal_sbc_ecdf`, `cal_sbc_hist`, `cal_tarp`, `acc_recovery`,
@@ -6868,6 +6899,18 @@ plan; Confirmed: yes 2026-11-17]
   live` (`REC EVAL DRY RUN: ... nothing written`), 2 on the arguments or
   the configurations, 3 on a refusal (nothing submitted), 4 when a qsub
   fails.
+  [2026-11-23, the contract of wave C] In a process:
+  `ev_rec_submit.plan(cfg_path, ecfg_path, what=None, resample=(),
+  log=print) -> (view, ecfg, units)`, each unit a dict of `unit`, `kind`,
+  `name`, `state`, `why`, `argv`, `live`, nothing submitted or written;
+  `run(cfg_path, ecfg_path, what=None, resample=(), dry_run=False,
+  log=print) -> exit code`; `default_what(view, ecfg)`; the constants
+  `KINDS = ("sample", "report", "validate")`, `STAGE_OF` (I35, I37, I36),
+  `REPORT_COMPLETE`, `VALIDATION_RECORD = "VALIDATION.json"`, `JOB_NAMES`;
+  `Refuse`. `what` None is `default_what`: sample and report, and
+  validate as well for an as-recorded view whose evaluation has
+  `validate_against`; `--what validate` for any other view is a refusal
+  that says why.
 - Rule (block 22's, for these units): each unit is done, live (its job in
   `<out_root>/jobs/ledger.json` queued, held or running) or submitted;
   - `sample:<name>`, one per complete ensemble of the view: done when its
@@ -6884,6 +6927,18 @@ plan; Confirmed: yes 2026-11-17]
   - `validate`, one, only for an as-recorded view with `validate_against`:
     `ev_rec_validate.py --old <validate_against> --new <out_root>`, after
     the report; left out of the default `--what` otherwise;
+    [2026-11-23, the contract of wave C] its command ends with `--record
+    <out_root>/VALIDATION.json` (block 36). The unit is done when that
+    record exists with `old` equal to `validate_against` and
+    `metrics_index_sha256` equal to the sha256 of the current
+    `<out_root>/metrics/METRICS.json`: the launcher then prints its
+    verdict, `validated: OK, <n> ensemble(s)` or `validated: FAILED, <k>
+    failure(s), see <record>`, and does not submit it again (a failed
+    comparison of unchanged files fails again; to repeat it, delete the
+    record). Otherwise it is absent or stale and is submitted after the
+    report's job of this run or its live one (`afterok`), or at once when
+    the report is done; while the report is neither done, live nor
+    submitted now, the launcher says there is nothing to validate yet;
   - every job is `eval_run.pbs` in `envs.train` with its command in
     `<out_root>/jobs/<unit>.argv` and its log in `<out_root>/jobs/logs/`,
     job names of at most 15 characters (`er_s<i>`, `er_report`,
@@ -6913,6 +6968,19 @@ plan; Confirmed: yes 2026-11-17]
   - R38d the launcher and the wrapper are ASCII and LF, the wrapper passes
     `bash -n`, and the launcher imports the standard library and the
     pipeline's own modules only.
+  [2026-11-23, the contract of wave C] R38b and R38c run the real
+  programs when `ev_rec_report.run` and `ev_rec_validate.validate` are
+  implemented in the checkout. While either is a stub (block 37 is
+  written in parallel), they run on a copy of the checkout's
+  `hpc/pipeline` in a temporary directory in which the test replaces
+  `ev_rec_report.py` and `ev_rec_validate.py` by stand-ins of a few
+  lines (a report that writes `REC_REPORT_COMPLETE.json` with the current
+  `report_inputs` and a `metrics/METRICS.json`, and prints `REC REPORT
+  OK`; a validation that writes its record and prints `REC VALIDATION OK:
+  <n> ensemble(s)`), so that the launcher's rules -- the order, done,
+  stale, live, `--resample`, the validation's record -- are tested in the
+  block's own worktree; the samplings are block 35's real ones in both
+  cases. The summary line of each check says which programs ran.
   Mutations: the report not after the samplings; the sampling's values
   ignored in the staleness test; the validation submitted for a recorded
   view; live jobs ignored.
