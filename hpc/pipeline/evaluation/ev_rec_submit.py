@@ -365,13 +365,21 @@ def run(cfg_path, ecfg_path, what=None, resample=(), dry_run=False, log=print):
             if kind == "report" and ids["sample"]:
                 note = ("; it does not include the sampling submitted now -- run this again "
                         "once it has ended")
+            if kind == "validate" and ids["report"]:
+                note = ("; it does not cover the report submitted now -- run this again "
+                        "once it has ended")
             log("REC EVAL SUBMIT: %s live: job %s%s" % (u["unit"], u["live"], note))
             if kind in live_ids:
                 live_ids[kind].append(u["live"].split(" ")[0])
             if kind == "sample":
                 sampling_now = True
             continue
-        if u["state"] == "done" and not (kind == "report" and sampling_now):
+        # what this run redoes upstream comes first: the report after a sampling
+        # submitted now or live, the validation after a report submitted now or live
+        # (that report rewrites the metrics the validation's record names)
+        upstream = ((kind == "report" and sampling_now)
+                    or (kind == "validate" and bool(ids["report"] or live_ids["report"])))
+        if u["state"] == "done" and not upstream:
             n_done += 1
             if kind == "report":
                 report_done = True
@@ -381,7 +389,9 @@ def run(cfg_path, ecfg_path, what=None, resample=(), dry_run=False, log=print):
                 log("REC EVAL SUBMIT: %s done (%s)" % (u["unit"], u["why"]))
             continue
         if u["state"] == "done":
-            u = dict(u, state="stale", why="the sampling of this run comes first")
+            u = dict(u, state="stale", why=("the sampling of this run comes first"
+                                            if kind == "report" else
+                                            "the report of this run comes first"))
         depend = []
         if kind == "sample":
             sampling_now = True

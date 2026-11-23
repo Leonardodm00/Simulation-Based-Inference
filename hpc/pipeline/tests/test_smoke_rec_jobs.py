@@ -469,23 +469,29 @@ def test_r38b_as_recorded():
     rc, out = _submit("--config", cfg, "--eval-config", ec, env=env)
     assert rc == 0 and "REC EVAL SUBMIT OK: 0 job(s) submitted, 5 done, 0 live" in out, out[-3000:]
     assert "REC EVAL SUBMIT: validate done (validated: OK, 3 ensemble(s))" in out, out[-2000:]
-    # n_post changed: the three samplings stale, the report after them
+    # n_post changed: the three samplings stale, the report after them, the validation
+    # after the report (its record would be stale once that report ends)
     ec2 = _ecfg_copy(ec, os.path.join(tmp, "rec_eval_n20.json"), n_post=20)
     rc, out = _submit("--config", cfg, "--eval-config", ec2, "--dry-run", env=env)
     assert rc == 0 and out.count("(stale: n_post was 40, now 20)") == 3, out[-3000:]
     assert "report would be submitted (stale: the sampling of this run comes first)" in out, out
     assert ("depend=afterok:%s " % ":".join("<sample_%s>" % n.replace(":", "_") for n in names)
             in out), out[-3000:]
-    assert "REC EVAL DRY RUN: 4 job(s) would be submitted, 1 done, 0 live" in out, out[-1000:]
-    # a report value changed (dpi): the report alone stale
+    assert "validate would be submitted (stale: the report of this run comes first)" in out, out
+    assert "depend=afterok:<report> " in out, out[-3000:]
+    assert "REC EVAL DRY RUN: 5 job(s) would be submitted, 0 done, 0 live" in out, out[-1000:]
+    # a report value changed (dpi): the report stale and the validation after it, the
+    # samplings done
     ec3 = _ecfg_copy(ec, os.path.join(tmp, "rec_eval_dpi.json"), dpi=61)
     rc, out = _submit("--config", cfg, "--eval-config", ec3, "--dry-run", env=env)
-    assert rc == 0 and "REC EVAL DRY RUN: 1 job(s) would be submitted, 4 done, 0 live" in out, out
+    assert rc == 0 and "REC EVAL DRY RUN: 2 job(s) would be submitted, 3 done, 0 live" in out, out
     assert "report would be submitted (stale: its samples or its values changed" in out, out[-1500:]
-    # --resample: that sampling, the report after it
+    line = [l for l in out.splitlines() if l.startswith("    qsub -N er_valid ")]
+    assert len(line) == 1 and "depend=afterok:<report> " in line[0], line
+    # --resample: that sampling, the report after it, the validation after the report
     rc, out = _submit("--config", cfg, "--eval-config", ec, "--resample", names[0], "--dry-run",
                       env=env)
-    assert rc == 0 and "REC EVAL DRY RUN: 2 job(s) would be submitted, 3 done, 0 live" in out, out
+    assert rc == 0 and "REC EVAL DRY RUN: 3 job(s) would be submitted, 2 done, 0 live" in out, out
     assert ("sample:%s would be submitted (stale: --resample)" % names[0]) in out, out[-2000:]
     assert "depend=afterok:<sample_%s> " % names[0].replace(":", "_") in out, out[-2000:]
     # the validation's record: stale when the metrics changed (submitted at once, the report
@@ -522,7 +528,7 @@ def test_r38b_as_recorded():
     live_id = led["sample:" + names[0]]["job_id"]
     assert ("sample:%s live: job %s" % (names[0], live_id)) in out, out[-2000:]
     rc, out = _submit("--config", cfg, "--eval-config", ec, "--dry-run", env=slow)
-    assert rc == 0 and "REC EVAL DRY RUN: 1 job(s) would be submitted, 3 done, 1 live" in out, out
+    assert rc == 0 and "REC EVAL DRY RUN: 2 job(s) would be submitted, 2 done, 1 live" in out, out
     assert ("report would be submitted (stale: the sampling of this run comes first)" in out
             and "depend=afterok:%s " % live_id in out), out[-2000:]
     assert time.time() - t_slow < SLOW_DELAY_S, "the queued job may have started: raise SLOW_DELAY_S"

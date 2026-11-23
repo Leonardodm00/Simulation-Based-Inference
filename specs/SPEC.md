@@ -7055,7 +7055,14 @@ plan; Confirmed: yes 2026-11-17]
     record). Otherwise it is absent or stale and is submitted after the
     report's job of this run or its live one (`afterok`), or at once when
     the report is done; while the report is neither done, live nor
-    submitted now, the launcher says there is nothing to validate yet;
+    submitted now, the launcher says there is nothing to validate yet.
+    [2026-11-23, at block 38's gate] A validation that is done is
+    submitted again, after the report (`afterok`), whenever the report
+    is submitted in this run or is live: that report rewrites the
+    metrics its record names, so the record would be stale the moment
+    the report ends (the rule of the report after a sampling of this
+    run, one step down); a live validation is left as it is, with a
+    note that it does not cover the report submitted now;
   - every job is `eval_run.pbs` in `envs.train` with its command in
     `<out_root>/jobs/<unit>.argv` and its log in `<out_root>/jobs/logs/`,
     job names of at most 15 characters (`er_s<i>`, `er_report`,
@@ -7077,7 +7084,8 @@ plan; Confirmed: yes 2026-11-17]
     every exit 0, the validation's pass line (the new path against the
     fixture's synthetic evaluation: D-162's first target, end to end
     through the jobs); run again: every unit done; `n_post` changed: the
-    samplings stale; a report value changed (dpi): the report alone stale;
+    samplings stale; a report value changed (dpi): the report stale and the
+    validation after it [2026-11-23, at the gate], the samplings done;
     `--resample`; a queued job live and not submitted twice;
   - R38c under the fake PBS on the recorded-kind project: one sampling per
     complete ensemble and the report, no `validate` unit; an ensemble

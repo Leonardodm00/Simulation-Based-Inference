@@ -1229,8 +1229,10 @@ is `jobs/eval_run.pbs` in `envs.train`; its command is in `<out_root>/jobs/<unit
 `<tag>_rec_eval.json`.
 
 ```
-# R1. the code; pass: the last line names the block-38 commit or a later one
-cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin sci/pipeline && git log --oneline -1
+# R1. the code: these blocks are on the branch sci/tool, which continues sci/pipeline (a fast-forward: new
+#     files, one optional argument in ev_metrics.py, these sections); pass: the last line names the block-38
+#     commit or a later one. "Not possible to fast-forward" means sci/pipeline has moved on: paste it
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin sci/tool && git log --oneline -1
 
 # R2. the cluster-side check of the launcher and the job script (no training; a few seconds): ASCII and LF,
 #     bash -n, the launcher's imports; pass lines "1 of 1 checks pass", twice (the first check SKIPs, "0 of 1",
@@ -1282,8 +1284,9 @@ the synthetic evaluation or of the pipeline is written. The verdict is in
 `/davinci-1/home/ldellamea/runs/synth/evaluation_rec/VALIDATION.json`.
 
 ```
-# D1. the code; pass: the last line names the block-38 commit or a later one
-cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin sci/pipeline && git log --oneline -1
+# D1. the code (the branch sci/tool, as in R1 of the section above); pass: the last line names the block-38
+#     commit or a later one
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin sci/tool && git log --oneline -1
 
 # D2. the cluster-side check (no training; a few seconds); pass lines "1 of 1 checks pass", twice (the first
 #     SKIPs, "0 of 1", on a python older than 3.10: paste it)
@@ -1321,9 +1324,9 @@ grep -h "REC VALIDATION\|FAIL:\|REFUSE\|EVAL JOB EXIT" /davinci-1/home/ldellamea
 
 The validation is done once `VALIDATION.json` names the synthetic evaluation and the sha256 of the current
 `evaluation_rec/metrics/METRICS.json`: it is not submitted again, whatever its verdict (a failed comparison
-of unchanged files fails again). To repeat it, delete that file and run D4 and D5. A report run again (a
-sampling resampled, a report value changed) writes new metrics; the run after it submits the validation
-again.
+of unchanged files fails again). To repeat it, delete that file and run D4 and D5. A report submitted
+again (a sampling resampled, a report value changed) writes new metrics, so the same run submits the
+validation again, after that report.
 
 ## Tests
 
