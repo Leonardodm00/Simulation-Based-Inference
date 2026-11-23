@@ -1,0 +1,65 @@
+{
+  "_comment": "The evaluation of the synthetic project read as recorded (specs/SPEC.md sec. 2.6 and blocks 33-38; D-159, D-162, D-163, D-164 of the decision log): D-162's validation of the recorded path on davinci -- the new path run on the synthetic project, then compared with the synthetic evaluation of synth_eval.json (ev_rec_validate.py). A file of its own: synth.json and synth_eval.json are not touched. Read by hpc/pipeline/evaluation/ev_rec_config.py: every key is required, there are no defaults in the code, and a key starting with '_' documents the key after it and is ignored. Values marked [Claude's] are logistics, not the user's decisions.",
+
+  "_out_root": "Absolute. samples/ (block 35), metrics/ (block 36), figures/ (block 37), jobs/ (block 38) and VALIDATION.json under it; beside the synthetic evaluation's out_root, never inside it (wave C's contract).",
+  "out_root": "/davinci-1/home/ldellamea/runs/synth/evaluation_rec",
+
+  "_seed": "The synthetic evaluation's (synth_eval.json): with it the new path draws from the same seeds as blocks 19 and 20 (sec. 2.6, the validation).",
+  "seed": 4242,
+
+  "_n_post": "The synthetic evaluation's (D-163 (4): 1,000; 200 from each of the five members).",
+  "n_post": 1000,
+
+  "_batch_rows": "The synthetic evaluation's: the same batches through a member as block 19's. [Claude's]",
+  "batch_rows": 64,
+
+  "_oracle_tol": "The synthetic evaluation's (nats; 2e-3, 2026-11-12): each rebuilt member must reproduce its recorded per-row NLL within it; it changes no output.",
+  "oracle_tol": 0.002,
+
+  "_as_recorded": "true: the synthetic project read as recorded (D-162); the cohorts' theta* never reach the code under test.",
+  "as_recorded": true,
+
+  "_sim_draw_rows_per_donor": "null: draws on every row of D_sim, so the rows and the seeds are blocks 19's (sec. 2.6, the validation).",
+  "sim_draw_rows_per_donor": null,
+
+  "_edge_eps": "The edge width eps of (R1): the logistic function at -5, the flow's spline bound (D-163 (4)).",
+  "edge_eps": 0.006693,
+
+  "_gate": "The gate (D-161, D-163 (4), D-164): the networks' fractions (reference, rank, null, check), the caps, the smallest null set, the rows of a network per set, the kernel's bandwidth factors, alpha_gate.",
+  "gate": {
+    "donor_fracs": [0.4, 0.25, 0.25, 0.1],
+    "n_ref": 800,
+    "n_rank": 1000,
+    "n_null": 1000,
+    "n_null_min": 50,
+    "rows_per_donor": 1,
+    "factors": [0.25, 0.5, 1, 2, 4],
+    "alpha": 0.05
+  },
+
+  "_bootstrap_n": "The synthetic evaluation's. [Claude's]",
+  "bootstrap_n": 10000,
+
+  "_level": "The synthetic evaluation's: the level of the bands and intervals.",
+  "level": 0.95,
+
+  "_dpi": "The synthetic evaluation's (Q-E6: 200).",
+  "dpi": 200,
+
+  "_formats": "The synthetic evaluation's (Q-E6: PNG and PDF).",
+  "formats": ["png", "pdf"],
+
+  "_ncpus": "The synthetic evaluation's: worker processes when a command is run by hand; a job passes its own cores (jobs below). [Claude's]",
+  "ncpus": 8,
+
+  "_validate_against": "The out_root of synth_eval.json: the synthetic evaluation the validation compares with (ev_rec_validate.py --old).",
+  "validate_against": "/davinci-1/home/ldellamea/runs/synth/evaluation",
+
+  "_jobs": "Block 38: the PBS queue (intel, D-137) and each kind's resources -- sample (one per ensemble, ev_rec_sample.py) and report (one: metrics, figures, report) as the synthetic evaluation's (Q-R5); validate (one, ev_rec_validate.py: it reads two trees of JSON and NPZ files). [Claude's]",
+  "jobs": {
+    "queue": "intel",
+    "sample": {"ncpus": 8, "mem": "64gb", "walltime": "24:00:00"},
+    "report": {"ncpus": 8, "mem": "64gb", "walltime": "24:00:00"},
+    "validate": {"ncpus": 1, "mem": "8gb", "walltime": "01:00:00"}
+  }
+}
