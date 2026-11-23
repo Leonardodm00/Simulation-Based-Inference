@@ -253,6 +253,28 @@ def test_r33a_config():
     for k in ("seed", "n_post", "batch_rows"):
         assert getattr(ea, k) == old[k], k
     assert er.as_recorded is False and er.sim_draw_rows_per_donor == 1
+    # [amendment 2, D-165] both fixture configurations: gate.alpha 0.5, n_null_min 1, and on
+    # the fixture's simulated bank a null set of 2 rows, so k_gate (R9) = 1, not a refusal
+    import math
+    import ev_gate
+    import ev_plan
+    import ev_rec_data as D
+    import ev_rec_plan as P
+    for e in (ea, er):
+        assert e.gate["alpha"] == 0.5 and e.gate["n_null_min"] == 1, (e.path, e.gate)
+        view = P.load_view(F["cfg"] if e.as_recorded else F["cfg_rec"], e)
+        index, _paths = D.sim_index(view)
+        ens = view.ensembles[0]
+        rec = _read(ens.records[0])
+        rows = D.report_rows(index, rec["split_fracs"], rec["split_seed"], rec["split_hash"])
+        g = e.gate
+        role = ev_gate.assign_roles(index.donor[rows], g["donor_fracs"], g["n_ref"], g["n_rank"],
+                                    g["n_null"], g["rows_per_donor"],
+                                    ev_plan.seed_of(e.seed, "gate"))
+        n_null = int((role == ev_gate.ROLE_NULL).sum())
+        k_gate = int(math.ceil(g["alpha"] * (n_null + 1))) - 1
+        assert n_null == 2 and k_gate == 1, (e.path, n_null, k_gate)
+        assert n_null >= g["n_null_min"]
 
 
 def test_r33b_as_recorded():
