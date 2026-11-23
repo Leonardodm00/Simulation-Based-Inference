@@ -6315,7 +6315,9 @@ plan; Confirmed: yes 2026-11-17]
     reference, 500 rank, 500 null and 4,000 test points, every point with
     a latent of its own: the share of test points with p <= a is at most a
     + 3 sqrt(a (1 - a) / 4000) for a in {0.05, 0.1, 0.5}, and at least a -
-    3 sqrt(a (1 - a) / 4000) - 1 / 501 (the p-value's grain);
+    3 sqrt(a (1 - a) / 4000) - 0.01 (the p-value's grain, 1 / 501, and the
+    ties of T, which takes multiples of 1 / 2500 and so can equal a null
+    value; a tie counts against the window in (R8));
   - R34e power, the same toy with the test latents displaced by delta
     times 0.35 along e_2: the flagged share at alpha 0.05 is non-decreasing
     in delta over (0, 2, 4, 8, 16) and above 0.9 at 16 (the single-member
