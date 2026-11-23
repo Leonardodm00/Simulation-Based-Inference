@@ -6505,7 +6505,18 @@ plan; Confirmed: yes 2026-11-17]
   view's kind, the banks' names and globs, `sample_params`, the seeds, the
   oracle's largest and mean difference per member, the gate's sizes
   (N_ref, N_rank, N_null, N_chk, the networks per group), n, n_d, n_z, the
-  axes' names and bounds (`axes_of`), `files`, the timings.
+  axes' names and bounds (`axes_of`), `files`, the timings. [2026-11-23,
+  the contract of wave B: the keys, block 19's where it has them --
+  `schema`, `ensemble`, `stem`, `search`, `campaign`, `arm`, `folder`,
+  `view_kind`, `members` (per member: `record`, `ckpt`, `ckpt_sha256`,
+  `seed`, as `ev_models.rebuild`'s info), `banks` (the names),
+  `bank_globs`, `sim_bank`, `best_fit_complete_sha256`, `sample_params`
+  (= `ecfg.sample_params()`), `seeds`, `oracle_max_abs_nats` and
+  `oracle_mean_abs_nats` (one value per member), `oracle_tol`, `gate`
+  (`n_ref`, `n_rank`, `n_null`, `n_check`, `networks`: the four groups'
+  numbers of networks, `seed`), `n`, `n_draw`, `n_z`, `M`, `n_post`, `p`,
+  `axes` (`names`, `bounds` or null), `files`, `eval_config`, `config`,
+  `config_sha256`, `seconds`, `ncpus`, `torch_threads`.]
 - Custom code: none.
 - Test oracles (`test_smoke_rec_sample.py`, on `rec_fixture`):
   - R35a the validation's first target (D-162): the as-recorded sampling
@@ -6567,7 +6578,13 @@ plan; Confirmed: yes 2026-11-17]
   log=print)` the same in a process. Pure functions, no file read or
   written: `edge_rows(theta, eps) -> (n,) bool`; `edge_split(gamma, edge,
   betas) -> dict`; `well_summary(draws, well) -> dict`;
-  `flag_shares(flag, group) -> (ids, n, k)`.
+  `flag_shares(flag, group) -> (ids, n, k)`; [2026-11-23, the contract of
+  wave B] `gate_size(alpha, n_null, level) -> dict` with `k_gate`,
+  `size_mean`, `size_lo`, `size_hi`; and the exact signatures
+  `edge_split(gamma, edge, eps, p, betas=BETAS) -> (summary, arrays)`,
+  `well_summary(draws, well) -> dict` of `well_ids` (G,) int64 sorted,
+  `well_n` (G,) int64, `well_mean`, `well_sd`, `well_q05`, `well_q50`,
+  `well_q95` (G, p) float64.
   `python3 hpc/pipeline/evaluation/ev_rec_validate.py --old <out_root of
   the synthetic evaluation> --new <out_root of the as-recorded evaluation>
   [--nll-tol 0.002] [--coverage-tol 0.01]`: exit 0 with `REC VALIDATION OK:
@@ -6595,7 +6612,12 @@ plan; Confirmed: yes 2026-11-17]
   - the gate: `ev_gate.gate` on the embeddings of the roles (`gate_role`
     1, 2, 3 of `<stem>_sim.npz`), once with the check rows as test rows and
     once per recording bank; the flag is p < `gate.alpha`; k_gate (R9), its
-    value 0 a refusal naming `gate.alpha` and N_null; the size band, the
+    value 0 a refusal naming `gate.alpha` and N_null, computed as
+    ceil(alpha_gate (N_null + 1) - 1e-9) - 1 [2026-11-23, the contract of
+    wave B: the 1e-9 guards the ceiling against binary roundoff, 0.05 x 100
+    being a hair above 5 in some products; it agrees with the flag's own
+    comparison, since (1 + c) / (N_null + 1) and alpha_gate are the same
+    float whenever they are the same rational]; the size band, the
     central interval at `level` of Beta(k_gate, N_null + 1 - k_gate)
     (`scipy.stats.beta.ppf`), with its mean k_gate / (N_null + 1); the
     check rows' flagged share with its exact (Clopper-Pearson) interval at
@@ -6621,6 +6643,13 @@ plan; Confirmed: yes 2026-11-17]
     the two ensembles' `rows` arrays must be equal, otherwise the
     comparison is not made and is named;
   - NaN and inf are written as null in the JSON files (block 20's rule).
+- [2026-11-23, the contract of wave B] In `<stem>_sim.npz` every per-row
+  array has the n rows of D_sim, with NaN on a row that has no draws or
+  whose theta is outside the box where the quantity needs them (`gamma`
+  (n,), `mhat`, `sigma`, `q05`, `q95`, `zeta`, `contraction` (n, p)), so
+  that with every row a draw row the arrays are block 20's; `draw` (n,)
+  bool is written beside `calib`. The SBC and TARP arrays are block 20's,
+  on the calibration rows.
 - The files: `<stem>_sim.json` (`schema` "rec_eval_metrics/1"; the
   ensemble; n, n_cal, n_d, M, n_post, p; the axes' names and bounds; `nll`,
   `coverage`, `sbc`, `tarp`, `recovery` as block 20 writes them; `edge`;
@@ -6640,7 +6669,11 @@ plan; Confirmed: yes 2026-11-17]
   for each ensemble both trees report, on D_sim: every row's |nll_new -
   nll_old| at most `--nll-tol`; the largest |C_new - C_old| over the grid
   at most `--coverage-tol`; the SBC verdict of each axis, the Holm
-  rejections and TARP's two verdicts equal (sec. 8, Q-R3). A failure line
+  rejections and TARP's two verdicts equal (sec. 8, Q-R3) [2026-11-23, the
+  contract of wave B: block 20 writes no verdict for TARP, so its verdict
+  for a reference mode is here "ks_p < 1 - level", with `level` the new
+  tree's `<stem>_sim.json` `level`; the SBC verdicts are the `verdict` and
+  `holm_rejected` lists of the two JSON files]. A failure line
   names the ensemble, the quantity, the row or the beta, and the two
   values. An ensemble in one tree only, or rows that differ, is a failure.
 - Custom code: `edge_rows`, `edge_split`, `well_summary`, `flag_shares`:
@@ -6676,7 +6709,9 @@ plan; Confirmed: yes 2026-11-17]
     the same embeddings; `flag_shares` by hand; the check share's interval
     equal to `scipy.stats.binomtest`'s; k_gate by hand for (alpha_gate,
     N_null) = (0.05, 500), (0.05, 99) and (0.05, 19): 25, 4 and 0, the last
-    a refusal; the size band equal to the quantiles of `scipy.stats.beta(k,
+    a refusal; on random T values, the windows flagged by p < alpha_gate
+    are exactly those whose T exceeds the k_gate-th largest null value
+    (R9); the size band equal to the quantiles of `scipy.stats.beta(k,
     N + 1 - k)` [2026-11-23, D-165]; the example well by hand on 5 wells
     (the median of the mean T) and on 4 (the lower middle one);
   - R36d the validation's second target (D-162): on `rec_fixture`, the
