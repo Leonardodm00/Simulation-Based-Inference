@@ -872,16 +872,47 @@ h_{psi_m}(x) in R^{d_z} is the member's embedding of x
   approximately. p(x) is blind to what the embeddings do not carry
   (`hpc/npe_misspec.py`: the amplitude, lost where an embedding is
   normalised).
+- The size given the gate's sets [added 2026-11-23, D-165,
+  `[orchestrator]`: block 34's ISSUE on R34d]. The bound Pr[p(x) <= a] <= a
+  averages over the draw of the gate's rows as well as of x. Once the rows
+  of I_ref, I_rank and I_null are fixed, the probability that a window
+  drawn from the simulator's law is flagged -- the gate's size q_gate -- is
+  a number that depends on the null set. A window x is flagged, p(x) <
+  alpha_gate, if and only if fewer than k_gate null values are at least
+  T(x), with
+
+      k_gate = ceil(alpha_gate (N_null + 1)) - 1,     (R9)
+
+  that is, if and only if T(x) exceeds the k_gate-th largest of the null
+  values. If the null rows are independent draws of the simulator's law of
+  one window and T has no ties, then, over the draw of the null set,
+
+      q_gate ~ Beta(k_gate, N_null + 1 - k_gate),     (R10)
+
+  with mean k_gate / (N_null + 1) <= alpha_gate and SD close to
+  sqrt(alpha_gate (1 - alpha_gate) / (N_null + 2)). The same holds for
+  Pr[p(x) <= a] with k_a = floor(a (N_null + 1)) in the place of k_gate. T
+  takes multiples of 1 / (M N_rank), so ties occur and make the gate
+  slightly more conservative than (R10); t_m is continuous, and (R10) holds
+  for the member's own p_m(x) without that caveat. At alpha_gate = 0.05 the
+  central 95 % range of q_gate is [0.005, 0.107] with N_null = 50, [0.012,
+  0.094] with 90, [0.033, 0.071] with 500 and [0.037, 0.064] with 1,000
+  `[SANDBOX 2026-11-23]`: a small null set leaves the gate's actual size
+  on a project poorly known. The size band is the central interval at
+  `level` of (R10). k_gate = 0, that is alpha_gate (N_null + 1) <= 1, means
+  that no window can be flagged, and is a refusal.
 - The check rows I_chk are held-out simulated windows the gate did not
   use. The share of them flagged, with its exact binomial interval at
-  `level`, is the gate's measured size on the project's own simulator; it
-  should be near alpha_gate.
+  `level`, estimates q_gate, the gate's size on the project's own simulator
+  given its sets. It is reported beside k_gate / (N_null + 1) and the size
+  band, not beside alpha_gate alone [amended 2026-11-23, D-165].
 - On a recording bank: per window j, p(x_j) and the flag; per well g, the
   number and the share of its windows flagged; the same per class and for
   the whole bank. The windows of one well share a culture, so a well's or a
-  class's share is reported beside alpha_gate, the share expected of
-  independent windows of the simulator's law, and no test is made on it
-  (sec. 8, Q-R1).
+  class's share is reported beside the size band -- the range in which the
+  flagged share of independent windows of the simulator's law lies, for a
+  null set of this size [amended 2026-11-23, D-165: was "beside
+  alpha_gate"] -- and no test is made on it (sec. 8, Q-R1).
 - The synthetic evaluation's set-level embedding check (block 20's
   `embedding_overlap`) is not computed on recordings: its null is built
   from independent simulated windows, and it rejects a well-specified
@@ -973,6 +1004,7 @@ their own, fixed in their blocks' entries before the code.
 | med_m, h_{m,b}, n_h, k_m(z, z') | member m's median distance between reference embeddings; its bandwidths f_b med_m; their number; its kernel (R5) | float > 0; float > 0; int; float in (0, n_h] | embedding units; embedding units; --; -- |
 | t_m(x), r_m(x), T(x) | member m's statistic of window x (R6); its rank among the rank rows; the ensemble statistic (R7), for each fixed x | float >= 0; float in [0, 1]; float in [0, 1] | -- |
 | p(x), p_m(x), alpha_gate | the gate's p-value of window x and member m's own (R8); the gate's threshold (`gate.alpha`) | float in (0, 1]; float in (0, 1) | -- |
+| k_gate, q_gate | [2026-11-23, D-165] the rank among the null values that a flagged window's T must exceed (R9); the gate's size given its sets, random through the null set (R10) | int >= 1; float in (0, 1) | -- |
 
 ## 3. Data contracts
 
@@ -6270,7 +6302,12 @@ plan; Confirmed: yes 2026-11-17]
     first floor(f_ref G) of the permuted list are the reference group, the
     next floor(f_rank G) the rank group, the next floor(f_null G) the null
     group, the rest the check group; fewer than one network in a group is a
-    ValueError naming G and the fractions. A row's occurrence is its
+    ValueError naming G and the fractions. [2026-11-23, at the build,
+    D-165: floor(f G) is computed as floor(f G + 1e-9), binary roundoff
+    giving 0.29 x 100 = 28.99...; and a ValueError for `fracs` that are not
+    four positive numbers summing to 1 within 1e-9, a negative cap,
+    `rows_per_donor` below 1, or a `donor` that is not a 1-D integer
+    array.] A row's occurrence is its
     position among its own network's rows in the given order (0 for the
     first). Within a group the rows are ordered by (occurrence, position in
     `donor`); the reference takes the first `n_ref` of them; the rank, null
@@ -6288,7 +6325,13 @@ plan; Confirmed: yes 2026-11-17]
     by the same expression, for the null rows (`r_null`); `T` and `T_null`
     the means over the members (R7); `p` and `p_member` by (R8) with
     `npe_misspec._pvalue`'s convention. Non-finite embeddings are a
-    ValueError: a NaN would pass every comparison silently.
+    ValueError: a NaN would pass every comparison silently. [2026-11-23,
+    at the build, D-165: T is computed from the integer counts, (the sum
+    over the members of the counts) / (M N_rank), which is (R7) exactly and
+    makes equal values of T equal floats, as the ties of (R8) need; the
+    embeddings are cast to float64 before the bandwidths; a ValueError
+    when M, N_ref, N_rank or N_null is 0, when M or d_z differs between
+    the four arrays, or for a factor that is not positive.]
 - Custom code: the member's statistic for many single points at once (one
   kernel matrix between the reference and the points), since
   `npe_misspec.mmd2_multiscale` takes one sample per call and a call per
@@ -6313,11 +6356,30 @@ plan; Confirmed: yes 2026-11-17]
     I_16), member m's embedding (Q_m u + 0.08 xi) / ||Q_m u + 0.08 xi||
     with Q_m a fixed random rotation and xi standard normal, M = 5, 800
     reference, 500 rank, 500 null and 4,000 test points, every point with
-    a latent of its own: the share of test points with p <= a is at most a
-    + 3 sqrt(a (1 - a) / 4000) for a in {0.05, 0.1, 0.5}, and at least a -
-    3 sqrt(a (1 - a) / 4000) - 0.01 (the p-value's grain, 1 / 501, and the
-    ties of T, which takes multiples of 1 / 2500 and so can equal a null
-    value; a tie counts against the window in (R8));
+    a latent of its own: for a in {0.05, 0.1, 0.5}, with k_a = floor(a
+    (N_null + 1)) and s_a = sqrt(a (1 - a) (1 / 4000 + 1 / (N_null + 2))),
+    the share of test points with p <= a is at most k_a / (N_null + 1) + 3
+    s_a and at least k_a / (N_null + 1) - 3 s_a - 0.01 [amended 2026-11-23,
+    D-165: the bound was a +- 3 sqrt(a (1 - a) / 4000), which left out the
+    spread of the size over the null set, (R10); the implementer measured,
+    over 100 toys, SDs of the share of 0.0093, 0.0145 and 0.0228 against
+    0.0034, 0.0047 and 0.0079 for the binomial term alone, and 45 of the
+    100 toys outside the old bound although the mean shares were 0.0502,
+    0.1003 and 0.4960]. The 0.01 on the lower side is for the ties of T,
+    which takes multiples of 1 / 2500 and so can equal a null value; a tie
+    counts against the window in (R8);
+  - R34h [added 2026-11-23, D-165] the size given the null set, (R10), on
+    the member's own p-value, whose statistic has no ties: the toy of R34d
+    with M = 1, one reference set of 800 points and one rank set of 500;
+    300 independent null sets of N_null = 99 points; one set of 2,000 test
+    points, the same for every null set; for each null set the share of
+    the test points with p_member <= 0.1. With k = floor(0.1 x 100) = 10,
+    (R10) is Beta(10, 90), of mean 0.1 and SD 0.0299: the mean of the 300
+    shares is within 0.026 of 0.1 (3 x 0.0299 / sqrt(300) = 0.0052 for the
+    null sets, plus 3 sqrt(0.09 / 2000) = 0.020 for the one set of test
+    points, which shifts every share alike), and their SD is within 20 %
+    of 0.0299 (the relative standard error of an SD over 300 sets is about
+    4 %; the shared test points move the mean, not the spread);
   - R34e power, the same toy with the test latents displaced by delta
     times 0.35 along e_2: the flagged share at alpha 0.05 is non-decreasing
     in delta over (0, 2, 4, 8, 16) and above 0.9 at 16 (the single-member
@@ -6327,9 +6389,12 @@ plan; Confirmed: yes 2026-11-17]
     in two roles; the groups' sizes floor(f G) and the rest; the caps; at
     most `rows_per_donor` rows of a network in the rank, null and check
     sets; with `n_ref` below the reference group's size, only first rows;
-    the same roles from the same seed, others from another; the roles
-    unchanged when the rows of one network are moved together (they depend
-    on each row's network and occurrence alone); 3 networks refused;
+    the same roles from the same seed, others from another; with caps
+    that do not bind, the roles unchanged when the rows of one network are
+    moved together (they then depend on each row's network and occurrence
+    alone; with a binding cap the position in `donor` decides which rows
+    of an occurrence are taken) [qualified 2026-11-23, D-165]; 3 networks
+    refused;
   - R34g non-finite input refused; n = 0 test rows returns empty arrays of
     the right shapes.
   Mutations, each of which must fail a check: `<=` for `<` in the rank;
@@ -6493,9 +6558,13 @@ plan; Confirmed: yes 2026-11-17]
     their counts;
   - the gate: `ev_gate.gate` on the embeddings of the roles (`gate_role`
     1, 2, 3 of `<stem>_sim.npz`), once with the check rows as test rows and
-    once per recording bank; the flag is p < `gate.alpha`; the check rows'
-    flagged share with its exact (Clopper-Pearson) interval at `level`
-    (`scipy.stats.binomtest(...).proportion_ci`);
+    once per recording bank; the flag is p < `gate.alpha`; k_gate (R9), its
+    value 0 a refusal naming `gate.alpha` and N_null; the size band, the
+    central interval at `level` of Beta(k_gate, N_null + 1 - k_gate)
+    (`scipy.stats.beta.ppf`), with its mean k_gate / (N_null + 1); the
+    check rows' flagged share with its exact (Clopper-Pearson) interval at
+    `level` (`scipy.stats.binomtest(...).proportion_ci`) [amended
+    2026-11-23, D-165: k_gate and the size band];
   - a recording bank: per window and axis the mean, the SD, the 5 %, 50 %
     and 95 % quantiles of its draws and chi (R3) (`recovery_arrays` with a
     NaN reference for all but the median; its z-score is not written); per
@@ -6519,7 +6588,8 @@ plan; Confirmed: yes 2026-11-17]
 - The files: `<stem>_sim.json` (`schema` "rec_eval_metrics/1"; the
   ensemble; n, n_cal, n_d, M, n_post, p; the axes' names and bounds; `nll`,
   `coverage`, `sbc`, `tarp`, `recovery` as block 20 writes them; `edge`;
-  `gate` with the sizes, the bandwidths, alpha and `check`) and its `.npz`
+  `gate` with the sizes, the bandwidths, alpha, `k_gate`, `size_mean`,
+  `size_lo`, `size_hi` and `check`) and its `.npz`
   (block 20's arrays, on their rows, with `edge` (n,) bool, `coverage_edge`,
   `coverage_int`, `gate_T_null`, `gate_T_check`, `gate_p_check`);
   `<stem>_<r>.json` (the bank; n_r; the wells, classes and batches;
@@ -6568,7 +6638,10 @@ plan; Confirmed: yes 2026-11-17]
   - R36c the gate's wiring: on arrays built from the contract, the metrics'
     `gate_T`, `gate_p` and the check rows' values equal `ev_gate.gate` on
     the same embeddings; `flag_shares` by hand; the check share's interval
-    equal to `scipy.stats.binomtest`'s; the example well by hand on 5 wells
+    equal to `scipy.stats.binomtest`'s; k_gate by hand for (alpha_gate,
+    N_null) = (0.05, 500), (0.05, 99) and (0.05, 19): 25, 4 and 0, the last
+    a refusal; the size band equal to the quantiles of `scipy.stats.beta(k,
+    N + 1 - k)` [2026-11-23, D-165]; the example well by hand on 5 wells
     (the median of the mean T) and on 4 (the lower middle one);
   - R36d the validation's second target (D-162): on `rec_fixture`, the
     as-recorded metrics of each ensemble on D_sim equal block 20's
@@ -6622,7 +6695,8 @@ plan; Confirmed: yes 2026-11-17]
   `acc_contraction` (per axis: D_sim's and each recording bank's);
   `gate_null` (the distribution of T on the null rows, the check rows and
   each bank's windows); and for each recording bank r: `gate_wells_<r>`
-  (each well's share of flagged windows, by class, with alpha_gate),
+  (each well's share of flagged windows, by class, with alpha_gate and the
+  size band [2026-11-23, D-165]),
   `gate_windows_<r>` (p per window, grouped by well, the flagged ones
   marked), `gate_members_<r>` (r_m per member and window), `emb_pca_<r>`,
   `rec_wells_<r>` (per axis, each well's mixture: its median and its 5 % to
@@ -6641,9 +6715,11 @@ plan; Confirmed: yes 2026-11-17]
   three curves with pi_edge and its expected value and, in one line, sec.
   2.6's caution on the split curves, SBC's rejected axes,
   TARP's two verdicts, the contraction per axis on D_sim and on each bank;
-  the gate's sizes, its check share with its interval, and per bank the
-  flagged share per class and the wells in decreasing order of their
-  share; the wells' mixtures per axis; then the comparisons' table (Dbar,
+  the gate's sizes, k_gate, the size band and its mean, its check share
+  with its interval, and per bank the flagged share per class and the
+  wells in decreasing order of their share, with one line saying that a
+  share is read against the size band and not against alpha_gate alone
+  [2026-11-23, D-165]; the wells' mixtures per axis; then the comparisons' table (Dbar,
   its interval, 2 sigma_seed, the two clauses). The report states numbers
   and what each is; it draws no conclusion about a culture, a condition or
   an arm. It writes "the mixture over the well's windows", never "the
@@ -6813,7 +6889,9 @@ generator it tests (`bench_burst_generator.py`).
   brackets:
   - Q-R1 how the share of flagged windows of a well, of a class or of a
     bank is read, the windows of a well sharing a culture [no test in wave
-    1: the share is reported beside alpha_gate; D-161 leaves it open];
+    1: the share is reported beside alpha_gate; D-161 leaves it open]
+    [2026-11-23, D-165: reported beside the gate's size band (R10), which
+    is wide for a small null set; still no test];
   - [closed 2026-11-23 by D-164: confirmed as proposed] Q-R2 the gate's values the user did not fix: the proportions in which
     the networks are dealt, (0.4, 0.25, 0.25, 0.1) for the reference, the
     rank, the null and the check rows; the caps of the rank and null sets,
