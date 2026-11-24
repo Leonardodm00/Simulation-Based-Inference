@@ -1034,11 +1034,23 @@ def test_r36h_out_of_box():
     assert np.array_equal(z["gamma"][in_cal], z0["gamma"][in_cal])
     want_curve = np.mean(z["gamma"][in_cal][:, None] <= z["betas"][None, :], axis=0)
     _close(z["coverage"], want_curve, 1e-12, "C_E over S_cal without the row outside the box")
-    # SBC and TARP keep every calibration row (they do not use the density at theta_i)
-    assert js["sbc"]["n_rows"] == js["n_calib"] and z["sbc_ranks"].shape[0] == js["n_calib"]
-    # the row at theta_k = 1: every draw is below it, its SBC rank on that axis is n_post
-    k_cal = int(np.flatnonzero(np.flatnonzero(z["calib"]) == i_d)[0])
-    assert z["sbc_ranks"][k_cal, 3] == js["n_post"], z["sbc_ranks"][k_cal]
+    # [2026-11-24, D-168] SBC and TARP are over S_cal: the row at theta_k = 1 would have
+    # rank n_post on that axis whatever the calibration; the ranks kept are the
+    # unmodified run's on the same rows
+    assert js["sbc"]["n_rows"] == js["n_cal"] and z["sbc_ranks"].shape[0] == js["n_cal"]
+    assert z["tarp_x_f"].shape[0] == js["n_cal"] and z["tarp_random_f"].shape[0] == js["n_cal"]
+    k_cal = int(np.flatnonzero(np.flatnonzero(z0["calib"]) == i_d)[0])
+    assert np.array_equal(z["sbc_ranks"], np.delete(z0["sbc_ranks"], k_cal, axis=0))
+    # a sample one of whose files is missing counts as absent: left out and named
+    gone = os.path.join(out, "samples", "%s_real.npz" % stem)
+    os.rename(gone, gone + ".away")
+    try:
+        RM.compute(cfg, ec, names=[name], ncpus=1, log=lambda t: None)
+        raise AssertionError("a sample with a missing file was reported")
+    except RM.RefuseError as exc:
+        assert "no ensemble has a current sample" in str(exc), exc
+    finally:
+        os.rename(gone + ".away", gone)
     # the gate does not use theta: its statistics are the unmodified run's
     for k in ("gate_role", "gate_T_null", "gate_T_check", "gate_p_check"):
         assert np.array_equal(z[k], z0[k]), k
@@ -1049,7 +1061,7 @@ def test_r36h_out_of_box():
         text = fh.read()
     assert "%d rows, %d in the box" % (n, n - 2) in text, text[:3000]
     print("    R36h: 2 of %d rows outside the open box: n_out_of_box 2, the NLL over %d rows, "
-          "n_cal %d of %d calibration rows, gamma NaN there, SBC on %d rows; %d figure(s) and "
+          "n_cal %d of %d calibration rows, gamma NaN there, SBC and TARP on %d rows; %d figure(s) and "
           "the report written" % (n, n - 2, js["n_cal"], js["n_calib"], js["sbc"]["n_rows"],
                                   rec["n_figures"]))
 

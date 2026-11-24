@@ -195,6 +195,8 @@ def test_r33a_config():
         ("gate.n_ref", {"gate": dict(ok["gate"], n_ref=1001)}),
         ("gate.factors", {"gate": dict(ok["gate"], factors=[1.0, float("inf")])}),
         ("gate.factors", {"gate": dict(ok["gate"], factors=[float("nan")])}),
+        ("gate.factors", {"gate": dict(ok["gate"], factors=[10 ** 400])}),   # beyond float
+        ("gate.donor_fracs", {"gate": dict(ok["gate"], donor_fracs=[10 ** 400, 1, 1, 1])}),
         ("jobs.sample.mem", {"jobs": dict(ok["jobs"], sample={"ncpus": 1, "mem": "64gb\n",
                                                               "walltime": "01:00:00"})}),
         ("jobs.report.walltime", {"jobs": dict(ok["jobs"], report={

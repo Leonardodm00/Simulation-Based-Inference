@@ -284,6 +284,10 @@ def sample_left_out(ecfg, e):
     prov = _read_json(pj)
     if prov.get("sample_params") != ecfg.sample_params():
         return "sampled with other values: %s" % prov.get("sample_params")
+    gone = [f for f in (prov.get("files") or [])
+            if isinstance(f, str) and not os.path.isfile(f)]
+    if gone:
+        return "not sampled (%s absent)" % ", ".join(sorted(gone))
     bf = os.path.join(e.folder, "BEST_FIT_COMPLETE.json")
     if not os.path.isfile(bf) or prov.get("best_fit_complete_sha256") != sha256_file(bf):
         return ("sampled from another best fit: %s changed since the sampling (sample it "
@@ -322,6 +326,10 @@ def _sim_metrics(ecfg, e, prov, z, S):
     axes = prov.get("axes") or {}
     names = list(axes.get("names") or ["theta_%d" % k for k in range(p)])
     s_cal = calib & in_box
+    if not s_cal.any():
+        raise RefuseError("%s: no calibration row of D_sim has its theta in the open box "
+                          "(%d calibration row(s)): nothing to calibrate on"
+                          % (e.name, int(calib.sum())))
     js = {"schema": SCHEMA, "ensemble": e.name, "stem": e.stem, "search": e.search,
           "campaign": e.campaign, "arm": e.arm, "dataset": "sim", "n": int(n),
           "n_cal": int(s_cal.sum()), "n_calib": int(calib.sum()), "n_d": int(didx.size),
@@ -355,12 +363,13 @@ def _sim_metrics(ecfg, e, prov, z, S):
                           members=[coverage_summary(c) for c in mem_curves])
     arr.update({"gamma": gamma, "coverage": curve, "coverage_lo": lo, "coverage_hi": hi,
                 "coverage_members": np.stack(mem_curves)})
-    # SBC and TARP over the calibration rows, with the project's axis names
-    pc = pos[calib]
-    s, a = sbc_block(th[calib], z["draws"][pc], level, S("sim", "sbc"), axes=names)
+    # SBC and TARP over S_cal, with the project's axis names (sec. 2.6: a coordinate
+    # clipped to exactly 0 or 1 has a rank fixed by the label, not by the calibration)
+    pc = pos[s_cal]
+    s, a = sbc_block(th[s_cal], z["draws"][pc], level, S("sim", "sbc"), axes=names)
     js["sbc"] = s
     arr.update(a)
-    s, a = tarp_block(th[calib], z["draws"][pc], z["stats"][pc], S("sim", "tarp"))
+    s, a = tarp_block(th[s_cal], z["draws"][pc], z["stats"][pc], S("sim", "tarp"))
     js["tarp"] = s
     arr.update(a)
     # the recovery on the draw rows (NaN elsewhere), summarised over the calibration rows

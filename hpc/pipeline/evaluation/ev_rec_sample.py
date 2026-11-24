@@ -361,6 +361,13 @@ def main(argv=None):
     except (ev_plan.RefuseError, ev_rec_config.RecEvalConfigError, C.ConfigError) as exc:
         print("REFUSE: %s" % exc, flush=True)
         return EXIT_REFUSE
+    except ValueError as exc:
+        # a bank that breaks its contract (latent_bank.ContractError, a ValueError: a NaN
+        # in theta, ...) is a refusal that names it, not a traceback; nothing was written
+        if type(exc).__name__ != "ContractError":
+            raise
+        print("REFUSE: the bank breaks its contract: %s" % exc, flush=True)
+        return EXIT_REFUSE
     return 0
 
 

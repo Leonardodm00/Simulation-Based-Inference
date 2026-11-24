@@ -488,6 +488,19 @@ def test_r35f_out_of_box():
     except ev_plan.RefuseError as exc:
         assert "no row of D_sim has its theta in the open box" in str(exc), exc
     assert _files_under(out2) == [], _files_under(out2)
+    # a NaN in theta is not a row outside the box: the bank breaks its contract, exit 3
+    d3 = _tmpdir("box_nan")
+    cfg3 = rec_fixture.boundary_copy(d3, [(z0["rows"][i_o], 0, float("nan"))])
+    out3 = os.path.join(d3, "samples")
+    import contextlib
+    import io as _io
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = ev_rec_sample.main(["--config", cfg3, "--eval-config", F["ecfg_rec"],
+                                 "--ensemble", "S-A1:A1", "--out", out3])
+    assert rc == ev_rec_sample.EXIT_REFUSE and "REFUSE: the bank breaks its contract" in \
+        buf.getvalue(), (rc, buf.getvalue()[-500:])
+    assert _files_under(out3) == [], _files_under(out3)
     print("[r35f] 2 of %d rows outside the open box (a draw row and another): sampled, "
           "n_out_of_box 2, log q = -inf there, the draws bit for bit the unmodified run's, "
           "the other rows' densities within %.2g nats; every row outside: refused" % (n, d_lq))

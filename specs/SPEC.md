@@ -780,10 +780,20 @@ the recovery are those of sec. 2.5, read with theta^ref_i = theta_i.
   none of the quantities defined above over "the rows whose theta_i is in
   the open box" (the NLL, gamma_i and C_E, the edge split, the comparison
   of two ensembles), and their number is reported (`n_out_of_box`); it is
-  in the quantities that do not use the density at theta_i (the draws,
-  SBC and TARP over the calibration rows, the recovery, the gate's
-  roles). It is never a reason to refuse the evaluation, unless no row of
-  D_sim is in the open box.
+  in the quantities that do not use the density at theta_i and do not
+  compare the draws with theta_i as a draw of the prior (the draws
+  themselves, the recovery, the gate's roles). [2026-11-24, after the second check, D-168] It is
+  also left out of SBC and TARP, which are over S_cal, the calibration
+  rows in the open box, and no longer over every calibration row: a
+  coordinate clipped to exactly 0 or 1 has an SBC rank fixed by the label
+  (every draw of a continuous posterior lies on one side of it), so such a
+  row would add a count to the first or the last rank whatever the
+  calibration; with no row outside the box S_cal is every calibration row
+  and the numbers are block 20's. It is never a reason to refuse the
+  evaluation, unless no row of D_sim is in the open box (the sampler) or
+  no calibration row is (the metrics). A theta with a NaN or an infinite
+  coordinate is not such a row: the bank breaks its contract and the
+  sampling refuses (exit 3), naming it.
 
 **On a recording bank D_r.** On each row j: n_post draws theta^(s)_j ~
 q_E(theta | x_j) as above, and, for each axis k in {1, ..., p}, the draws'
@@ -6695,6 +6705,14 @@ plan; Confirmed: yes 2026-11-17]
   20's [corrected 2026-11-23 at block 36's gate: the paired bootstrap's
   seed is block 27's, `seed_of(seed, "paired", <name>, "sim")`, which R36d
   requires; the sentence above named one form for all]):
+  - [2026-11-24, after the second check, D-168] SBC and TARP are over S_cal (sec. 2.6, "The rows
+    outside the open box"), `sbc.n_rows` and the first axis of `sbc_ranks`,
+    `tarp_x_f`, `tarp_random_f` being n_cal; an ensemble with an empty
+    S_cal refuses the metrics; a sample one of whose files (its
+    provenance's `files`) is missing counts as absent: left out and named;
+    in R35f, R36h and the fix-round notes "equal" for the densities of the
+    rows in the box means within 1e-4 nats (float32 roundoff of batches of
+    another composition; the second tester measured up to 1.3e-5);
   - an ensemble whose sample is absent, or was made with other
     `sample_params`, is left out and named; [2026-11-23, after the final check, D-167]
     so is one whose sample was made from another best fit (its

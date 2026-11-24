@@ -126,7 +126,15 @@ def _is_int(v):
 
 
 def _is_num(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    """An int or a float, never a bool; an int beyond the float range (json reads a
+    long literal as one) is not a number here, so that validate reports it."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    try:
+        float(v)
+    except OverflowError:
+        return False
+    return True
 
 
 def _int_at_least(probs, name, v, lo):
