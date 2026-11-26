@@ -5802,6 +5802,10 @@ call D-169, 2026-11-26: "I need the Device option thus implement this"; the
 rows below Claude's, to confirm. Confirmed: the option yes; the rows
 inferred]
 
+- Roadmap: none. Block 39 and the GPU check are tracked in no roadmap,
+  with no stage and no marker lines (the user's call D-170, 2026-11-26:
+  "The roadmap must not follow this stuff"), an exception to the rule that
+  a SPEC block enters the roadmap with its entry.
 - Modules: `hpc/joint/stage2/joint_model.py`,
   `hpc/joint/stage2/joint_losses.py`, `hpc/joint/stage2/joint_train.py`,
   `hpc/joint/stage3/run_joint_arms.py`,
