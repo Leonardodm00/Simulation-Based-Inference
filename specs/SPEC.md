@@ -5879,15 +5879,23 @@ inferred]
   The GPU (amended 2026-11-26, after the info job `2104617`): davinci's PBS
   gives a job with `ngpus=1` no `CUDA_VISIBLE_DEVICES`, so the job sees all
   four GPUs of its node and torch takes GPU 0, which on `dvgpu015` held
-  37.9 GB of another job `[CLUSTER 2026-11-26]`. When the variable is
-  unset the script sets it to the GPU with the fewest compute processes
-  and, among those, the least memory in use, and prints `gpu choice       :
+  37.9 GB of another job `[CLUSTER 2026-11-26]`; `exec_vnode` names no GPU
+  (`(dvgpu031:ncpus=8:ngpus=1:mem=...)`, job `2104642`). When the variable
+  is unset the script sets it to the GPU with the fewest compute processes,
+  then the least memory in use, then the highest index (a job that sets
+  nothing runs on GPU 0, which was idle on `dvgpu031` and would have been
+  taken first), and prints `gpu choice       :
   index <i> (<uuid>): <p> other process(es), <m> MiB in use, <u> % busy at
   the start -> idle|shared; CUDA_VISIBLE_DEVICES=<i>` (`idle`: no process
   and 0 % busy); a value set before the script is kept (`... kept`); when
   `nvidia-smi` fails or lists no GPU the variable stays unset (`gpu choice
   : none ...`). It prints the GPU processes and PBS's `exec_vnode` first.
-  A timing is read as a measurement only from a job whose line says `idle`.
+  In `MODE=argv`, after the command: `gpu at the end   : <n> other
+  process(es) on <uuid>` (the command has exited, so every process on that
+  GPU is another job's). A timing is read as a measurement only from a job
+  whose start line says `idle` and whose end line says 0; several timing
+  jobs are submitted one after another (`-W depend=afterany`), so that they
+  never pick the same GPU at the same moment.
   Resources and log on the qsub line. It uses `pipeline/jobs/
   activate_env.sh` (default environment `sbi_gpu`; `sbi_env` is never
   modified, D-169), no work root, no chain. Last line `DEVICE_CHECK EXIT:
@@ -5909,16 +5917,19 @@ inferred]
   flags, changed flags, the converted command runs and writes only into the
   new folder, the three refusals); V10 the replicate term is called at every
   probe step with `--probe-full-loss` and never without; V11 the job
-  script's GPU choice against a stand-in `nvidia-smi` (six situations, the
-  first the node of job `2104617`; the command sees the variable the
-  script printed; the samples carry the GPU index).
-- Status: implemented; verified on the CPU 2026-11-26 (suite 31 pass, 0
-  fail, 3 skip: V6-V8 need a GPU; parent-against-edited identity for five
-  arms; V11's rule broken on purpose fails V11). The info job ran on
-  davinci 2026-11-26 (`2104617`, queue `gpu`, `dvgpu015`, exit 0): 4 x
-  NVIDIA A100-SXM4-40GB, driver 580.82.07, CUDA 13.0 `[CLUSTER]`. The GPU
-  path has not been executed yet: `[NOT VERIFIED on a GPU]` until the
-  suite runs in a GPU job on davinci.
+  script's GPU choice against a stand-in `nvidia-smi` (seven situations,
+  among them the nodes of jobs `2104617` and `2104642`; the command sees
+  the variable the script printed; the samples carry the GPU index; a
+  process that joins the GPU during the command is counted at the end).
+- Status: verified on a GPU. On davinci 2026-11-26 `[CLUSTER]`: the info
+  job (`2104617`, queue `gpu`, `dvgpu015`, exit 0): 4 x NVIDIA
+  A100-SXM4-40GB, driver 580.82.07, CUDA 13.0; the suite (`2104642`,
+  `dvgpu031`, environment `sbi_gpu`, torch 2.10.0+cu128, at `ec5ab33`):
+  41 pass, 0 fail, 0 skip, V6's largest loss gap 1.53e-05. Here, on the
+  CPU: the parent-against-edited identity for five arms; the suite at
+  this commit 33 pass, 0 fail, 3 skip (V6-V8 need a GPU); V11's rule and
+  its tie-break, each broken on purpose, fail V11. The tie-break and the
+  end line were added after the GPU run and have run here only.
 
 ## 6. Pipeline entry points
 

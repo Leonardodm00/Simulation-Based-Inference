@@ -39,9 +39,10 @@ V10 --probe-full-loss (arm A5; on the GPU when there is one): the probe's
 V11 jobs/device_check.pbs picks the GPU by its rule when CUDA_VISIBLE_DEVICES
     is unset (a stand-in nvidia-smi, so it runs anywhere): the fewest
     compute processes, then the least memory in use; "idle" only with no
-    process and 0 % busy; a value set before the script is kept; a failing
-    nvidia-smi leaves the variable unset and the job running. The command
-    sees the variable the script printed.
+    process and 0 % busy; among equals the highest index; a value set
+    before the script is kept; a failing nvidia-smi leaves the variable
+    unset and the job running. The command sees the variable the script
+    printed; a process that joins the GPU during the command is counted.
 
 Pure ASCII, LF only.
 """
@@ -443,7 +444,8 @@ while True:
 # V11's six situations: (name, GPUs "index,uuid,MiB,busy", processes
 # "uuid,pid,MiB", CUDA_VISIBLE_DEVICES before the script, STUB_FAIL,
 # the variable the command must see, the state the script must print).
-# The first is the node of job 2104617 (dvgpu015, 2026-11-26).
+# The first is the node of job 2104617 (dvgpu015, 2026-11-26); the fourth
+# the node of job 2104642 (dvgpu031), where a GPU-0 default would collide.
 _V11_CASES = [
     ("dvgpu015: GPU 0 busy, 1-3 idle",
      ["0,U0,37927,95", "1,U1,2585,0", "2,U2,2643,0", "3,U3,3313,0"],
@@ -454,6 +456,9 @@ _V11_CASES = [
     ("fewest processes before least memory",
      ["0,U0,37927,95", "1,U1,100,0", "2,U2,5000,0", "3,U3,6000,0"],
      ["U0,1,9", "U1,2,9", "U1,3,9"], None, None, "2", "idle"),
+    ("dvgpu031: three idle GPUs at 0 MiB, the highest index",
+     ["0,U0,0,0", "1,U1,0,0", "2,U2,0,0", "3,U3,1443,0"],
+     ["U3,1265920,1432"], None, None, "2", "idle"),
     ("no process but busy",
      ["0,U0,900,40", "1,U1,2585,0"], [], None, None, "0", "shared"),
     ("set before the script",
@@ -521,7 +526,11 @@ def check_v11(tmp):
         fh.write("".join(a + "\n" for a in apps))
     slow = os.path.join(d, "slow.argv")
     with open(slow, "w") as fh:
-        fh.write("\n".join([sys.executable, "-c", "import time; time.sleep(3)"]) + "\n")
+        # it outlasts the first sample, then a process of another job joins its
+        # GPU (U1), which the end line must count
+        fh.write("\n".join([sys.executable, "-c",
+                            "import time; time.sleep(3); open(%r, 'a').write('U1,999,500\\n')"
+                            % os.path.join(d, "apps")]) + "\n")
     env.pop("CUDA_VISIBLE_DEVICES", None)
     env.pop("STUB_FAIL", None)
     env["ARGV_FILE"] = slow
@@ -530,6 +539,9 @@ def check_v11(tmp):
     text = open(samples).read() if os.path.isfile(samples) else ""
     ok("V11 the utilisation samples carry the GPU index",
        "DEVICE_CHECK EXIT: 0" in r.stdout and ", 1, 0, 2585" in text, text[:120])
+    end = [l for l in r.stdout.splitlines() if l.startswith("gpu at the end")]
+    ok("V11 a process that joined the GPU is counted at the end",
+       end == ["gpu at the end   : 1 other process(es) on U1"], str(end))
 
 
 def main():
