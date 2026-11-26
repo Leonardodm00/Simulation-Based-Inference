@@ -5802,13 +5802,15 @@ call D-169, 2026-11-26: "I need the Device option thus implement this"; the
 rows below Claude's, to confirm. Confirmed: the option yes; the rows
 inferred]
 
-- Modules: `hpc/joint/stage2/joint_model.py`, `joint_losses.py`,
-  `joint_train.py`; `hpc/joint/stage3/run_joint_arms.py`; new:
-  `hpc/joint/stage3/smoke_test_device.py`, `device_probe_argv.py`,
-  `jobs/device_check.pbs`. Not this block's: the tuner
-  (`stage4/npe_tune_joint.py`), the pipeline's configuration and its qsub
-  lines (no `ngpus`, no `search.trial.device`): a search on a GPU is a later
-  block, for the user to ask.
+- Modules: `hpc/joint/stage2/joint_model.py`,
+  `hpc/joint/stage2/joint_losses.py`, `hpc/joint/stage2/joint_train.py`,
+  `hpc/joint/stage3/run_joint_arms.py`,
+  `hpc/joint/stage3/smoke_test_device.py`,
+  `hpc/joint/stage3/device_probe_argv.py`,
+  `hpc/joint/stage3/jobs/device_check.pbs` (the last three new); not this
+  block's: the tuner (`stage4/npe_tune_joint.py`), the pipeline's
+  configuration and its qsub lines (no `ngpus`, no `search.trial.device`):
+  a search on a GPU is a later block, for the user to ask.
 - API. `--device {cpu,cuda}`, default `cpu`. `--probe-full-loss` (flag,
   default off; with `--probe-steps` only).
   `build_joint_model(..., device=None)`; `JointModel.device`;
