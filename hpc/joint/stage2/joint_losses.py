@@ -307,7 +307,10 @@ class ReplicateConsistencyLoss(torch.nn.Module):
         T = replicate_statistic(m_g, m_gp, C_g, C_gp, n_draws=S1,
                                 correct_mc=self.correct_mc, jitter=self.jitter)
         C_bar = symmetrised_covariance(C_g, C_gp).detach()
-        p_eff_raw = p_eff_from_trace(self.Sigma0.to(C_bar.dtype), C_bar)
+        # [block 39] device as well as dtype: the criterion's buffer follows
+        # the draws it is given
+        p_eff_raw = p_eff_from_trace(
+            self.Sigma0.to(device=C_bar.device, dtype=C_bar.dtype), C_bar)
 
         # p_eff <= 0 means tr(Sigma_0^{-1} C_bar) >= d: the posterior is at
         # least as wide as the prior in the trace sense, so the data has
@@ -346,7 +349,7 @@ class ReplicateConsistencyLoss(torch.nn.Module):
         """
         with torch.no_grad():
             d = C_bar.shape[-1]
-            Sigma0 = self.Sigma0.to(C_bar.dtype)
+            Sigma0 = self.Sigma0.to(device=C_bar.device, dtype=C_bar.dtype)
             # Generalised eigenproblem C_bar^{-1} v = (1 + lambda) Sigma_0^{-1} v
             # solved by symmetric whitening, which avoids inverting C_bar.
             L0 = torch.linalg.cholesky(Sigma0)

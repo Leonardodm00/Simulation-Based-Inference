@@ -116,6 +116,22 @@ class JointDSNNPE(nn.Module):
     def encoder_parameters(self):
         return self.encoder.parameters()
 
+    # -- device [block 39, D-169] ---------------------------------------------
+
+    @property
+    def device(self):
+        """The device of the model's weights (every weight is on one device:
+        the model is moved as a whole, with `.to`)."""
+        return next(self.parameters()).device
+
+    def _on_device(self, t):
+        """`t` on the model's device. The banks, the batcher and its
+        generators stay on the CPU, so the rows a run draws do not depend on
+        the device; a batch is moved here, where the model consumes it. On a
+        CPU model this returns `t` itself (torch's `.to` is the identity when
+        nothing changes), so the CPU path computes what it did before."""
+        return t.to(self.device)
+
     def flow_parameters(self):
         """Everything that is not the encoder: omega."""
         enc = set(id(p) for p in self.encoder.parameters())
@@ -125,11 +141,12 @@ class JointDSNNPE(nn.Module):
 
     def encode(self, x):
         """z = h_psi(x)."""
-        return self.encoder(x)
+        return self.encoder(self._on_device(x))
 
     def npe_loss(self, theta, x):
         """Per-row -log q_omega(theta | h_psi(x)). Shape (B,)."""
-        return self.estimator.loss(theta, condition=x)
+        return self.estimator.loss(self._on_device(theta),
+                                   condition=self._on_device(x))
 
     def sample_posterior(self, n_draws, x):
         """(B, S, d) draws. NOT differentiable -- for diagnostics only.
@@ -137,7 +154,8 @@ class JointDSNNPE(nn.Module):
         sbi returns (S, B, d); the transpose is done here once rather than at
         every call site, where it would eventually be forgotten.
         """
-        s = self.estimator.sample((int(n_draws),), condition=x)
+        s = self.estimator.sample((int(n_draws),),
+                                  condition=self._on_device(x))
         return s.transpose(0, 1)
 
     def rsample_posterior(self, n_draws, x):
@@ -156,7 +174,7 @@ class JointDSNNPE(nn.Module):
         hidden: it is a coupling to sbi 0.27's internals and will need
         rechecking on an upgrade. Smoke test J14r is the check.
         """
-        emb = self.estimator._embedding_net(x)
+        emb = self.estimator._embedding_net(self._on_device(x))
         dists = self.estimator.net(emb)
         if not hasattr(dists, "rsample"):
             raise RuntimeError(
@@ -170,14 +188,19 @@ class JointDSNNPE(nn.Module):
     def checkpoint(self):
         """A dict carrying the encoder separately, so that
         `dsn_frozen.load_frozen_dsn` can still load the encoder ALONE."""
-        enc_state = self.encoder.state_dict()
+        # [block 39] CPU copies, whatever the device: a checkpoint written
+        # on a GPU is read by the evaluation and by CPU-only nodes. `.cpu()`
+        # of a CPU tensor is the tensor itself, and the digests are taken on
+        # CPU copies in either case (state_sha256).
+        enc_state = {k: v.cpu() for k, v in self.encoder.state_dict().items()}
+        model_state = {k: v.cpu() for k, v in self.state_dict().items()}
         return {
             "format": "joint_dsn_npe/1",
             "meta": self.meta,
             "encoder_state": enc_state,
             "encoder_sha256": state_sha256(enc_state),
-            "model_state": self.state_dict(),
-            "model_sha256": state_sha256(self.state_dict()),
+            "model_state": model_state,
+            "model_sha256": state_sha256(model_state),
         }
 
     def load_checkpoint(self, ckpt, strict=True):
@@ -195,7 +218,8 @@ class JointDSNNPE(nn.Module):
 def build_joint_model(backbone, prior, theta_example, x_example,
                       hidden_features=64, num_transforms=5, num_bins=10,
                       z_score_theta="transform_to_unconstrained",
-                      z_score_x="none", meta=None, flow_hidden_layers=None):
+                      z_score_x="none", meta=None, flow_hidden_layers=None,
+                      device=None):
     """Build the estimator around an already-constructed backbone.
 
     `backbone` is passed in rather than built here so that the DSN's
@@ -205,6 +229,16 @@ def build_joint_model(backbone, prior, theta_example, x_example,
     `prior` is REQUIRED whenever z_score_theta transforms to the unconstrained
     space -- see the module docstring.
 
+    `device` [block 39, D-169]: None or the CPU builds the estimator as
+    before. Another device builds it THERE: the backbone and the two example
+    batches are moved first, and `prior` must already live on that device.
+    The reason is a coupling to sbi 0.27: the transform to the unconstrained
+    space holds the prior's bounds inside a torch transform that sbi wraps in
+    a plain object (`biject_transform_zuko(CallableTransform(...))`), so they
+    are neither parameters nor buffers and a later `model.to(...)` does not
+    move them. A model is therefore built on the device it runs on and is
+    never moved afterwards.
+
     `flow_hidden_layers` [block 6, F-ac]: None keeps sbi 0.27.0's reading of
     an int `hidden_features` (each spline conditioner gets `num_transforms`
     hidden layers of that width); an int K hands sbi the list
@@ -212,6 +246,11 @@ def build_joint_model(backbone, prior, theta_example, x_example,
     whatever `num_transforms` is.
     """
     assert_no_batchnorm(backbone)
+    if device is not None and torch.device(device).type != "cpu":
+        device = torch.device(device)
+        backbone = backbone.to(device)
+        theta_example = theta_example.to(device)
+        x_example = x_example.to(device)
     hf = hidden_features
     if flow_hidden_layers is not None:
         if int(flow_hidden_layers) < 1:
@@ -238,7 +277,12 @@ def build_joint_model(backbone, prior, theta_example, x_example,
                              "hidden_layers": (None if flow_hidden_layers is None
                                                else int(flow_hidden_layers))})
     meta.setdefault("backbone_repr", repr(getattr(backbone, "cfg", None)))
-    return JointDSNNPE(estimator, meta=meta)
+    model = JointDSNNPE(estimator, meta=meta)
+    if device is not None and torch.device(device).type != "cpu":
+        # weights sbi created on the CPU, if any (the bounds of the first
+        # transform are already on the device: they came with the prior)
+        model.to(device)
+    return model
 
 
 def meta_json(model):

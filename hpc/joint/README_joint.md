@@ -40,12 +40,21 @@ Then, in this order:
     (cd stage2   && python3 smoke_test_joint.py)             # expect 40 passed, 1 skipped
     (cd stage2   && python3 smoke_test_joint_losses.py)      # expect 27/27
     (cd stage3   && python3 smoke_test_joint_arms.py)        # expect 28 passed
+    (cd stage3   && python3 smoke_test_device.py)            # block 39: 0 fail; 3 skips without a GPU, 0 with one
     (cd stage3b  && python3 smoke_test_stage3b.py)           # expect 23 passed
     (cd stage3c  && python3 smoke_test_stage3c.py)           # expect 24 passed
     python3 smoke_test_replicate_statistic.py                # expect 14/14
 
 The one skip is J5 (one host sync per epoch); it needs a CUDA device. Assert it
 on the cluster with `torch.cuda.set_sync_debug_mode`.
+
+The runner trains on `--device cpu` (default) or `--device cuda` (block 39,
+D-169; `specs/SPEC.md`). `cuda` on a torch without a GPU is refused, never
+replaced by the CPU. On a GPU node the device suite runs through
+`stage3/jobs/device_check.pbs` (`MODE=info|suite|argv`), in an environment
+of its own (`sbi_gpu`): `sbi_env` has a CPU-only torch and is not modified.
+`stage3/device_probe_argv.py` turns a gate probe's or a trial's argv file
+into a probe of the same configuration on the GPU.
 
 If `hpc/dsn` is unusable (a broken checkout) the Stage 1 and 3b suites skip
 the tests that need the generator and print the resolver's reason; nothing

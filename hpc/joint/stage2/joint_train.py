@@ -105,6 +105,13 @@ def gradient_cosine(model, loss_a_fn, loss_b_fn):
     return float((ga @ gb) / (na * nb))
 
 
+def _model_device(model):
+    """[block 39] The device of the model's weights (JointDSNNPE.device; any
+    other module: its first parameter's)."""
+    dev = getattr(model, "device", None)
+    return dev if isinstance(dev, torch.device) else next(model.parameters()).device
+
+
 def evaluate_npe(model, theta, x, batch_size=512):
     """Mean held-out -log q_omega(theta | h_psi(x)), in nats/row."""
     if theta.shape[0] == 0:
@@ -258,6 +265,10 @@ def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
         best, best_epoch = float(ck["best"]), int(ck["best_epoch"])
         best_state = ck["best_state"]
         torch.set_rng_state(ck["torch_rng"])
+        # [block 39] the GPU's own generator (the reparameterised draws of
+        # the replicate term come from it), when both runs are on a GPU
+        if ck.get("cuda_rng") is not None and _model_device(model).type == "cuda":
+            torch.cuda.set_rng_state(ck["cuda_rng"], _model_device(model))
         if ck.get("batcher_state") is not None and hasattr(batcher, "load_state_dict"):
             batcher.load_state_dict(ck["batcher_state"])
         first_epoch = int(ck["epoch"]) + 1
@@ -295,7 +306,9 @@ def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
             if cfg.lambda_dsn > 0.0 and dsn_loss_fn is not None \
                     and batch["met"] is not None:
                 xm, cm, _ = batch["met"]
-                l_dsn = dsn_loss_fn(model.encode(xm), cm)
+                zm = model.encode(xm)
+                # [block 39] the labels follow the embedding's device
+                l_dsn = dsn_loss_fn(zm, cm.to(zm.device))
                 total = (cfg.lambda_dsn * l_dsn if total is None
                          else total + cfg.lambda_dsn * l_dsn)
                 acc["dsn"] += float(l_dsn)
@@ -372,7 +385,8 @@ def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
                     rec["rho_grad"] = gradient_cosine(
                         model,
                         lambda: model.npe_loss(th, xs).mean(),
-                        lambda: dsn_loss_fn(model.encode(xm), cm))
+                        lambda: dsn_loss_fn(model.encode(xm),
+                                            cm.to(_model_device(model))))
         ws = getattr(dsn_loss_fn, "warmup_state", None)
         if ws is not None:
             rec["sep_warmup"] = ws()
@@ -395,6 +409,8 @@ def train_joint(model, batcher, cfg, val_theta=None, val_x=None,
                 "history": list(history), "best": float(best),
                 "best_epoch": int(best_epoch), "best_state": best_state,
                 "torch_rng": torch.get_rng_state(),
+                "cuda_rng": (torch.cuda.get_rng_state(_model_device(model))
+                             if _model_device(model).type == "cuda" else None),
                 "batcher_state": (batcher.state_dict()
                                   if hasattr(batcher, "state_dict") else None),
                 "config": cfg.to_dict()})

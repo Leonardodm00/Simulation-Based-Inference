@@ -5792,6 +5792,109 @@ plan; Confirmed: yes 2026-11-17]
   is loaded from its file with no bytecode written into the checkouts.
   Not run on davinci.
 
+### Block 39: the device option of the joint runner (added 2026-11-26; D-169)
+
+`run_joint_arms.py` trains on the device named by `--device`. The option
+exists to measure, and then to use, the joint DSN + NPE training on a GPU
+(the GPU check of 2026-11-26, handoff v2: whether the SBI training can
+move to Leonardo Booster, both partitions being requested either way). [the user's
+call D-169, 2026-11-26: "I need the Device option thus implement this"; the
+rows below Claude's, to confirm. Confirmed: the option yes; the rows
+inferred]
+
+- Modules: `hpc/joint/stage2/joint_model.py`, `joint_losses.py`,
+  `joint_train.py`; `hpc/joint/stage3/run_joint_arms.py`; new:
+  `hpc/joint/stage3/smoke_test_device.py`, `device_probe_argv.py`,
+  `jobs/device_check.pbs`. Not this block's: the tuner
+  (`stage4/npe_tune_joint.py`), the pipeline's configuration and its qsub
+  lines (no `ngpus`, no `search.trial.device`): a search on a GPU is a later
+  block, for the user to ask.
+- API. `--device {cpu,cuda}`, default `cpu`. `--probe-full-loss` (flag,
+  default off; with `--probe-steps` only).
+  `build_joint_model(..., device=None)`; `JointModel.device`;
+  `train_encoder_only(..., device=None)`; `resolve_device(name)`.
+- Contract.
+  1. No objective, estimator, search-space or default changes. With
+     `--device cpu` or without the option, the record, the per-row arrays
+     and the model digests are those of the parent commit `23c17ad`, bit
+     for bit, for the arms A0, A1, A2, A5 and shuffled. (A_ref is not
+     reproducible in the parent itself: Open questions.)
+  2. `--device cuda` on a torch that sees no GPU is refused before anything
+     is read or trained: `--device cuda: torch sees no GPU (torch <v>, built
+     for CUDA <c>, CUDA_VISIBLE_DEVICES=<v>). Refused; nothing trained.`
+     There is no silent fall-back to the CPU. `--dry-run` does not resolve
+     the device.
+  3. The model is BUILT on the device and never moved afterwards. sbi 0.27
+     with `z_score_theta="transform_to_unconstrained"` keeps the prior's
+     bounds inside a transform that is neither a parameter nor a buffer, so
+     `model.to(cuda)` after a CPU build would leave them on the CPU; the
+     runner therefore gives `build_joint_model` a `BoxUniform` whose bounds
+     are on the device, and checks `model.device` after the build.
+     (Custom: no library call moves that transform. Checked: `nn.Module.to`,
+     sbi's `posterior_nn` arguments.)
+  4. The banks, the batcher and its random generators stay on the CPU: the
+     rows drawn at step s are the same on any device. A batch is moved to
+     the device inside the model's forward paths (`encode`, `npe_loss`,
+     `sample_posterior`, `rsample_posterior`), the DSN labels and the
+     replicate criterion's `Sigma0` where they are used.
+  5. Checkpoints hold CPU tensors, and the digests are taken over them: a
+     model trained on a GPU loads on a node without one. The training
+     checkpoint also stores the CUDA generator's state (`cuda_rng`, None on
+     the CPU), restored on resume when training on a GPU.
+  6. GPU results are NOT bit-identical to CPU results (different kernels,
+     float32): the agreement expected is that of the oracle V6 below.
+  7. The probe (`--probe-steps`) synchronises the device around each timed
+     block (a CUDA call returns before its kernel has run) and adds to
+     `<stem>_probe.json`: `device`, `gpu_name`, `gpu_total_gb`,
+     `gpu_peak_allocated_gb`, `gpu_peak_reserved_gb` (GiB; None on the CPU),
+     `torch_version`, `cuda_version`, `probe_full_loss`. `maxrss_gb` stays
+     the host's. On a GPU it prints `PROBE GPU: <name>, peak <a> GiB
+     allocated (<r> reserved) of <t>`.
+  8. `--probe-full-loss`: the probe's steps carry the arm's whole objective
+     (the DSN term when lambda_dsn > 0, the replicate term when lambda_rep >
+     0, with the arm's weights). Without it the probe is block 7's, call for
+     call: it times the NPE term alone, also for A2 and A5. The budget gate
+     does not pass the flag, so its measurements are unchanged.
+- `device_probe_argv.py --source <argv> --out-dir <dir> --argv-file <new>
+  [--device cuda] [--threads 8] [--probe-steps 200] [--probe-val-rows 2000]
+  [--full-loss]`: a copy of a runner command (a gate probe's or a trial's
+  argv file) that probes the same configuration elsewhere. Changed:
+  `--out-dir`, `--device`, `--threads`, the two probe sizes, the interpreter
+  (`python3` of the job's environment) and the runner (the one beside the
+  tool); removed: `--resume`, `--stop-after-epoch`; everything else kept in
+  order. Refused (exit 2, nothing written): a source that is not a
+  `run_joint_arms.py` command, an `--out-dir` equal to the source's, an
+  existing `--argv-file`. Last line `PROBE ARGV OK: <file> (<n> arguments)`.
+- `jobs/device_check.pbs`, `MODE` = `info` (the node's GPUs, and torch's
+  view of them in `ENV_NAME` when it exists), `suite`
+  (`smoke_test_device.py`), `argv` (the command of `ARGV_FILE` in `WORKDIR`,
+  with `nvidia-smi` sampled every 5 s into `<argv stem>.gpu_util.csv`).
+  Resources and log on the qsub line. It uses `pipeline/jobs/
+  activate_env.sh` (default environment `sbi_gpu`; `sbi_env` is never
+  modified, D-169), no work root, no chain. Last line `DEVICE_CHECK EXIT:
+  <n>` (2 a missing variable or file, 96 the environment, else the
+  command's).
+- Oracles (`smoke_test_device.py`; last line `DEVICE SUITE: <p> pass, <f>
+  fail, <s> skip`; on a GPU node it must read `0 fail, 0 skip`):
+  V1 the option's default and choices; V2 the refusal without a GPU, and a
+  dry run with `--device cuda` passing; V3 a CPU build with `device=None`
+  and `device=cpu` give one digest; V4 a checkpoint's tensors are on the
+  CPU and its digests are those of the state; V5 the runner with `--device
+  cpu` against the runner without the option, A1, A2, A5 (record, per-row
+  arrays, digest), and the CPU probe's fields; V6 [GPU] a GPU model and a
+  CPU model of the same weights, given the same CPU batch, agree on the NPE
+  loss within 1e-3 relative (float32 on two back-ends; a wrong device or a
+  lost transform is an error of order one or an exception); V7 [GPU] A1,
+  A2, A5 train end to end, the checkpoint holds CPU tensors, a stopped run
+  resumes; V8 [GPU] the probe's GPU fields; V9 `device_probe_argv.py` (kept
+  flags, changed flags, the converted command runs and writes only into the
+  new folder, the three refusals); V10 the replicate term is called at every
+  probe step with `--probe-full-loss` and never without.
+- Status: implemented; verified on the CPU 2026-11-26 (suite 24 pass, 0
+  fail, 3 skip: V6-V8 need a GPU; parent-against-edited identity for five
+  arms). The GPU path has not been executed anywhere yet: `[NOT VERIFIED on
+  a GPU]` until the suite runs in a GPU job on davinci.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
@@ -5989,3 +6092,16 @@ generator it tests (`bench_burst_generator.py`).
   sweep, and is ordering by definition); (2) the stage resubmits failed
   tasks itself, bounded by a new `bank.max_resubmits`, instead of
   stopping with the gate's names (raised 2026-10-16).
+- Block 39's two findings, pre-existing and not changed (raised
+  2026-11-26): (1) the arm `A_ref` is not seeded for the flow's
+  initialisation -- `torch.manual_seed` is called in `make_backbone`, which
+  A_ref skips -- so two runs of one command differ; (2) the budget gate's
+  probe times the NPE term alone for every arm (`run_probe` calls
+  `train_joint` without the DSN loss and the replicate criterion), so the
+  projected trial time of A2 and A5 searches leaves their own terms out.
+  `--probe-full-loss` (block 39) measures the difference; whether the gate
+  should pass it is the user's call.
+- Block 39: a search on a GPU (the tuner's and the pipeline's `device` and
+  `ngpus`, one GPU per trial or several trials per GPU) is not built; and a
+  batch-size cap for the GPU, if the memory measured asks for one, is the
+  user's decision (raised 2026-11-26).

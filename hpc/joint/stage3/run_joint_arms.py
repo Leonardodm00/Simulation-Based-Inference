@@ -161,17 +161,42 @@ def grouped_split(groups, fracs=(0.7, 0.15, 0.15), seed=0):
 # Encoder-only pre-training, for A0 / A0s / A3
 # ---------------------------------------------------------------------------
 
+def resolve_device(name):
+    """[block 39, D-169] The torch.device of --device. `cuda` is refused when
+    torch sees no GPU (a CPU-only build, a job without a GPU, a driver that
+    does not match): a run asked for on a GPU never trains on the CPU under
+    that name."""
+    name = str(name)
+    if name == "cpu":
+        return torch.device("cpu")
+    if name != "cuda":
+        raise SystemExit("--device must be cpu or cuda, got %r" % (name,))
+    if not torch.cuda.is_available():
+        raise SystemExit(
+            "--device cuda: torch sees no GPU (torch %s, built for CUDA %s, "
+            "CUDA_VISIBLE_DEVICES=%r). Refused; nothing trained."
+            % (torch.__version__, torch.version.cuda,
+               os.environ.get("CUDA_VISIBLE_DEVICES")))
+    return torch.device("cuda")
+
+
 def train_encoder_only(backbone, x, cls, dsn_loss_fn, steps, batch_size, lr,
-                       seed=0, log_fn=None):
-    """Fit psi by l_DSN alone. This is stage one of the two-stage arms."""
+                       seed=0, log_fn=None, device=None):
+    """Fit psi by l_DSN alone. This is stage one of the two-stage arms.
+
+    [block 39] `device`: the backbone is trained there and returned on the
+    CPU (the estimator is built around it on the CPU and moved as a whole);
+    the rows are drawn on the CPU and moved batch by batch."""
+    device = torch.device("cpu") if device is None else device
+    backbone.to(device)
     torch.manual_seed(int(seed))
     opt = torch.optim.AdamW(backbone.parameters(), lr=lr)
     g = torch.Generator().manual_seed(int(seed) + 1)
     n = x.shape[0]
     for step in range(int(steps)):
         idx = torch.randint(0, n, (min(batch_size, n),), generator=g)
-        z = backbone(x[idx])
-        loss = dsn_loss_fn(z, cls[idx])
+        z = backbone(x[idx].to(device))
+        loss = dsn_loss_fn(z, cls[idx].to(device))
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
@@ -179,6 +204,7 @@ def train_encoder_only(backbone, x, cls, dsn_loss_fn, steps, batch_size, lr,
             log_fn("  encoder step %4d  l_DSN %.5f" % (step, float(loss)))
     for p in backbone.parameters():
         p.requires_grad_(False)
+    backbone.to(torch.device("cpu"))
     return backbone
 
 
@@ -309,6 +335,11 @@ def build_parser():
                         "default: sbi's own (num_transforms layers)")
     p.add_argument("--threads", type=int, default=None,
                    help="[block 6] torch threads; default: $NCPUS when set")
+    p.add_argument("--device", default="cpu", choices=("cpu", "cuda"),
+                   help="[block 39, D-169] where the model's weights and the "
+                        "batches it consumes live. cpu (the default): the run "
+                        "of before. cuda: the first visible GPU; refused when "
+                        "torch sees none (no fallback to the CPU)")
     p.add_argument("--resume", action="store_true",
                    help="[block 6] continue from <stem>_train_ckpt.pt if present")
     p.add_argument("--stop-after-epoch", type=int, default=None,
@@ -321,6 +352,11 @@ def build_parser():
                         "validation row, peak memory, the projected trial "
                         "time under --passes/--epochs); no record, exit 0")
     p.add_argument("--probe-val-rows", type=int, default=5000)
+    p.add_argument("--probe-full-loss", action="store_true",
+                   help="[block 39] the probe's steps carry the arm's whole "
+                        "objective (its DSN and replicate terms when their "
+                        "weights are > 0). Without it the probe times the NPE "
+                        "term alone, as the budget gate always did")
     # [block 31, D-146..D-148] the replicate pair rule; both defaults are
     # block 14's, so a call without them is unchanged (sec. 4). Without a
     # real bank (S-A1's trials) they are accepted and unused.
@@ -665,7 +701,8 @@ def _encode_shards(model, index, rows, batch_size=256):
 
 
 def run_probe(args, model, batcher, tcfg, index, theta, x, se, stem, n_train,
-              steps_per_epoch, n_threads, W, d_theta, split_hash, streaming):
+              steps_per_epoch, n_threads, W, d_theta, split_hash, streaming,
+              dsn_loss_fn=None, rep_criterion=None):
     """[block 7] The budget gate's measurement: wall seconds per training
     step and per validation row on this node, the peak resident memory, and
     the projection of one trial under --passes / --epochs:
@@ -680,16 +717,42 @@ def run_probe(args, model, batcher, tcfg, index, theta, x, se, stem, n_train,
                             weight_decay=tcfg.weight_decay, lambda_dsn=tcfg.lambda_dsn,
                             lambda_rep=tcfg.lambda_rep, patience=99,
                             rho_grad_probe=False, beta1=tcfg.beta1, beta2=tcfg.beta2)
+    # [block 39] on a GPU the timed blocks end on a synchronisation (a CUDA
+    # call returns before its kernel has run) and the peak of the device's
+    # allocator is recorded beside the host's
+    dev = next(model.parameters()).device
+    on_gpu = dev.type == "cuda"
+
+    def _sync():
+        if on_gpu:
+            torch.cuda.synchronize(dev)
+
+    if on_gpu:
+        torch.cuda.reset_peak_memory_stats(dev)
     # the first step alone (warm-up: allocations, graph build), then the rest
+    _sync()
     t0 = time.perf_counter()
-    train_joint(model, batcher, TrainConfig(epochs=1, steps_per_epoch=1, lr=tcfg.lr,
-                                            weight_decay=tcfg.weight_decay, patience=99,
-                                            rho_grad_probe=False, beta1=tcfg.beta1,
-                                            beta2=tcfg.beta2),
-                seed=args.seed, log_fn=None)
+    # [block 39] dsn_loss_fn / rep_criterion are None unless --probe-full-loss
+    # (then the first step carries the arm's weights too); None, None is the
+    # call of block 7, argument for argument
+    full = dsn_loss_fn is not None or rep_criterion is not None
+    first_cfg = TrainConfig(epochs=1, steps_per_epoch=1, lr=tcfg.lr,
+                            weight_decay=tcfg.weight_decay, patience=99,
+                            rho_grad_probe=False, beta1=tcfg.beta1,
+                            beta2=tcfg.beta2)
+    if full:
+        first_cfg.lambda_dsn = tcfg.lambda_dsn
+        first_cfg.lambda_rep = tcfg.lambda_rep
+    extra = {}
+    if full:
+        extra = {"dsn_loss_fn": dsn_loss_fn, "rep_criterion": rep_criterion,
+                 "n_posterior_draws": args.n_posterior_draws}
+    train_joint(model, batcher, first_cfg, seed=args.seed, log_fn=None, **extra)
+    _sync()
     t1 = time.perf_counter()
     probe_cfg.steps_per_epoch = n_steps - 1
-    train_joint(model, batcher, probe_cfg, seed=args.seed, log_fn=None)
+    train_joint(model, batcher, probe_cfg, seed=args.seed, log_fn=None, **extra)
+    _sync()
     t2 = time.perf_counter()
     t_step = (t2 - t1) / float(n_steps - 1)
     # validation rows: the first --probe-val-rows selection rows
@@ -704,8 +767,15 @@ def run_probe(args, model, batcher, tcfg, index, theta, x, se, stem, n_train,
             evaluate_npe_shards(model, index, mask)
         else:
             evaluate_npe(model, theta[torch.as_tensor(sel_rows)], x[torch.as_tensor(sel_rows)])
+        _sync()
         t_val_row = (time.perf_counter() - t3) / float(n_val)
     maxrss_gb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024.0 ** 2)
+    gpu_peak_gb = gpu_reserved_gb = gpu_name = gpu_total_gb = None
+    if on_gpu:
+        gpu_peak_gb = torch.cuda.max_memory_allocated(dev) / (1024.0 ** 3)
+        gpu_reserved_gb = torch.cuda.max_memory_reserved(dev) / (1024.0 ** 3)
+        gpu_name = torch.cuda.get_device_name(dev)
+        gpu_total_gb = torch.cuda.get_device_properties(dev).total_memory / (1024.0 ** 3)
     n_sel = int(se.sum())
     projected = None
     if t_val_row is not None:
@@ -718,7 +788,13 @@ def run_probe(args, model, batcher, tcfg, index, theta, x, se, stem, n_train,
            "steps_per_epoch": int(steps_per_epoch),
            "projected_trial_seconds": projected, "W": int(W), "d_theta": int(d_theta),
            "split_hash": split_hash, "streamed": bool(streaming),
-           "buffer_shards": int(args.buffer_shards), "config": vars(args)}
+           "buffer_shards": int(args.buffer_shards), "config": vars(args),
+           # [block 39] maxrss_gb is the host's; the device's own peaks are
+           # None on the CPU
+           "probe_full_loss": bool(full),
+           "device": dev.type, "gpu_name": gpu_name, "gpu_total_gb": gpu_total_gb,
+           "gpu_peak_allocated_gb": gpu_peak_gb, "gpu_peak_reserved_gb": gpu_reserved_gb,
+           "torch_version": torch.__version__, "cuda_version": torch.version.cuda}
     os.makedirs(os.path.dirname(stem) or ".", exist_ok=True)
     with open(stem + "_probe.json", "w") as fh:
         json.dump(rec, fh, indent=1, sort_keys=True, default=str)
@@ -727,6 +803,9 @@ def run_probe(args, model, batcher, tcfg, index, theta, x, se, stem, n_train,
           % (t_step, t1 - t0, ("%.5f" % t_val_row) if t_val_row is not None else "-",
              maxrss_gb, ("%.1f" % (projected / 3600.0)) if projected is not None else "-",
              steps_per_epoch, args.epochs, stem), flush=True)
+    if on_gpu:
+        print("PROBE GPU: %s, peak %.2f GiB allocated (%.2f reserved) of %.1f"
+              % (gpu_name, gpu_peak_gb, gpu_reserved_gb, gpu_total_gb), flush=True)
     return 0
 
 
@@ -742,6 +821,20 @@ def main(argv=None):
         torch.set_num_threads(int(n_threads))
     n_threads = torch.get_num_threads()
     print("torch threads    : %d" % n_threads, flush=True)
+
+    # ---- [block 39, D-169] the device ----------------------------------------
+    # a dry run trains nothing and may be made on a node without a GPU
+    device = torch.device("cpu") if args.dry_run else resolve_device(args.device)
+    if args.dry_run:
+        print("device           : %s (as asked; not checked in a dry run)"
+              % args.device, flush=True)
+    elif device.type == "cuda":
+        print("device           : cuda (%s, %.1f GiB; torch %s, CUDA %s)"
+              % (torch.cuda.get_device_name(device),
+                 torch.cuda.get_device_properties(device).total_memory / 2.0 ** 30,
+                 torch.__version__, torch.version.cuda), flush=True)
+    else:
+        print("device           : cpu", flush=True)
 
     # ---- [block 6] the split's fractions and seed ----------------------------
     fracs = tuple(float(f) for f in args.split_fracs)
@@ -952,11 +1045,17 @@ def main(argv=None):
         print("pre-training the encoder on the %s arm (%d rows)"
               % (cfg_arm["dsn_domain"], xs.shape[0]))
         train_encoder_only(backbone, xs, cs, dsn_loss_fn, args.encoder_steps,
-                           args.b_met, args.lr, seed=args.seed, log_fn=print)
+                           args.b_met, args.lr, seed=args.seed, log_fn=print,
+                           device=device)
     elif cfg_arm["fixed_summary"]:
         pass
 
-    model = build_joint_model(backbone, prior, theta_ex, x_ex,
+    # [block 39, D-169] the estimator is built on the device it runs on, with
+    # a prior that lives there (joint_model.build_joint_model, `device`); the
+    # CPU prior above stays what the floor and the checks use
+    model_prior = (prior if device.type == "cpu"
+                   else BoxUniform(low=lo.to(device), high=hi.to(device)))
+    model = build_joint_model(backbone, model_prior, theta_ex, x_ex, device=device,
                               hidden_features=args.hidden_features,
                               num_transforms=args.num_transforms,
                               num_bins=args.num_bins,
@@ -984,6 +1083,12 @@ def main(argv=None):
 
     if cfg_arm["freeze_encoder"]:
         model.freeze_encoder()          # weights AND eval mode, see joint_model
+
+    # [block 39, D-169] built on `device` above; a model is never moved after
+    # its construction (the first transform's bounds would stay behind)
+    if model.device.type != device.type:
+        raise RuntimeError("the model is on %s, --device asked for %s"
+                           % (model.device, device))
 
     # ---- batches and criteria ---------------------------------------------
     real_x = real_cls = real_donor = real_well = real_group = None
@@ -1051,6 +1156,7 @@ def main(argv=None):
                                   dtype=torch.get_default_dtype())
     rep_crit = ReplicateConsistencyLoss(Sigma0, n_draws=args.n_posterior_draws,
                                         warmup=args.warmup_frac_rep)
+    rep_crit.to(device)                 # [block 39] its Sigma0 buffer
 
     tcfg = TrainConfig(epochs=args.epochs, steps_per_epoch=steps_per_epoch,
                        lr=args.lr, weight_decay=args.weight_decay,
@@ -1076,7 +1182,11 @@ def main(argv=None):
         return run_probe(args, model, batcher, tcfg, index, theta, x, se, stem,
                          n_train=n_train, steps_per_epoch=steps_per_epoch,
                          n_threads=n_threads, W=W, d_theta=d_theta, split_hash=split_hash,
-                         streaming=streaming)
+                         streaming=streaming,
+                         dsn_loss_fn=dsn_loss_fn if (args.probe_full_loss
+                                                     and cfg_arm["lambda_dsn"] > 0) else None,
+                         rep_criterion=rep_crit if (args.probe_full_loss
+                                                    and cfg_arm["lambda_rep"] > 0) else None)
 
     try:
         history = train_joint(model, batcher, tcfg,

@@ -1,0 +1,100 @@
+#!/bin/bash
+#PBS -N device_check
+#PBS -j oe
+# hpc/joint/stage3/jobs/device_check.pbs -- the GPU check of block 39 (D-169).
+#
+# One job, one of three things, chosen by MODE (qsub -v):
+#   info   what the node offers: nvidia-smi, and torch's view of it in
+#          ENV_NAME when that environment exists (the default)
+#   suite  hpc/joint/stage3/smoke_test_device.py in ENV_NAME; on a GPU its
+#          last line must read `... 0 fail, 0 skip`
+#   argv   the command of ARGV_FILE (one argument per line, as the
+#          pipeline's argv files; made by device_probe_argv.py), run in
+#          WORKDIR
+#
+# The resources and the log go on the qsub line, for instance:
+#   qsub -q gpu -l select=1:ncpus=8:ngpus=1:mem=120gb -l walltime=01:00:00 \
+#        -o $HOME/gpu_check/suite.log \
+#        -v MODE=suite,ENV_NAME=sbi_gpu,REPO=$HOME/SBI hpc/joint/stage3/jobs/device_check.pbs
+#
+# Variables: MODE (info), ENV_NAME (sbi_gpu), REPO (the checkout; default
+# PBS_O_WORKDIR's git root), ARGV_FILE and WORKDIR (MODE=argv).
+#
+# It reads the repository and writes only where its command writes. It does
+# not use the pipeline's work roots, chain or avoid list. Exit 2 = a missing
+# variable or file, 96 = the environment cannot start, else the command's.
+# The last line is `DEVICE_CHECK EXIT: <n>`.
+#
+# Pure ASCII, LF only.
+
+set -uo pipefail
+
+: "${MODE:=info}"
+: "${ENV_NAME:=sbi_gpu}"
+: "${REPO:=}"
+: "${ARGV_FILE:=}"
+: "${WORKDIR:=}"
+
+finish() { echo "DEVICE_CHECK EXIT: $1"; exit "$1"; }
+
+if [ -z "$REPO" ]; then
+  REPO="$(cd "${PBS_O_WORKDIR:-$PWD}" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" || REPO=""
+fi
+if [ -z "$REPO" ] || [ ! -f "$REPO/hpc/joint/stage3/run_joint_arms.py" ]; then
+  echo "FATAL: REPO is not the checkout (no hpc/joint/stage3/run_joint_arms.py under '$REPO'); pass -v REPO=..." >&2
+  finish 2
+fi
+
+echo "host             : $(hostname)"
+echo "job              : ${PBS_JOBID:-none}  queue ${PBS_QUEUE:-none}"
+echo "mode             : $MODE"
+echo "repo             : $REPO ($(git -C "$REPO" log -1 --format='%h' 2>/dev/null))"
+echo "NCPUS            : ${NCPUS:-unset}  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi --query-gpu=index,name,memory.total,memory.used,driver_version --format=csv
+  nvidia-smi | grep -i "cuda version" || true
+else
+  echo "nvidia-smi       : not found on this node"
+fi
+
+ENV_OK=1
+# shellcheck source=/dev/null
+. "$REPO/hpc/pipeline/jobs/activate_env.sh"
+pipeline_activate "$ENV_NAME" || ENV_OK=0
+if [ "$ENV_OK" = "1" ]; then
+  echo "conda env        : ${CONDA_DEFAULT_ENV:-none}  ($(command -v python3))"
+  python3 -c "import torch; print('torch            : %s, CUDA build %s, GPU visible %s, devices %d' % (torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.device_count())); print('gpu              : %s' % (torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none'))" \
+    || echo "torch            : does not import in $ENV_NAME"
+fi
+
+case "$MODE" in
+  info)
+    if [ "$ENV_OK" = "1" ]; then echo "DEVICE_CHECK INFO OK"; else echo "DEVICE_CHECK INFO OK (environment $ENV_NAME not available: node facts only)"; fi
+    finish 0 ;;
+  suite)
+    [ "$ENV_OK" = "1" ] || finish 96
+    cd "$REPO/hpc/joint/stage3" || finish 2
+    python3 smoke_test_device.py
+    finish $? ;;
+  argv)
+    [ "$ENV_OK" = "1" ] || finish 96
+    if [ -z "$ARGV_FILE" ] || [ ! -f "$ARGV_FILE" ]; then echo "FATAL: ARGV_FILE '$ARGV_FILE' not found" >&2; finish 2; fi
+    if [ -z "$WORKDIR" ] || [ ! -d "$WORKDIR" ]; then echo "FATAL: WORKDIR '$WORKDIR' not found" >&2; finish 2; fi
+    cd "$WORKDIR" || finish 2
+    ARGV=()
+    while IFS= read -r line || [ -n "$line" ]; do ARGV+=("$line"); done < "$ARGV_FILE"
+    echo "command          : ${#ARGV[@]} argument(s) from $ARGV_FILE"
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used --format=csv -l 5 > "${ARGV_FILE%.argv}.gpu_util.csv" 2>/dev/null &
+      SMI_PID=$!
+    else
+      SMI_PID=""
+    fi
+    "${ARGV[@]}"
+    RC=$?
+    [ -n "$SMI_PID" ] && kill "$SMI_PID" 2>/dev/null
+    finish "$RC" ;;
+  *)
+    echo "FATAL: MODE must be info, suite or argv, got '$MODE'" >&2
+    finish 2 ;;
+esac
