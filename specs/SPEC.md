@@ -5874,7 +5874,20 @@ inferred]
 - `jobs/device_check.pbs`, `MODE` = `info` (the node's GPUs, and torch's
   view of them in `ENV_NAME` when it exists), `suite`
   (`smoke_test_device.py`), `argv` (the command of `ARGV_FILE` in `WORKDIR`,
-  with `nvidia-smi` sampled every 5 s into `<argv stem>.gpu_util.csv`).
+  with `nvidia-smi` sampled every 5 s into `<argv stem>.gpu_util.csv`, one
+  row per GPU, its index in the second column).
+  The GPU (amended 2026-11-26, after the info job `2104617`): davinci's PBS
+  gives a job with `ngpus=1` no `CUDA_VISIBLE_DEVICES`, so the job sees all
+  four GPUs of its node and torch takes GPU 0, which on `dvgpu015` held
+  37.9 GB of another job `[CLUSTER 2026-11-26]`. When the variable is
+  unset the script sets it to the GPU with the fewest compute processes
+  and, among those, the least memory in use, and prints `gpu choice       :
+  index <i> (<uuid>): <p> other process(es), <m> MiB in use, <u> % busy at
+  the start -> idle|shared; CUDA_VISIBLE_DEVICES=<i>` (`idle`: no process
+  and 0 % busy); a value set before the script is kept (`... kept`); when
+  `nvidia-smi` fails or lists no GPU the variable stays unset (`gpu choice
+  : none ...`). It prints the GPU processes and PBS's `exec_vnode` first.
+  A timing is read as a measurement only from a job whose line says `idle`.
   Resources and log on the qsub line. It uses `pipeline/jobs/
   activate_env.sh` (default environment `sbi_gpu`; `sbi_env` is never
   modified, D-169), no work root, no chain. Last line `DEVICE_CHECK EXIT:
@@ -5895,11 +5908,17 @@ inferred]
   resumes; V8 [GPU] the probe's GPU fields; V9 `device_probe_argv.py` (kept
   flags, changed flags, the converted command runs and writes only into the
   new folder, the three refusals); V10 the replicate term is called at every
-  probe step with `--probe-full-loss` and never without.
-- Status: implemented; verified on the CPU 2026-11-26 (suite 24 pass, 0
+  probe step with `--probe-full-loss` and never without; V11 the job
+  script's GPU choice against a stand-in `nvidia-smi` (six situations, the
+  first the node of job `2104617`; the command sees the variable the
+  script printed; the samples carry the GPU index).
+- Status: implemented; verified on the CPU 2026-11-26 (suite 31 pass, 0
   fail, 3 skip: V6-V8 need a GPU; parent-against-edited identity for five
-  arms). The GPU path has not been executed anywhere yet: `[NOT VERIFIED on
-  a GPU]` until the suite runs in a GPU job on davinci.
+  arms; V11's rule broken on purpose fails V11). The info job ran on
+  davinci 2026-11-26 (`2104617`, queue `gpu`, `dvgpu015`, exit 0): 4 x
+  NVIDIA A100-SXM4-40GB, driver 580.82.07, CUDA 13.0 `[CLUSTER]`. The GPU
+  path has not been executed yet: `[NOT VERIFIED on a GPU]` until the
+  suite runs in a GPU job on davinci.
 
 ## 6. Pipeline entry points
 

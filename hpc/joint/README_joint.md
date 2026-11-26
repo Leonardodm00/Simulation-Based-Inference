@@ -54,7 +54,9 @@ replaced by the CPU. On a GPU node the device suite runs through
 `stage3/jobs/device_check.pbs` (`MODE=info|suite|argv`), in an environment
 of its own (`sbi_gpu`): `sbi_env` has a CPU-only torch and is not modified.
 `stage3/device_probe_argv.py` turns a gate probe's or a trial's argv file
-into a probe of the same configuration on the GPU.
+into a probe of the same configuration on the GPU. davinci's PBS does not
+set `CUDA_VISIBLE_DEVICES`, so `device_check.pbs` sets it to the idlest GPU
+of the node and prints its choice (`gpu choice       : ... -> idle|shared`).
 
 If `hpc/dsn` is unusable (a broken checkout) the Stage 1 and 3b suites skip
 the tests that need the generator and print the resolver's reason; nothing

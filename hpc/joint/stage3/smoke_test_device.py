@@ -36,6 +36,12 @@ V9  device_probe_argv.py: a trial's command (with --resume) becomes a probe
     converted command is executed (on the GPU when there is one).
 V10 --probe-full-loss (arm A5; on the GPU when there is one): the probe's
     steps call the replicate term once each; without the flag never.
+V11 jobs/device_check.pbs picks the GPU by its rule when CUDA_VISIBLE_DEVICES
+    is unset (a stand-in nvidia-smi, so it runs anywhere): the fewest
+    compute processes, then the least memory in use; "idle" only with no
+    process and 0 % busy; a value set before the script is kept; a failing
+    nvidia-smi leaves the variable unset and the job running. The command
+    sees the variable the script printed.
 
 Pure ASCII, LF only.
 """
@@ -393,6 +399,139 @@ def check_v9(tmp):
        all(refusals), str(refusals))
 
 
+_STUB_SMI_BODY = r'''
+# a stand-in nvidia-smi for V11 of smoke_test_device.py. STUB_GPUS: lines
+# "index,uuid,MiB used,percent busy"; STUB_APPS: lines "uuid,pid,MiB";
+# STUB_FAIL set: every call fails (exit 9).
+import os
+import sys
+import time
+
+if os.environ.get("STUB_FAIL"):
+    sys.exit(9)
+
+
+def rows(var):
+    with open(os.environ[var]) as fh:
+        return [line.split(",") for line in fh.read().splitlines() if line.strip()]
+
+
+gpus, apps, args = rows("STUB_GPUS"), rows("STUB_APPS"), sys.argv[1:]
+query = [a for a in args if a.startswith("--query-")]
+if not query:
+    print("| NVIDIA-SMI 580.82.07   Driver Version: 580.82.07   CUDA Version: 13.0 |")
+    sys.exit(0)
+key, fields = query[0].split("=", 1)
+fields = fields.split(",")
+if key == "--query-compute-apps":
+    for a in apps:
+        cells = {"gpu_uuid": a[0], "pid": a[1], "used_memory": a[2] + " MiB"}
+        print(", ".join(cells[f] for f in fields))
+    sys.exit(0)
+while True:
+    for g in gpus:
+        cells = {"index": g[0], "uuid": g[1], "memory.used": g[2], "utilization.gpu": g[3],
+                 "name": "A100-stand-in", "memory.total": "40960",
+                 "driver_version": "580.82.07", "timestamp": time.strftime("%Y/%m/%d %H:%M:%S")}
+        print(", ".join(cells[f] for f in fields))
+    sys.stdout.flush()
+    if "-l" not in args:
+        break
+    time.sleep(1)
+'''
+
+# V11's six situations: (name, GPUs "index,uuid,MiB,busy", processes
+# "uuid,pid,MiB", CUDA_VISIBLE_DEVICES before the script, STUB_FAIL,
+# the variable the command must see, the state the script must print).
+# The first is the node of job 2104617 (dvgpu015, 2026-11-26).
+_V11_CASES = [
+    ("dvgpu015: GPU 0 busy, 1-3 idle",
+     ["0,U0,37927,95", "1,U1,2585,0", "2,U2,2643,0", "3,U3,3313,0"],
+     ["U0,111,37900"], None, None, "1", "idle"),
+    ("every GPU runs a process",
+     ["0,U0,37927,95", "1,U1,2585,10", "2,U2,2643,0", "3,U3,3313,0"],
+     ["U0,1,9", "U1,2,9", "U2,3,9", "U3,4,9"], None, None, "1", "shared"),
+    ("fewest processes before least memory",
+     ["0,U0,37927,95", "1,U1,100,0", "2,U2,5000,0", "3,U3,6000,0"],
+     ["U0,1,9", "U1,2,9", "U1,3,9"], None, None, "2", "idle"),
+    ("no process but busy",
+     ["0,U0,900,40", "1,U1,2585,0"], [], None, None, "0", "shared"),
+    ("set before the script",
+     ["0,U0,10,0", "1,U1,20,0"], [], "3", None, "3", "kept"),
+    ("nvidia-smi fails",
+     ["0,U0,10,0"], [], None, "1", "unset", "none"),
+]
+
+
+def check_v11(tmp):
+    """The job script's GPU choice, against a stand-in nvidia-smi."""
+    if shutil.which("bash") is None or shutil.which("awk") is None:
+        skip("V11 the job script's GPU choice", "needs bash and awk")
+        return
+    d = os.path.join(tmp, "v11")
+    os.makedirs(os.path.join(d, "bin"))
+    smi = os.path.join(d, "bin", "nvidia-smi")
+    with open(smi, "w") as fh:
+        fh.write("#!" + sys.executable + "\n" + _STUB_SMI_BODY.lstrip("\n"))
+    os.chmod(smi, 0o755)
+    argv_file = os.path.join(d, "show.argv")
+    with open(argv_file, "w") as fh:
+        fh.write("\n".join([sys.executable, "-c",
+                            "import os; print('CVD=' + os.environ.get('CUDA_VISIBLE_DEVICES', 'unset'))"]) + "\n")
+    repo = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))
+    script = os.path.join(_HERE, "jobs", "device_check.pbs")
+    for name, gpus, apps, preset, fail, want, state in _V11_CASES:
+        with open(os.path.join(d, "gpus"), "w") as fh:
+            fh.write("\n".join(gpus) + "\n")
+        with open(os.path.join(d, "apps"), "w") as fh:
+            fh.write("".join(a + "\n" for a in apps))
+        env = dict(os.environ)
+        for k in ("CUDA_VISIBLE_DEVICES", "PBS_JOBID", "PBS_QUEUE", "STUB_FAIL"):
+            env.pop(k, None)
+        env.update({"PATH": os.path.join(d, "bin") + os.pathsep + env.get("PATH", ""),
+                    "STUB_GPUS": os.path.join(d, "gpus"), "STUB_APPS": os.path.join(d, "apps"),
+                    "SKIP_CONDA": "1", "MODE": "argv", "REPO": repo,
+                    "ARGV_FILE": argv_file, "WORKDIR": d})
+        if preset is not None:
+            env["CUDA_VISIBLE_DEVICES"] = preset
+        if fail is not None:
+            env["STUB_FAIL"] = fail
+        r = subprocess.run(["bash", script], env=env, capture_output=True, text=True, timeout=600)
+        lines = r.stdout.splitlines()
+        choice = [l for l in lines if l.startswith("gpu choice")]
+        seen = [l for l in lines if l.startswith("CVD=")]
+        if state == "kept":
+            good = len(choice) == 1 and "kept" in choice[0]
+        elif state == "none":
+            good = len(choice) == 0 or "none" in choice[0]
+        else:
+            good = (len(choice) == 1
+                    and choice[0].startswith("gpu choice       : index %s " % want)
+                    and choice[0].endswith("-> %s; CUDA_VISIBLE_DEVICES=%s" % (state, want)))
+        good = good and seen == ["CVD=" + want] and "DEVICE_CHECK EXIT: 0" in lines
+        ok("V11 %s -> %s (%s)" % (name, want, state), good,
+           "%s | %s" % (choice[0] if choice else "no gpu choice line",
+                        seen[0] if seen else "no CVD line"))
+    # the samples, on the first situation, with a command that outlasts the
+    # first sample (the sampler is stopped when the command ends)
+    name, gpus, apps = _V11_CASES[0][:3]
+    with open(os.path.join(d, "gpus"), "w") as fh:
+        fh.write("\n".join(gpus) + "\n")
+    with open(os.path.join(d, "apps"), "w") as fh:
+        fh.write("".join(a + "\n" for a in apps))
+    slow = os.path.join(d, "slow.argv")
+    with open(slow, "w") as fh:
+        fh.write("\n".join([sys.executable, "-c", "import time; time.sleep(3)"]) + "\n")
+    env.pop("CUDA_VISIBLE_DEVICES", None)
+    env.pop("STUB_FAIL", None)
+    env["ARGV_FILE"] = slow
+    r = subprocess.run(["bash", script], env=env, capture_output=True, text=True, timeout=600)
+    samples = slow[:-len(".argv")] + ".gpu_util.csv"
+    text = open(samples).read() if os.path.isfile(samples) else ""
+    ok("V11 the utilisation samples carry the GPU index",
+       "DEVICE_CHECK EXIT: 0" in r.stdout and ", 1, 0, 2585" in text, text[:120])
+
+
 def main():
     print("torch %s, CUDA build %s, GPU visible: %s"
           % (torch.__version__, torch.version.cuda, HAS_GPU), flush=True)
@@ -409,6 +548,7 @@ def main():
         check_v8(tmp)
         check_v9(tmp)
         check_v10(tmp)
+        check_v11(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     n = dict((k, sum(1 for r in RESULTS if r[0] == k)) for k in ("PASS", "FAIL", "SKIP"))

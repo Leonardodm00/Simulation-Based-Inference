@@ -20,6 +20,15 @@
 # Variables: MODE (info), ENV_NAME (sbi_gpu), REPO (the checkout; default
 # PBS_O_WORKDIR's git root), ARGV_FILE and WORKDIR (MODE=argv).
 #
+# The GPU [2026-11-26]: davinci's PBS gives a job with ngpus=1 no
+# CUDA_VISIBLE_DEVICES (job 2104617 saw all four GPUs of its node, GPU 0
+# with 37.9 GB in use by another job), and torch takes GPU 0 by default. So,
+# when the variable is unset, the script sets it to the GPU with the fewest
+# compute processes and, among those, the least memory in use, and prints
+# `gpu choice       : index <i> (<uuid>): <p> other process(es), <m> MiB in
+# use, <u> % busy at the start -> idle|shared`. A value set before the
+# script is kept. The GPU processes and PBS's exec_vnode are printed first.
+#
 # It reads the repository and writes only where its command writes. It does
 # not use the pipeline's work roots, chain or avoid list. Exit 2 = a missing
 # variable or file, 96 = the environment cannot start, else the command's.
@@ -56,6 +65,35 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 else
   echo "nvidia-smi       : not found on this node"
 fi
+if command -v qstat >/dev/null 2>&1 && [ -n "${PBS_JOBID:-}" ]; then
+  qstat -f "$PBS_JOBID" 2>/dev/null | sed ':a;N;$!ba;s/\n\t//g' | grep -E "exec_vnode" || true
+fi
+
+# the GPU this job uses (see the header)
+if command -v nvidia-smi >/dev/null 2>&1; then
+  echo "gpu processes    : (gpu_uuid, pid, used_memory)"
+  nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory --format=csv,noheader 2>/dev/null | sed 's/^/  /' || true
+  if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    echo "gpu choice       : CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES was set before this script; kept"
+  else
+    GPUS="$(nvidia-smi --query-gpu=index,uuid,memory.used,utilization.gpu --format=csv,noheader,nounits 2>/dev/null)" || GPUS=""
+    APPS="$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader 2>/dev/null | tr '\n' ' ')" || APPS=""
+    PICK="$(printf '%s\n' "$GPUS" | awk -F', *' -v apps="$APPS" '
+      BEGIN { n = split(apps, a, " "); for (i = 1; i <= n; i++) busy[a[i]]++ }
+      NF >= 4 { nb = busy[$2] + 0; m = $3 + 0
+                if (best == "" || nb < bnb || (nb == bnb && m < bm)) { best = $1; bnb = nb; bm = m; bu = $4 + 0; bid = $2 } }
+      END { if (best != "") print best, bnb, bm, bu, bid }')"
+    if [ -n "$PICK" ]; then
+      # shellcheck disable=SC2086
+      set -- $PICK
+      export CUDA_VISIBLE_DEVICES="$1"
+      if [ "$2" = "0" ] && [ "$4" = "0" ]; then GPU_STATE="idle"; else GPU_STATE="shared"; fi
+      echo "gpu choice       : index $1 ($5): $2 other process(es), $3 MiB in use, $4 % busy at the start -> $GPU_STATE; CUDA_VISIBLE_DEVICES=$1"
+    else
+      echo "gpu choice       : none (nvidia-smi lists no GPU)"
+    fi
+  fi
+fi
 
 ENV_OK=1
 # shellcheck source=/dev/null
@@ -85,7 +123,7 @@ case "$MODE" in
     while IFS= read -r line || [ -n "$line" ]; do ARGV+=("$line"); done < "$ARGV_FILE"
     echo "command          : ${#ARGV[@]} argument(s) from $ARGV_FILE"
     if command -v nvidia-smi >/dev/null 2>&1; then
-      nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used --format=csv -l 5 > "${ARGV_FILE%.argv}.gpu_util.csv" 2>/dev/null &
+      nvidia-smi --query-gpu=timestamp,index,utilization.gpu,memory.used --format=csv -l 5 > "${ARGV_FILE%.argv}.gpu_util.csv" 2>/dev/null &
       SMI_PID=$!
     else
       SMI_PID=""
