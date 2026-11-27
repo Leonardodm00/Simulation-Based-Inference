@@ -136,3 +136,66 @@ implementation:
     needs_theory: []
     needs_hpc: false
     jobs: []
+  - id: I40
+    title: "the tool's package, its schemas and its interfaces"
+    summary: "The sbitool package: the list of what a bundle and a card must contain with their validators, the description of a recording, and the interfaces a recording reader, a simulator and a scheduler must offer."
+    block: 40
+    parent: S1
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I41
+    title: "the model bundle: export, check, rebuild"
+    summary: "Turns a trained ensemble into one safe file (weights as safetensors, a manifest, the card, its held-out evaluation and the gate's reference data), checks such a file, and rebuilds the networks from it without the simulated bank."
+    block: 41
+    parent: S3
+    depends_on: [I40]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I42
+    title: "the card"
+    summary: "The Markdown card every bundle carries: a template pre-filled from the pipeline's records, and the validator that says whether it is complete."
+    block: 42
+    parent: S3
+    depends_on: [I40]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I43
+    title: "recordings and the device's layout"
+    summary: "Reads a recording into spike times per electrode with the electrodes' positions: the extractor's spike-train files and the files SpikeInterface reads."
+    block: 43
+    parent: S4
+    depends_on: [I40]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I44
+    title: "from a recording to windows"
+    summary: "The bundle's extraction applied to a recording: the subregions of electrodes, their pooled firing-rate traces and the windows the networks take, by the extractor's own rule."
+    block: 44
+    parent: S4
+    depends_on: [I43]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I45
+    title: "inference from a bundle"
+    summary: "A bundle and a recording's windows give the posterior draws, their summaries and the gate, on a laptop; the same numbers as the cluster evaluation."
+    block: 45
+    parent: S3
+    depends_on: [I41, I44]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I46
+    title: "the device and the window as figures"
+    summary: "The MEA drawn with its electrodes and the chosen subregions, and one window drawn as its spike raster and its firing-rate trace."
+    block: 46
+    parent: S4
+    depends_on: [I44]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []

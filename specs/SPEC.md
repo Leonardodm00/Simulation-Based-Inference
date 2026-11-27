@@ -103,6 +103,11 @@ Paths this spec covers (files, directories ending in `/`, or globs):
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
 
+- [2026-11-27] The tool (`sbitool/`, roadmap `tool`, steps S1, S3 and S4): sec. 2.7 and
+  blocks 40-46 -- the package, its schemas and interfaces, the model bundle, the card,
+  the recording adapters and the layout, the windows, the inference from a bundle, the
+  device's figures. Drafted, not built.
+
 ## 1. Scientific goal
 
 One bash command takes a data set -- a folder of simulated spike trains (the
@@ -984,6 +989,167 @@ targets:
 The quantities the existing evaluation does not have -- the edge split
 (R1), (R2), the well's summary (R4), the gate (R5)-(R8) -- have oracles of
 their own, fixed in their blocks' entries before the code.
+
+### 2.7 The tool's contracts (roadmap `tool`, steps S1, S3, S4; D-158, D-172..D-175; added 2026-11-27)
+
+Proposed 2026-11-27 from the user's decisions D-172 (order of work), D-173
+(the card's form, the recording readers, the code's home), D-174
+(safetensors) and D-175 (a self-contained bundle, the card's fields, the
+working name `sbitool`); every value marked "Claude's" below is a proposal
+until the user confirms it (sec. 8, Q-T*).
+
+**What the tool is.** A Python package, `sbitool/` at the repository's
+root, that turns a trained ensemble E of a recorded project (sec. 2.6) into
+a file another person can load safely, and that, given such a file and a
+recording, returns the ensemble's posterior on the recording's windows
+with the gate (sec. 2.6, (R5)-(R10)), on a laptop, without the simulated
+bank and without the cluster. Three objects are fixed here: the model
+bundle, its card, and a recording.
+
+**The sources the package imports (never copies).** Until the release step
+(S10) packages them, `sbitool` imports three bodies of existing code
+through one module, `sbitool/_sources.py`, which puts their folders on
+`sys.path` and records each imported file's sha256:
+- from this repository's `hpc/`: the estimator (`hpc/joint/stage2/
+  joint_model.py`, `hpc/dsn/backbone.py` and `condition_space.py`), the
+  runner's builders (`hpc/joint/stage3/run_joint_arms.py`:
+  `make_backbone`, `FixedStatsSummary`), the IFR primitive
+  (`hpc/dsn/generate_burst_data.py`: `compute_ifr_trace`), and the
+  evaluation's functions (`hpc/pipeline/evaluation/ev_sample.py`,
+  `ev_gate.py`, `ev_rec_metrics.py`);
+- from a checkout of the Sbi-extractor (the folder named by the
+  environment variable `SBIX_DIR`, or `SBIX_CLONE` in the tests): the
+  per-electrode spike-train readers and the partition into subregions
+  (`extractor/channel_subset_extraction.py`) and the windows of a trace
+  (`export_windows/bank_real.py`: `windows_of`). Only blocks 43 and 44
+  need it; a bundle is exported, checked and used on windows without it.
+So that one function stays in one place: the density a bundle returns is
+the pipeline's, by construction and by test (T41).
+
+**The model bundle.** One zip file, `<name>.sbibundle`, whose members are,
+exactly:
+
+| member | content |
+|---|---|
+| `manifest.json` | the bundle's description, below |
+| `CARD.md` | the card, below |
+| `members/member_<k>.safetensors`, k = 0..M-1 | member k's `state_dict` (every tensor, the integer and boolean ones included), k in the ensemble's member order (sec. 2.5: the seeds ascending) |
+| `evaluation/sim.json` | block 36's `<stem>_sim.json` of E: its quantities on the held-out simulations D_sim |
+| `evaluation/gate.safetensors` | the gate's sets as block 35 embedded them: `z_ref` (M, N_ref, d_z), `z_rank` (M, N_rank, d_z), `z_null` (M, N_null, d_z), float32 |
+
+No member is a pickle: the weights and the arrays are safetensors files,
+the rest is JSON and Markdown; reading a bundle never calls `torch.load`,
+`pickle` or `numpy.load`.
+
+`manifest.json` has exactly the keys `MANIFEST_KEYS` (block 40):
+- `schema`: "sbitool_bundle/1"; `name`; `created` (ISO time);
+  `card_complete` (bool: false for a draft, see the card);
+- `arm`, `M`, `p` (the number of parameters), `d_z` (the embedding's
+  dimension), `W` (the window's length in samples of the IFR);
+- `members`: a list of M dicts `file`, `sha256` (of the safetensors file),
+  `seed`, `state_sha256` (the pipeline's digest of the member's state,
+  `joint_model.state_sha256`, the checkpoint's `model_sha256`),
+  `split_seed`, `split_hash`;
+- `architecture`: what rebuilds a member with no data: `backbone` ("dsn",
+  "fixed-stats" or "fallback"), `embedding_size`, the encoder's
+  `depth_exponent`, `width_multiplier`, `block_family`, `head_fusion`,
+  `dropout`, `head_pool_ops`, the flow's `hidden_features`,
+  `num_transforms`, `num_bins`, `hidden_layers`, `z_score_theta`,
+  `z_score_x`, and `backbone_repr` (the checkpoint's, compared after the
+  rebuild);
+- `parameters`: `names` (p), `units` (p; "1" for a dimensionless one),
+  `bounds` (p pairs [lo_k, hi_k] in the declared coordinate, or null);
+  the networks work in the unit box, u in (0, 1)^p, and the declared
+  value of axis k is lo_k + u_k (hi_k - lo_k);
+- `extraction`: null, or exactly `EXTRACTION_KEYS`, the parameters that
+  turn a recording into windows (below);
+- `gate`: `factors`, `alpha`, `n_ref`, `n_rank`, `n_null`, `k_gate`,
+  `size_mean`, `size_lo`, `size_hi`, `level` (block 36's `gate` of
+  `sim.json`, so that the tool flags as the evaluation did);
+- `sample`: `n_post` and `seed`, the defaults of an inference;
+- `provenance`: the project's tag, the ensemble's name, the search and the
+  campaign, the sha256 of the best fit's `BEST_FIT_COMPLETE.json` and of
+  block 35's `<stem>_sample.json`, the repository's commit, and the sha256
+  of each source file the rebuild imports;
+- `software`: the versions of python, torch, sbi, zuko, numpy,
+  safetensors at the export;
+- `files`: a dict from every other member's name to its sha256.
+
+**Rebuilding a member from a bundle.** With theta in the unit box and x a
+window in R^W, member m's density q_m(theta | x) is the pipeline's (sec.
+2.5, (E1) for the mixture q_E): the tool builds the network with the
+pipeline's own builders from `architecture` and loads the safetensors
+state into it. The builders need example tensors only for their shapes
+(the runner passed 64 training rows); the tool passes tensors of the same
+shapes drawn from a fixed generator, and the statement that this changes
+nothing is a test, not an assumption: after the load the state's digest
+equals the manifest's `state_sha256`, and log q_m(theta | x) and the draws
+under a fixed seed equal the pipeline's rebuild (block 19's
+`ev_models.rebuild`) bit for bit (T41a).
+
+**The card.** `CARD.md`: a header between two `---` lines, in YAML, then
+free Markdown. The header has exactly the top-level keys `CARD_KEYS`
+(block 42), the user's eight (D-158) and the sharing fields (D-175):
+`title`; `scientific_question`; `simulator` (`model_type`, `reference`,
+`fixed_parameters`: name -> value with its unit, `searched_parameters`:
+the manifest's `parameters.names`); `training` (`arm`, `members`,
+`n_networks`, `n_windows`, `split_fracs`, `hyperparameters`: the
+runner's, `hyperparameter_search`: how they were chosen); `extraction`
+(the manifest's, or "not applicable"); `references`; `authors` (each
+`name`, `contact`); `licence`; `cite`; `data` (`simulated_bank` and
+`recordings`: each `location`, `public`, and for the bank `size_bytes`
+and `sha256` or null); `software`; `limitations`. The export pre-fills
+every field the pipeline's records hold and writes the literal `TODO` in
+the others. A card is complete when every key is present, no value is
+empty or `TODO`, and `training.arm`, `training.members`,
+`simulator.searched_parameters`, `extraction` and `software` agree with
+the manifest. A bundle whose card is not complete is a draft
+(`card_complete` false): it can be made and used locally, and the hub
+(step S8) will not take it.
+
+**A recording.** For the tool a recording is, whatever file it came from
+(block 40, `Recording`): for each electrode e of a set of electrodes, the
+sorted sample indices of its detected spikes, s_{e,1} < s_{e,2} < ...,
+integers in [0, n_samples); the raw sampling rate fs_raw [Hz]; n_samples,
+so that the duration is T_rec = n_samples / fs_raw [s] and the spike
+times are t_{e,j} = s_{e,j} / fs_raw [s]; and the device's layout: each
+electrode's position (x_e, y_e) [um], and when the device is a regular
+grid its `grid_width`, `index_base` and `pitch_um`. Two adapters produce
+it (D-173): `ptrain` (the extractor's per-electrode spike-train files,
+its two declared formats) and `spikeinterface` (the files that library
+reads).
+
+**From a recording to windows (the extraction).** `EXTRACTION_KEYS`:
+`electrodes_per_subset` (n_e), `n_subsets`, `mfr_threshold_hz`,
+`w_size_s` (the bin width Delta t), `gaussian_window_s` (sigma_sm),
+`grid_width`, `index_base`, `pitch_um`, `fs_raw_hz`, and `detection`
+(null for a recording that arrives as spike trains; for raw voltage the
+detection's parameters, Q-T1). The rule is the extractor's, imported:
+the electrodes are partitioned into `n_subsets` disjoint subregions of
+n_e electrodes (`partition_subregions`, its mean-firing-rate threshold);
+for a subregion S with electrodes e in S and for each bin index k in
+{0, ..., K-1}, K = the number of bins of width Delta t in T_rec, the
+pooled instantaneous firing rate is the extractor's (EXTRACTOR_USAGE.md,
+eq. (3)): the spikes of the n_e electrodes counted in bin k, divided by
+n_e Delta t [Hz per electrode], then smoothed over k by the Gaussian of
+width sigma_sm (`compute_ifr_trace`); the trace x_S in R_{>=0}^K is cut
+into floor(K / W) consecutive windows of W bins from its start
+(`windows_of`), each a row x in R^W of the bundle's networks. The tool
+adds nothing to this rule and changes nothing in it; a bundle whose
+`extraction` is null accepts windows only.
+
+**An inference.** Given a bundle of ensemble E and n windows x_1..x_n (of
+one recording, or given as an array): for each window, n_post draws of
+q_E(. | x_i), n_post / M per member in member order with the seeds block
+19 uses (member k: seed + k), their densities, the members' embeddings,
+the summaries of block 36 (per window: mean, SD, quantiles 0.05, 0.50,
+0.95 per axis, contraction (R3); per recording: the mixture over its
+windows (R4), called so and never "the recording's posterior"), and the
+gate against the bundle's own sets ((R5)-(R8), p(x_i) and the flag p <
+alpha_gate, read against the bundle's size band (R10)). With the seed
+block 35 used for a recording bank r, the result on that bank's windows
+is block 35's and block 36's, file for file (T45a): the tool is another
+route to the same numbers, not another estimator.
 
 ### Notation
 
@@ -7281,6 +7447,344 @@ plan; Confirmed: yes 2026-11-17]
     (a fast-forward of `sci/pipeline`); which branch the cluster's
     checkout follows is the user's call.
 
+### Block 40: the tool's package, its schemas and its interfaces (added 2026-11-27; D-172..D-175; roadmap tool, step S1)
+
+- Modules: `sbitool/__init__.py`, `sbitool/__main__.py` (the command
+  line's dispatcher), `sbitool/_sources.py`, `sbitool/schema.py`,
+  `sbitool/interfaces.py`, `sbitool/tests/test_smoke_tool_schema.py` (all
+  new; standard library, plus numpy for `Recording`).
+- Public API:
+  - `sbitool._sources.use(*names) -> dict`: puts on `sys.path` the folders
+    of the named source groups (`"model"`, `"evaluation"`, `"ifr"`,
+    `"extractor"`) and returns, per imported file of the group, its path
+    and sha256; `SourceError` when a folder is absent (for `"extractor"`:
+    naming `SBIX_DIR`);
+  - `sbitool.schema`: `BUNDLE_SCHEMA = "sbitool_bundle/1"`,
+    `MANIFEST_KEYS`, `MEMBER_KEYS`, `ARCHITECTURE_KEYS`, `PARAMETER_KEYS`,
+    `EXTRACTION_KEYS`, `GATE_KEYS`, `CARD_KEYS` and the nested card keys;
+    `validate_manifest(data) -> [str]`, `validate_extraction(data) ->
+    [str]`, `validate_card_header(data, manifest=None) -> [str]`: every
+    problem found, an empty list when valid; never an exception on any
+    JSON value;
+  - `sbitool.interfaces`: `Recording` (a frozen dataclass: `name`,
+    `spikes`: dict electrode id (int) -> sorted int64 sample indices,
+    `fs_raw_hz`, `n_samples`, `positions_um`: dict electrode id -> (x, y)
+    or None, `grid`: None or (`grid_width`, `index_base`, `pitch_um`),
+    `source`: dict) with `duration_s` and `check() -> [str]`; the
+    protocols `RecordingAdapter` (`read(path, **options) -> Recording`),
+    `Simulator` (`simulate(theta, seed) -> x`, theta (p,) in the unit box,
+    x (n_windows, W): the interface wave 2 of step S2 will call, D-172)
+    and `Scheduler` (`submit(job) -> id`, `state(id) -> str`: step S5's);
+  - `python3 -m sbitool <command> ...`: the commands of blocks 41-46,
+    each exiting 0 with a pass line, 2 on the arguments, 3 on a refusal.
+- Rule: sec. 2.7. The validators check keys (missing, unknown), types,
+  ranges and the cross-conditions sec. 2.7 states (M members, p names,
+  units and bounds, lo < hi, the files' digests' form, a complete card's
+  agreement with the manifest).
+- Libraries: standard library; numpy. Custom code: none.
+- Test oracles (`test_smoke_tool_schema.py`, T40*):
+  - T40a a valid manifest and card header (written by the test from sec.
+    2.7) give []; each of a table of single faults (a missing key, an
+    unknown key, a wrong type, M not the members' number, lo >= hi, a
+    non-finite number, an integer beyond float range, `TODO` in a complete
+    card, an arm that differs from the manifest's) gives exactly one
+    problem naming the key;
+  - T40b `Recording.check`: unsorted or out-of-range sample indices, a
+    non-positive rate, positions for other electrodes than the spikes'
+    are each named; `duration_s` = n_samples / fs_raw_hz;
+  - T40c `_sources.use("model", "evaluation", "ifr")` imports the modules
+    sec. 2.7 names and returns their digests (recomputed by the test);
+    `use("extractor")` without the folder raises `SourceError`;
+  - T40d `python3 -m sbitool` without a command exits 2 and lists the
+    commands; the package's own modules import nothing outside the
+    standard library, numpy and the libraries their block names (static).
+- Status: drafted 2026-11-27.
+- Confirmed: proposed 2026-11-27 (the user's D-173..D-175; the key lists
+  are Claude's reading of them, Q-T3).
+
+### Block 41: the model bundle -- export, check, rebuild (added 2026-11-27; D-174, D-175; roadmap tool, step S3)
+
+- Modules: `sbitool/bundle.py`, `sbitool/model.py`, `sbitool/export.py`,
+  `sbitool/tests/test_smoke_tool_bundle.py` (new; torch, safetensors,
+  and through `_sources` the estimator and the evaluation's modules).
+- Public API:
+  - `python3 -m sbitool export --config <tag>.json --eval-config
+    <tag>_rec_eval.json --ensemble <name> --out <file>.sbibundle
+    [--extraction FILE.json] [--card CARD.md] [--name NAME]`: pass line
+    `BUNDLE EXPORT OK: <file> (<M> members, <bytes> bytes, card complete |
+    draft)`;
+  - `python3 -m sbitool bundle-check <file>.sbibundle [--rebuild]`: pass
+    line `BUNDLE CHECK OK: ...`; exit 3 with one line per problem;
+  - `bundle.read(path) -> Bundle` (the manifest, the card's text, lazily
+    the members' states and the gate's sets; every member's sha256
+    verified when it is read); `bundle.check(path) -> [str]`;
+  - `model.build(architecture, p, W) -> model` (untrained, eval mode);
+    `model.load(bundle) -> [model_0, ..., model_{M-1}]` (each state
+    loaded, its `state_sha256` and `backbone_repr` verified).
+- Inputs: the project's configuration and the evaluation's (block 33);
+  the ensemble's best fit (its records and checkpoints, the one place a
+  `.pt` is read, with the pipeline's own loader); block 35's
+  `<stem>_sample.json` and `<stem>_sim.npz`; block 36's `<stem>_sim.json`
+  and `METRICS.json`; the parameters' names and bounds from the sample's
+  `axes`; optional `--extraction` (exactly `EXTRACTION_KEYS`) and
+  `--card`.
+- Rule (sec. 2.7): the export refuses (exit 3, nothing written) when the
+  ensemble is not complete, its sample or its metrics are absent or not
+  current (block 36's `sample_left_out`), the gate's sets are not in the
+  sample, or `--extraction` is not valid. The gate's sets are the rows of
+  `z` at the roles 1, 2, 3 of `gate_role`, in row order. Without `--card`
+  the card is the pre-filled template (block 42) and the bundle a draft;
+  with it the card is validated against the manifest, and the bundle is
+  complete only if the card is. The zip is written to a temporary name,
+  re-read and checked, then renamed. `bundle.check`: the members are
+  exactly sec. 2.7's; the manifest validates; every digest holds; no
+  member's name ends in `.pt`, `.pkl`, `.npy` or `.npz`.
+- Libraries: `zipfile`, `json`, `hashlib`; `safetensors.torch`,
+  `safetensors.numpy`; the pipeline's `build_joint_model`,
+  `make_backbone`, `state_sha256`. Custom code: none.
+- Test oracles (`test_smoke_tool_bundle.py`, T41*; on `rec_fixture`'s
+  recorded-kind project, sampled and evaluated by blocks 35-36 into the
+  test's own folder):
+  - T41a the rebuild is the pipeline's: for each member of an exported
+    bundle, the loaded state's digest equals the checkpoint's
+    `model_sha256`; on 16 rows of D_sim, log q_m(theta_i | x_i) equals
+    `ev_models.rebuild`'s member bit for bit, and so do 8 draws per row
+    under one seed and the embeddings;
+  - T41b the bundle's content: the members are exactly sec. 2.7's; the
+    manifest validates and its `parameters`, `gate`, `members` equal the
+    sample's `axes`, the metrics' `gate` and the records; `z_ref`,
+    `z_rank`, `z_null` equal the sample's `z` at the three roles;
+    `evaluation/sim.json` is the metrics' file byte for byte;
+  - T41c safety and integrity: one byte changed in a member's weights, in
+    the manifest or in the gate's file makes `bundle-check` exit 3 naming
+    the member; a zip with an extra member is refused; the package's
+    reading path contains no call of `torch.load`, `pickle` or
+    `numpy.load` (static, over `bundle.py` and `model.py`), and `export.py`
+    reads a checkpoint only through `ev_models.rebuild`;
+  - T41d the refusals, each exit 3 and nothing written: an unknown
+    ensemble, no sample, a sample of other values, an invalid
+    `--extraction`; the same export twice gives members with the same
+    digests;
+  - T41e a complete card (the test fills the template) gives
+    `card_complete` true; the template alone gives a draft.
+  Mutations, each of which must fail a check: the members written in
+  another order; a state tensor dropped; the digest not verified at
+  reading; the gate's sets taken from the wrong roles.
+- Status: drafted 2026-11-27.
+- Confirmed: proposed 2026-11-27.
+
+### Block 42: the card (added 2026-11-27; D-158 (4), D-173, D-175; roadmap tool, step S3)
+
+- Modules: `sbitool/card.py`, `sbitool/tests/test_smoke_tool_card.py`
+  (new; PyYAML `safe_load` and `safe_dump`).
+- Public API: `card.template(manifest, records, project) -> str` (a
+  `CARD.md` with the header pre-filled and `TODO` elsewhere, and a body of
+  headed sections that say what to write); `card.parse(text) -> (header,
+  body)`; `card.check(text, manifest) -> [str]` (through
+  `schema.validate_card_header`); `python3 -m sbitool card-template
+  <bundle or export arguments> --out CARD.md`; `python3 -m sbitool
+  card-check CARD.md [--bundle FILE]`: pass line `CARD OK: complete` or
+  `CARD OK: draft, <k> field(s) to fill: <names>`; exit 3 on a malformed
+  card (no header, YAML that does not parse, an unknown or missing key).
+- Rule (sec. 2.7, "The card"): pre-filled from the records and the
+  project: `training` (arm, members, the networks and windows of the
+  training split, `split_fracs`, the runner's hyperparameters from a
+  member's record `config`, restricted to the keys that describe the
+  model and its optimisation), `simulator.searched_parameters`,
+  `extraction`, `software`; `TODO` in `title`, `scientific_question`,
+  `simulator.model_type`, `simulator.reference`,
+  `simulator.fixed_parameters`, `training.hyperparameter_search`,
+  `references`, `authors`, `licence`, `cite`, `data`, `limitations`. The
+  header is written with `safe_dump` in `CARD_KEYS`' order; a value is
+  never guessed.
+- Libraries: PyYAML. Custom code: none.
+- Test oracles (`test_smoke_tool_card.py`, T42*):
+  - T42a the template of the fixture's ensemble parses; its pre-filled
+    values equal the records' and the manifest's (computed by the test);
+    `card-check` says draft and names exactly the `TODO` fields;
+  - T42b every `TODO` replaced: complete; then each of a table of single
+    faults (a key removed, an unknown key added, an empty list, `arm`
+    changed, a searched parameter renamed, a `TODO` left in a nested
+    value) is named;
+  - T42c malformed cards (no header, one `---`, YAML with a tab error, a
+    header that is a list) exit 3 with one line; a card with YAML tags
+    that would build Python objects is refused (`safe_load`);
+  - T42d parse(template) then dump gives the same header (a round trip).
+- Status: drafted 2026-11-27.
+- Confirmed: proposed 2026-11-27 (the mandatory fields are D-158's and
+  D-175's; which are pre-filled is Claude's, Q-T3).
+
+### Block 43: recordings and the device's layout (added 2026-11-27; D-158 (1), D-173; roadmap tool, step S4)
+
+- Modules: `sbitool/recordings/__init__.py` (the adapters' registry),
+  `sbitool/recordings/ptrain.py`, `sbitool/recordings/si.py`,
+  `sbitool/recordings/layout.py`,
+  `sbitool/tests/test_smoke_tool_recordings.py` (new; numpy, scipy;
+  `spikeinterface` and `probeinterface` imported inside `si.py` only; the
+  extractor through `_sources.use("extractor")` in `ptrain.py` only).
+- Public API:
+  - `recordings.read(path, adapter, **options) -> Recording`;
+    `recordings.ADAPTERS` ("ptrain", "spikeinterface");
+  - `ptrain.read(folder, fs_raw_hz, ptrain_format="raster",
+    ptrain_varname="ptrain", ptrain_name_pattern=..., grid_width,
+    index_base, pitch_um) -> Recording`: the extractor's
+    `load_ptrain_folder` and `electrode_coords`, its refusals passed on;
+  - `si.read(path, reader, detection=None, **reader_options) ->
+    Recording`: `reader` the name of a SpikeInterface extractor; a file of
+    spike trains (a sorting) gives its units' spike samples, one unit per
+    electrode required; a raw recording needs `detection` (Q-T1) and gives
+    the detected peaks per channel; the positions are the probe's;
+  - `layout.grid(recording) -> (rows, cols)` per electrode for a regular
+    grid, `layout.as_grid(positions_um, tol_um) -> (grid_width, pitch_um,
+    index of each electrode)` or `LayoutError` when the positions are not
+    a regular square grid within `tol_um`.
+- Rule: sec. 2.7, "A recording". Nothing is resampled, filtered or
+  re-detected in the `ptrain` adapter. An adapter never guesses a format,
+  a rate or a geometry: what the file does not hold is an argument, and a
+  missing one is a refusal naming it.
+- Libraries: scipy.io (through the extractor), spikeinterface,
+  probeinterface. Custom code: `layout.as_grid` (no library function
+  turns positions into the extractor's grid index; checked:
+  probeinterface's `Probe` holds positions and has no grid index).
+- Test oracles (`test_smoke_tool_recordings.py`, T43*):
+  - T43a `ptrain`: a folder written by the test with `scipy.io.savemat`
+    in each of the two formats (known spike samples per electrode) reads
+    back to exactly those samples, n_samples and positions (row, column)
+    x pitch; a file of the other format, a missing rate, electrodes of
+    unequal length are refused;
+  - T43b `spikeinterface`: a sorting built in memory by the library
+    (`NumpySorting`, known trains) and saved in a format it reads comes
+    back to exactly those samples; a recording with a probe gives the
+    probe's positions; two units on one electrode are refused;
+  - T43c raw voltage (Q-T1's detection): on a synthetic trace with spikes
+    of known times and amplitude well above the noise, every spike is
+    found within the stated tolerance and no other; without `detection`
+    a raw file is refused;
+  - T43d `layout.as_grid`: a jittered regular grid within the tolerance
+    gives the grid; a hexagonal or irregular one raises `LayoutError`;
+    round trip with `ptrain`'s positions.
+  T43b and T43c are SKIP, naming the library, where spikeinterface is not
+  installed.
+- Status: drafted 2026-11-27.
+- Confirmed: proposed 2026-11-27 (D-173; the detection is open, Q-T1).
+
+### Block 44: from a recording to windows (added 2026-11-27; D-158 (1); roadmap tool, step S4)
+
+- Modules: `sbitool/windows.py`,
+  `sbitool/tests/test_smoke_tool_windows.py` (new; numpy; the extractor
+  and the IFR primitive through `_sources`).
+- Public API: `windows.subregions(recording, extraction) -> [Subregion]`
+  (the extractor's objects: the electrodes of each, its centre);
+  `windows.traces(recording, subregions, extraction) -> (x, fs_ifr_hz)`,
+  x (n_subregions, K) float64 [Hz per electrode]; `windows.cut(x, W) ->
+  (windows, ids)`: windows (n, W) float32, ids a dict of (n,) arrays
+  `subregion`, `window_idx`, `t_start_s`; `windows.extract(recording,
+  extraction, W) -> (windows, ids, subregions)`; `python3 -m sbitool
+  windows --bundle FILE --recording PATH --adapter NAME [adapter options]
+  --out windows.npz`: pass line `WINDOWS OK: <n> window(s) of <n_s>
+  subregion(s)`.
+- Rule: sec. 2.7, "From a recording to windows": the extractor's
+  functions, called with the bundle's `extraction`; the recording's
+  `fs_raw_hz` and grid must equal the extraction's or the tool refuses,
+  naming both values (a bundle is not applied to a device it was not
+  trained for without the user saying so, Q-T2).
+- Libraries: the extractor (`partition_subregions`, `subregion_ifrs`),
+  `compute_ifr_trace`, `windows_of`. Custom code: none.
+- Test oracles (`test_smoke_tool_windows.py`, T44*):
+  - T44a the IFR by its definition: on a recording of 9 electrodes with
+    a few spikes at chosen times, the trace equals an independent
+    computation by the test (the counts per bin by `numpy.histogram`
+    divided by n_e Delta t, smoothed as eq. (3) of EXTRACTOR_USAGE.md
+    states) within 1e-12;
+  - T44b the partition: on a 6 x 6 grid with chosen rates, the subregions
+    are disjoint, each of n_e electrodes above the threshold, and equal
+    the extractor's command-line result on the same folder (its own
+    output files read back);
+  - T44c the windows: floor(K / W) per subregion, consecutive, from the
+    start; `t_start_s` = window_idx W / fs_ifr; float32 of the float64
+    trace;
+  - T44d a recording whose rate or grid differs from the extraction's is
+    refused; a bundle without `extraction` is refused by the command.
+  SKIP, naming `SBIX_DIR`, where the extractor's checkout is absent.
+- Status: drafted 2026-11-27.
+- Confirmed: proposed 2026-11-27.
+
+### Block 45: inference from a bundle (added 2026-11-27; D-158 (3); roadmap tool, steps S3 and S4)
+
+- Modules: `sbitool/infer.py`, `sbitool/tests/test_smoke_tool_infer.py`
+  (new; torch, numpy; the evaluation's functions through `_sources`).
+- Public API: `infer.run(bundle, windows, ids=None, n_post=None,
+  seed=None, batch=256, log=print) -> dict` of arrays; `infer.write(result,
+  out_dir)`; `python3 -m sbitool infer --bundle FILE (--windows
+  windows.npz | --recording PATH --adapter NAME [options]) --out DIR
+  [--n-post N] [--seed S]`: pass line `INFER OK: <n> window(s), <k>
+  flagged by the gate`.
+- Outputs (`<out>/posterior.npz` and `<out>/posterior.json`; arrays named
+  as blocks 35 and 36 name them): `draws` (n, n_post, p) float32,
+  `draw_member` (n_post,), `logq_draws`, `logq_draws_own` (n, n_post)
+  float32, `z` (M, n, d_z) float32; `mhat`, `sigma`, `q05`, `q50`, `q95`,
+  `contraction` (n, p); `gate_t`, `gate_r`, `gate_p_member` (M, n),
+  `gate_T`, `gate_p` (n,), `gate_flag` (n,) bool; the ids; and for the
+  recording the mixture over its windows, `mix_mean`, `mix_sd`,
+  `mix_q05`, `mix_q50`, `mix_q95` (p,). The JSON: the bundle's name and
+  sha256, n, n_post, the seed, the parameters' names, units and bounds,
+  the gate's `alpha`, `k_gate` and size band, the flagged share, and the
+  note that the mixture over the windows is not a posterior of the
+  recording (D-160).
+- Rule: sec. 2.7, "An inference": `ev_sample.draws_of`, `logq_draws_of`
+  and `embed` per member with the seed + k; `ev_rec_metrics`'
+  `window_summary` and `well_summary`; `ev_gate.gate` on the bundle's
+  three sets. `n_post` a multiple of M or a refusal. No window is
+  dropped: a window the gate flags keeps its draws and carries its flag.
+- Libraries: the evaluation's functions. Custom code: none.
+- Test oracles (`test_smoke_tool_infer.py`, T45*):
+  - T45a the same numbers as the evaluation: for a bundle exported from
+    the fixture's ensemble, an inference on the recording bank's windows
+    with block 35's seed for that bank gives `draws`, `draw_member`,
+    `logq_draws`, `logq_draws_own` and `z` equal to block 35's file bit
+    for bit, and the summaries, the gate's arrays and the flags equal to
+    block 36's within 1e-12;
+  - T45b the mixture over the windows equals block 36's `well_summary` of
+    the pooled draws when the recording is one well;
+  - T45c the contract: every key, shape and dtype; two runs with one seed
+    give identical files, another seed other draws and the same `z`;
+  - T45d end to end from files: a `ptrain` folder written by the test,
+    through `windows` and `infer` by the command line, with a bundle whose
+    `extraction` fits it: exit 0, n windows as T44c counts them;
+  - T45e refusals: `n_post` not a multiple of M, windows of another
+    length than W, a bundle that fails its check.
+- Status: drafted 2026-11-27.
+- Confirmed: proposed 2026-11-27.
+
+### Block 46: the device and the window as figures (added 2026-11-27; D-158 (1); roadmap tool, step S4)
+
+- Modules: `sbitool/plotting/device.py`,
+  `sbitool/tests/test_smoke_tool_figures.py` (new; matplotlib, numpy).
+- Public API: `device.fig_device(recording, subregions=None,
+  highlight=None) -> Figure` (every electrode at its position in um, the
+  electrodes without a spike drawn hollow, each subregion's electrodes in
+  one colour with its index, one subregion emphasised);
+  `device.fig_window(recording, subregion, x, window_idx, W, fs_ifr_hz)
+  -> Figure` (above, the spike raster of the subregion's n_e electrodes
+  over the window's time span; below, the window's IFR x [Hz per
+  electrode] against time [s]); `python3 -m sbitool device-figure
+  --bundle FILE --recording PATH --adapter NAME [options] --out DIR
+  [--subregion j --window i]`: pass line `DEVICE FIGURES OK: <n> file(s)`.
+- Rule: the figures draw what blocks 43 and 44 return and compute
+  nothing (no statistic is taken in this module); the axes carry their
+  units; the colours are block 21's.
+- Libraries: matplotlib. Custom code: none.
+- Test oracles (`test_smoke_tool_figures.py`, T46*): T46a on a 6 x 6
+  recording with two subregions, the device figure has one marker per
+  electrode at its position and the subregions' electrodes in their
+  colours (read back from the artists); T46b the window figure's raster
+  holds exactly the spikes of the subregion's electrodes inside the
+  window's span, and its lower panel's data are the window's x; T46c the
+  command writes PNG files with the PNG signature; the module imports no
+  statistics library and calls no mean, SD, quantile or median (static).
+- Status: drafted 2026-11-27.
+- Confirmed: proposed 2026-11-27.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
@@ -7530,3 +8034,17 @@ its bit-for-bit form on the fixture (R35a, R36d, R38b).
   sweep, and is ordering by definition); (2) the stage resubmits failed
   tasks itself, bounded by a new `bank.max_resubmits`, instead of
   stopping with the gate's names (raised 2026-10-16).
+
+- The tool, steps S1, S3, S4 (sec. 2.7, blocks 40-46; proposed 2026-11-27 from D-172..D-175).
+  Open, Claude's proposals in brackets:
+  - Q-T1 raw voltage in the `spikeinterface` adapter: how spikes are detected, since the
+    networks were trained on the simulator's detections [per channel, negative peaks
+    below 5 times the channel's noise level (MAD), 1 ms between two peaks of a channel,
+    SpikeInterface's `detect_peaks`; the values written in the bundle's
+    `extraction.detection` by the bundle's author; or: spike trains only for now];
+  - Q-T2 a recording whose sampling rate or grid differs from the bundle's extraction
+    [refused, naming both];
+  - Q-T3 the key lists of the manifest and of the card, and which card fields the
+    export pre-fills [sec. 2.7 and block 42 as written];
+  - Q-T4 the sources imported and not copied until the release (this repository's
+    `hpc/` and the Sbi-extractor's checkout) [as sec. 2.7 states].
