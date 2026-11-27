@@ -1123,8 +1123,13 @@ reads).
 `electrodes_per_subset` (n_e), `n_subsets`, `mfr_threshold_hz`,
 `w_size_s` (the bin width Delta t), `gaussian_window_s` (sigma_sm),
 `grid_width`, `index_base`, `pitch_um`, `fs_raw_hz`, and `detection`
-(null for a recording that arrives as spike trains; for raw voltage the
-detection's parameters, Q-T1). The rule is the extractor's, imported:
+(null for a recording that arrives as spike trains; for raw voltage
+exactly `DETECTION_KEYS` (D-176): `method` "by_channel", `peak_sign`
+"neg", `detect_threshold` (the multiple of the channel's noise level, its
+MAD-based estimate, below which a negative peak is a spike; 5),
+`exclude_sweep_ms` (the least time between two peaks of one channel; 1.0):
+the arguments of SpikeInterface's `detect_peaks`, written by the bundle's
+author). The rule is the extractor's, imported:
 the electrodes are partitioned into `n_subsets` disjoint subregions of
 n_e electrodes (`partition_subregions`, its mean-firing-rate threshold);
 for a subregion S with electrodes e in S and for each bin index k in
@@ -7461,7 +7466,8 @@ plan; Confirmed: yes 2026-11-17]
     naming `SBIX_DIR`);
   - `sbitool.schema`: `BUNDLE_SCHEMA = "sbitool_bundle/1"`,
     `MANIFEST_KEYS`, `MEMBER_KEYS`, `ARCHITECTURE_KEYS`, `PARAMETER_KEYS`,
-    `EXTRACTION_KEYS`, `GATE_KEYS`, `CARD_KEYS` and the nested card keys;
+    `EXTRACTION_KEYS`, `DETECTION_KEYS`, `GATE_KEYS`, `CARD_KEYS` and the
+    nested card keys;
     `validate_manifest(data) -> [str]`, `validate_extraction(data) ->
     [str]`, `validate_card_header(data, manifest=None) -> [str]`: every
     problem found, an empty list when valid; never an exception on any
@@ -7499,8 +7505,7 @@ plan; Confirmed: yes 2026-11-17]
     commands; the package's own modules import nothing outside the
     standard library, numpy and the libraries their block names (static).
 - Status: drafted 2026-11-27.
-- Confirmed: proposed 2026-11-27 (the user's D-173..D-175; the key lists
-  are Claude's reading of them, Q-T3).
+- Confirmed: 2026-11-27 by D-176 (the plan and the key lists as written).
 
 ### Block 41: the model bundle -- export, check, rebuild (added 2026-11-27; D-174, D-175; roadmap tool, step S3)
 
@@ -7571,7 +7576,7 @@ plan; Confirmed: yes 2026-11-17]
   another order; a state tensor dropped; the digest not verified at
   reading; the gate's sets taken from the wrong roles.
 - Status: drafted 2026-11-27.
-- Confirmed: proposed 2026-11-27.
+- Confirmed: 2026-11-27 by D-176.
 
 ### Block 42: the card (added 2026-11-27; D-158 (4), D-173, D-175; roadmap tool, step S3)
 
@@ -7611,8 +7616,7 @@ plan; Confirmed: yes 2026-11-17]
     that would build Python objects is refused (`safe_load`);
   - T42d parse(template) then dump gives the same header (a round trip).
 - Status: drafted 2026-11-27.
-- Confirmed: proposed 2026-11-27 (the mandatory fields are D-158's and
-  D-175's; which are pre-filled is Claude's, Q-T3).
+- Confirmed: 2026-11-27 by D-176.
 
 ### Block 43: recordings and the device's layout (added 2026-11-27; D-158 (1), D-173; roadmap tool, step S4)
 
@@ -7666,7 +7670,7 @@ plan; Confirmed: yes 2026-11-17]
   T43b and T43c are SKIP, naming the library, where spikeinterface is not
   installed.
 - Status: drafted 2026-11-27.
-- Confirmed: proposed 2026-11-27 (D-173; the detection is open, Q-T1).
+- Confirmed: 2026-11-27 by D-176 (the detection: Q-T1).
 
 ### Block 44: from a recording to windows (added 2026-11-27; D-158 (1); roadmap tool, step S4)
 
@@ -7707,7 +7711,7 @@ plan; Confirmed: yes 2026-11-17]
     refused; a bundle without `extraction` is refused by the command.
   SKIP, naming `SBIX_DIR`, where the extractor's checkout is absent.
 - Status: drafted 2026-11-27.
-- Confirmed: proposed 2026-11-27.
+- Confirmed: 2026-11-27 by D-176.
 
 ### Block 45: inference from a bundle (added 2026-11-27; D-158 (3); roadmap tool, steps S3 and S4)
 
@@ -7754,7 +7758,7 @@ plan; Confirmed: yes 2026-11-17]
   - T45e refusals: `n_post` not a multiple of M, windows of another
     length than W, a bundle that fails its check.
 - Status: drafted 2026-11-27.
-- Confirmed: proposed 2026-11-27.
+- Confirmed: 2026-11-27 by D-176.
 
 ### Block 46: the device and the window as figures (added 2026-11-27; D-158 (1); roadmap tool, step S4)
 
@@ -7783,7 +7787,7 @@ plan; Confirmed: yes 2026-11-17]
   command writes PNG files with the PNG signature; the module imports no
   statistics library and calls no mean, SD, quantile or median (static).
 - Status: drafted 2026-11-27.
-- Confirmed: proposed 2026-11-27.
+- Confirmed: 2026-11-27 by D-176.
 
 ## 6. Pipeline entry points
 
@@ -8037,6 +8041,8 @@ its bit-for-bit form on the fixture (R35a, R36d, R38b).
 
 - The tool, steps S1, S3, S4 (sec. 2.7, blocks 40-46; proposed 2026-11-27 from D-172..D-175).
   Open, Claude's proposals in brackets:
+  - [Q-T1 to Q-T4 closed 2026-11-27 by D-176: confirmed as proposed, the
+    detection in the tool with its parameters declared in the bundle]
   - Q-T1 raw voltage in the `spikeinterface` adapter: how spikes are detected, since the
     networks were trained on the simulator's detections [per channel, negative peaks
     below 5 times the channel's noise level (MAD), 1 ms between two peaks of a channel,
