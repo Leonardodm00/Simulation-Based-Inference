@@ -7742,6 +7742,26 @@ plan; Confirmed: yes 2026-11-17]
   `electrodes_per_subset`, `mfr_threshold_hz`; the traces are
   `subregion_ifrs` with `w_size_s` and `gaussian_window_s`; the windows'
   starts are `windows_of(K, W)`.
+  [2026-11-27, contract amendment 1 of wave B, after block 44's ISSUE;
+  D-177] The key of the partition. `partition_subregions` breaks ties, in
+  rate and in distance, by the lower key of its dicts, which the
+  extractor defines as the electrode's linear index on the grid. For a
+  recording with a grid the electrode's id is that index. For a recording
+  with positions and no grid the dicts are keyed by `as_grid`'s linear
+  index (the electrode's place on the device, not the name its file gives
+  it), and the subregions' electrodes are mapped back to the recording's
+  electrode ids before they are returned, so that one device gives one
+  partition whatever its channels are called. `Subregion` members are
+  always electrode ids of the Recording.
+  The detection. When the bundle's `extraction.detection` is not null,
+  the `windows` command passes it to the `spikeinterface` adapter as its
+  `detection`; a `detection` among the command's adapter options is
+  refused (exit 2: the detection is the bundle's, never the user's). A
+  recording that arrives as spike trains is accepted whatever the bundle
+  declares, and `meta` then records `detection_applied` null beside the
+  bundle's `detection`, with one printed line saying that the spikes
+  were detected outside the tool. `cut(x, W, fs_ifr_hz)` takes the IFR's
+  rate (the Public API's line above omits it).
 - Libraries: the extractor (`partition_subregions`, `subregion_ifrs`),
   `compute_ifr_trace`, `windows_of`. Custom code: none.
 - Test oracles (`test_smoke_tool_windows.py`, T44*):
