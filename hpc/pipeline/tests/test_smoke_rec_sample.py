@@ -498,8 +498,10 @@ def test_r35f_out_of_box():
     with contextlib.redirect_stdout(buf):
         rc = ev_rec_sample.main(["--config", cfg3, "--eval-config", F["ecfg_rec"],
                                  "--ensemble", "S-A1:A1", "--out", out3])
-    assert rc == ev_rec_sample.EXIT_REFUSE and "REFUSE: the bank breaks its contract" in \
-        buf.getvalue(), (rc, buf.getvalue()[-500:])
+    msg = buf.getvalue()
+    assert rc == ev_rec_sample.EXIT_REFUSE and "breaks its contract" in msg, (rc, msg[-500:])
+    # it names the bank and where the label is (shard, row, axis)
+    assert "synth_sim" in msg and "first at shard shard_" in msg and "axis 0" in msg, msg[-500:]
     assert _files_under(out3) == [], _files_under(out3)
     print("[r35f] 2 of %d rows outside the open box (a draw row and another): sampled, "
           "n_out_of_box 2, log q = -inf there, the draws bit for bit the unmodified run's, "

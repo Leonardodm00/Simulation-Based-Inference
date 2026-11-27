@@ -6712,6 +6712,10 @@ plan; Confirmed: yes 2026-11-17]
     `tarp_x_f`, `tarp_random_f` being n_cal; an ensemble with an empty
     S_cal refuses the metrics; a sample one of whose files (its
     provenance's `files`) is missing counts as absent: left out and named;
+    [2026-11-27, after the third check] the files are looked for where the
+    run reads them, `<out_root>/samples/<name>`, not at the provenance's
+    recorded paths; a bank with a non-finite label is refused naming the
+    bank's glob and the first such label's shard, row and axis;
     in R35f, R36h and the fix-round notes "equal" for the densities of the
     rows in the box means within 1e-4 nats (float32 roundoff of batches of
     another composition; the second tester measured up to 1.3e-5);

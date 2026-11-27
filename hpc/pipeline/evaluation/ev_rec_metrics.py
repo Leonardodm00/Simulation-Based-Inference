@@ -284,8 +284,11 @@ def sample_left_out(ecfg, e):
     prov = _read_json(pj)
     if prov.get("sample_params") != ecfg.sample_params():
         return "sampled with other values: %s" % prov.get("sample_params")
-    gone = [f for f in (prov.get("files") or [])
-            if isinstance(f, str) and not os.path.isfile(f)]
+    # the files as this run reads them: under this out_root's samples folder, by name (a
+    # copied or moved tree keeps the provenance's old absolute paths)
+    gone = [os.path.join(ecfg.sub("samples"), os.path.basename(f))
+            for f in (prov.get("files") or []) if isinstance(f, str)]
+    gone = [f for f in gone if not os.path.isfile(f)]
     if gone:
         return "not sampled (%s absent)" % ", ".join(sorted(gone))
     bf = os.path.join(e.folder, "BEST_FIT_COMPLETE.json")

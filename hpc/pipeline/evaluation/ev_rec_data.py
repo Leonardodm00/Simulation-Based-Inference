@@ -35,12 +35,37 @@ from ev_data import calibration_rows, report_rows  # noqa: F401
 RECORDING_IDS = ("cls", "donor", "well", "batch", "subregion", "window_idx", "rep_group")
 
 
+def _first_bad_theta(pattern):
+    """"; first at shard <file>, row <i>, axis <k> (value <v>)" for the first non-finite
+    theta of the shards matching `pattern`, in sorted order; "" when there is none."""
+    for path in sorted(glob.glob(pattern)):
+        try:
+            with np.load(path) as z:
+                th = np.asarray(z["theta"], dtype=np.float64)
+        except Exception:                      # an unreadable shard: the contract's message stands
+            continue
+        bad = np.argwhere(~np.isfinite(th))
+        if bad.size:
+            i, k = (int(v) for v in bad[0][:2]) if th.ndim == 2 else (int(bad[0][0]), 0)
+            return ("; first at shard %s, row %d of the shard, axis %d (value %r)"
+                    % (os.path.basename(path), i, k, float(th[i, k] if th.ndim == 2 else th[i])))
+    return ""
+
+
 def sim_index(view):
     """(ShardIndex, paths) of the view's simulated bank (view.sim_glob, the
     shards sorted)."""
     if not glob.glob(view.sim_glob):
         raise RefuseError("the simulated bank has no shard: nothing matches %s" % view.sim_glob)
-    return R.load_arm_index(view.sim_glob)
+    try:
+        return R.load_arm_index(view.sim_glob)
+    except ValueError as exc:
+        # a bank that breaks its contract (latent_bank.ContractError): a refusal that
+        # names the bank and, for a non-finite label, where it is
+        if type(exc).__name__ != "ContractError":
+            raise
+        raise RefuseError("the simulated bank %s breaks its contract: %s%s"
+                          % (view.sim_glob, exc, _first_bad_theta(view.sim_glob)))
 
 
 def draw_rows(donor, k):

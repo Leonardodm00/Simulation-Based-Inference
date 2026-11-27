@@ -1051,6 +1051,18 @@ def test_r36h_out_of_box():
         assert "no ensemble has a current sample" in str(exc), exc
     finally:
         os.rename(gone + ".away", gone)
+    # the same in a copied tree: the files are looked for where this run reads them, not at
+    # the absolute paths the provenance recorded
+    import shutil
+    moved = os.path.join(box, "moved")
+    shutil.copytree(os.path.join(out, "samples"), os.path.join(moved, "samples"))
+    os.remove(os.path.join(moved, "samples", "%s_real.npz" % stem))
+    ec_m = _write_ecfg(F["ecfg_rec"], moved, "rec_eval_moved.json")
+    try:
+        RM.compute(cfg, ec_m, names=[name], ncpus=1, log=lambda t: None)
+        raise AssertionError("a copied sample with a missing file was reported")
+    except RM.RefuseError as exc:
+        assert "no ensemble has a current sample" in str(exc), exc
     # the gate does not use theta: its statistics are the unmodified run's
     for k in ("gate_role", "gate_T_null", "gate_T_check", "gate_p_check"):
         assert np.array_equal(z[k], z0[k]), k
