@@ -319,7 +319,8 @@ def test_r38a_dry_run():
     assert rec.out_root == "/davinci-1/home/ldellamea/runs/synth/evaluation_rec", rec.out_root
     assert rec.out_root != old.out_root and not rec.out_root.startswith(old.out_root + "/")
     assert rec.edge_eps == 0.006693
-    assert rec.gate == {"donor_fracs": (0.4, 0.25, 0.25, 0.1), "n_ref": 800, "n_rank": 1000,
+    assert rec.gate == {"donor_fracs": (0.25, 0.25, 0.4, 0.1),   # D-172
+                         "n_ref": 800, "n_rank": 1000,
                         "n_null": 1000, "n_null_min": 50, "rows_per_donor": 1,
                         "factors": (0.25, 0.5, 1, 2, 4), "alpha": 0.05}, rec.gate
     assert rec.jobs == {"queue": "intel",

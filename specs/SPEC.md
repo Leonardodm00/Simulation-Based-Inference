@@ -6237,8 +6237,10 @@ plan; Confirmed: yes 2026-11-17]
   `batch_rows` (int > 0); `oracle_tol` (nats, in (0, 0.1]; 2e-3);
   `as_recorded` (bool); `sim_draw_rows_per_donor` (null or an int >= 1; 1);
   `edge_eps` (in (0, 0.5); 0.006693); `gate` (exactly GATE_KEYS:
-  `donor_fracs`, four positive numbers summing to 1 within 1e-9, [0.4,
-  0.25, 0.25, 0.1]; `n_ref` int >= 2 and <= 1000, 800 [the upper bound
+  `donor_fracs`, four positive numbers summing to 1 within 1e-9, [0.25,
+  0.25, 0.4, 0.1] [2026-11-27, D-172 [user]: the null set gets 0.4 of the
+  networks and the reference set 0.25; D-164's value was [0.4, 0.25, 0.25,
+  0.1], which the tests' fixture keeps]; `n_ref` int >= 2 and <= 1000, 800 [the upper bound
   added 2026-11-23 after the final check, F4, D-167: above 1,000
   reference rows `npe_misspec.bandwidth_grid` takes med_m on a subsample,
   which is not (R5)]; `n_rank` int >= 1, 1000;
@@ -7142,7 +7144,7 @@ plan; Confirmed: yes 2026-11-17]
 - The values of `synth_rec_eval.json` beyond those named above (2026-11-23,
   wave C's contract): `out_root`
   /davinci-1/home/ldellamea/runs/synth/evaluation_rec; `edge_eps` and the
-  `gate` those of block 33's list (0.006693; [0.4, 0.25, 0.25, 0.1], 800,
+  `gate` those of block 33's list (0.006693; [0.25, 0.25, 0.4, 0.1], 800,
   1000, 1000, 50, 1, [0.25, 0.5, 1, 2, 4], 0.05); `bootstrap_n`, `level`,
   `dpi`, `formats`, `ncpus` those of `synth_eval.json`; `jobs`: its queue
   (`intel`, D-137), `sample` and `report` 8 cores, 64gb, 24 h (Q-R5),
@@ -7354,13 +7356,17 @@ its bit-for-bit form on the fixture (R35a, R36d, R38b).
   no L-C2ST, the comparisons, n_post, the edge width, the gate's reference
   and the disjoint sets, the threshold as a value of the configuration, the
   tolerances), D-164 (the build plan; Q-R2..Q-R5 confirmed as proposed,
-  2026-11-23). Q-R1 and Q-R6 are still open; Claude's proposals in
+  2026-11-23). Q-R1 is closed by D-172 (2026-11-27); Q-R6 (wave 2, the
+  predictive check) is built after the tool's step S1 fixes the
+  simulator's interface (D-172); Claude's proposals in
   brackets:
   - Q-R1 how the share of flagged windows of a well, of a class or of a
     bank is read, the windows of a well sharing a culture [no test in wave
     1: the share is reported beside alpha_gate; D-161 leaves it open]
     [2026-11-23, D-165: reported beside the gate's size band (R10), which
-    is wide for a small null set; still no test];
+    is wide for a small null set; still no test]
+    [closed 2026-11-27 by D-172 [user]: the share is reported beside the
+    size band and no verdict is given on a well, a class or a bank];
   - [closed 2026-11-23 by D-164: confirmed as proposed] Q-R2 the gate's values the user did not fix: the proportions in which
     the networks are dealt, (0.4, 0.25, 0.25, 0.1) for the reference, the
     rank, the null and the check rows; the caps of the rank and null sets,

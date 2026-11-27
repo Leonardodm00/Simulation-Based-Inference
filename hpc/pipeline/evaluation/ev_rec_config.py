@@ -48,7 +48,7 @@ KEYS = (
 # the keys of `gate` (sec. 2.6, "The gate"; D-161, D-163 (4), D-164)
 GATE_KEYS = (
     "donor_fracs",               # four positive numbers summing to 1 within 1e-9:
-                                 # (f_ref, f_rank, f_null, f_check) (D-164: 0.4, 0.25, 0.25, 0.1)
+                                 # (f_ref, f_rank, f_null, f_check) (D-172: 0.25, 0.25, 0.4, 0.1; D-164's was 0.4, 0.25, 0.25, 0.1)
     "n_ref",                     # int >= 2: the reference's cap (D-163 (4): 800)
     "n_rank",                    # int >= 1: the rank set's cap (D-164: 1000)
     "n_null",                    # int >= 1: the null set's cap (D-164: 1000)

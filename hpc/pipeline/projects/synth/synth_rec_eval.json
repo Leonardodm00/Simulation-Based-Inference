@@ -27,7 +27,7 @@
 
   "_gate": "The gate (D-161, D-163 (4), D-164): the networks' fractions (reference, rank, null, check), the caps, the smallest null set, the rows of a network per set, the kernel's bandwidth factors, alpha_gate.",
   "gate": {
-    "donor_fracs": [0.4, 0.25, 0.25, 0.1],
+    "donor_fracs": [0.25, 0.25, 0.4, 0.1],
     "n_ref": 800,
     "n_rank": 1000,
     "n_null": 1000,
