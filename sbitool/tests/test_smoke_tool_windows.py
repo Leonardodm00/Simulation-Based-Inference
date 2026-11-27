@@ -317,6 +317,35 @@ def test_t44b_partition():
     subs_pos = W.subregions(rec_pos, ext)
     assert [tuple(s.members) for s in subs_pos] == [tuple(s.members) for s in subs], \
         "positions-only partition %r differs from the grid's %r" % (subs_pos, subs)
+    # amendment 1 of wave B: for positions only the partition is keyed by as_grid's
+    # linear index and mapped back to the electrode ids. (i) the 3 x 3 case of block
+    # 44's report: id = 100 - linear index, the centre hottest, every other rate equal
+    lin_spikes = {k: np.arange(20 if k == 4 else 10, dtype=np.int64) * 50 for k in range(9)}
+    small = _extraction(electrodes_per_subset=3, n_subsets=1, grid_width=3, index_base=0,
+                        pitch_um=60.0, fs_raw_hz=1000.0)
+    rec_g = _rec(lin_spikes, 1000.0, 2000, grid=(3, 0, 60.0))
+    rec_p = _rec({100 - k: v for k, v in lin_spikes.items()}, 1000.0, 2000,
+                 positions={100 - k: (60.0 * (k % 3), 60.0 * (k // 3)) for k in range(9)})
+    sg, sp = W.subregions(rec_g, small)[0], W.subregions(rec_p, small)[0]
+    assert sg.members == (4, 1, 3), "the grid's partition %r, expected (4, 1, 3)" % (sg.members,)
+    assert sp.center == 96 and sp.members == (96, 99, 97), \
+        "positions only: %r, expected the linear-index partition (96, 99, 97)" % (sp,)
+    assert (sp.mean_mfr, sp.center_mfr) == (sg.mean_mfr, sg.center_mfr)
+    assert np.array_equal(W.traces(rec_p, [sp], small)[0], W.traces(rec_g, [sg], small)[0])
+    # (ii) the 6 x 6 device with its electrodes renamed at random: the same partition
+    # (renamed) and the same traces as the device read with a grid
+    perm = np.random.default_rng(SEED + 4).permutation(GW * GW)
+    new = {e: 1000 + int(perm[e - BASE]) for e in rec.spikes}
+    rec_r = Recording(name="renamed", spikes={new[e]: t for e, t in rec.spikes.items()},
+                      fs_raw_hz=FS, n_samples=NSAMP,
+                      positions_um={new[e]: xy for e, xy in rec.positions_um.items()}, grid=None,
+                      source={"adapter": "test"})
+    subs_r = W.subregions(rec_r, ext)
+    assert [s.members for s in subs_r] == [tuple(new[m] for m in s.members) for s in subs], \
+        "renamed positions-only partition %r differs from the grid's %r" % (subs_r, subs)
+    x_r, _fs = W.traces(rec_r, subs_r, ext)
+    # bit for bit: the same spikes pooled, in the same member order
+    assert np.array_equal(x_r, x), "the renamed device's traces differ from the grid's"
     print("[T44b] centres %s, members %s; command line: centres, rates, %d discarded and "
           "the (%d, %d) traces equal" % (centers.tolist(), [list(s.members) for s in subs],
                                          len(disc), x.shape[0], x.shape[1]))
@@ -392,6 +421,122 @@ def _run_main(argv):
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = W.main(argv)
     return code, out.getvalue(), err.getvalue()
+
+
+def _last(text):
+    lines = text.strip().splitlines()
+    return lines[-1] if lines else ""
+
+
+def _need_si():
+    try:
+        import spikeinterface  # noqa: F401
+        import probeinterface  # noqa: F401
+    except ImportError as exc:
+        raise unittest.SkipTest("spikeinterface or probeinterface not installed: %s" % exc)
+
+
+def _raw_folder(folder, rng, fs, n, side, pitch):
+    """A raw recording saved by SpikeInterface (binaryfolder): side x side
+    channels (ids 0.., row-major, `pitch` um apart on a probe), white noise
+    of SD 1 plus 10 negative spikes per channel of 15 SDs, 300 samples or
+    more apart. Returns the folder."""
+    import probeinterface
+    from spikeinterface.core import NumpyRecording
+    nc = side * side
+    x = rng.normal(0.0, 1.0, size=(n, nc))
+    shape = np.array([0.3, 0.7, 1.0, 0.7, 0.3])
+    for c in range(nc):
+        slots = np.sort(rng.choice((n - 600) // 300, size=10, replace=False))
+        for t in 300 + slots * 300 + rng.integers(0, 50, size=10):
+            x[t - 2:t + 3, c] -= 15.0 * shape
+    rec = NumpyRecording([x.astype(np.float32)], sampling_frequency=fs,
+                         channel_ids=np.arange(nc))
+    probe = probeinterface.Probe(ndim=2, si_units="um")
+    probe.set_contacts(positions=np.array([[pitch * (c % side), pitch * (c // side)]
+                                           for c in range(nc)]),
+                       shapes="circle", shape_params={"radius": 5})
+    probe.set_device_channel_indices(np.arange(nc))
+    rec.set_probe(probe)
+    rec.save(folder=folder, n_jobs=1, progress_bar=False, verbose=False)
+    return folder
+
+
+def _detection_cases(fx, ext, out_dir):
+    """Amendment 2 of wave B through the command (bundle.read patched): the
+    bundle's detection is applied to raw voltage only; spike trains are
+    accepted whatever it declares; --option detection is refused."""
+    from sbitool import bundle as bundle_mod
+    from sbitool import recordings
+    W = _W()
+    det = dict(S.DETECTION_DEFAULT)
+    ext_det = dict(ext, detection=det)
+    opts = ["--option", "fs_raw_hz=%r" % FS, "--option", "grid_width=%d" % GW,
+            "--option", "index_base=%d" % BASE, "--option", "pitch_um=%r" % PITCH]
+
+    def run(extraction, rec_path, adapter, options, out):
+        with mock.patch.object(bundle_mod, "read",
+                               lambda path: _stand_in_bundle({"extraction": extraction, "W": 7})):
+            return _run_main(["--bundle", "b.sbibundle", "--recording", rec_path, "--adapter",
+                              adapter, "--out", out] + options)
+
+    def meta_of(out):
+        with np.load(out, allow_pickle=False) as z:
+            return json.loads(str(z["meta"])), z["windows"].copy()
+
+    win_ref = W.extract(fx["rec"], ext, 7)[0]
+    # (a) ptrain spike trains, the bundle declaring a detection: accepted, not applied
+    out = os.path.join(out_dir, "a.npz")
+    code, so, se = run(ext_det, fx["folder"], "ptrain", opts, out)
+    assert code == 0 and "detected outside the tool" in so and _last(so).startswith(
+        "WINDOWS OK: 42 window(s)"), (code, so, se)
+    meta, win = meta_of(out)
+    assert meta["detection"] == det and meta["detection_applied"] is None, meta
+    assert np.array_equal(win, win_ref)
+    # (e) a detection among the adapter's options: the arguments, exit 2
+    code, so, se = run(ext_det, fx["folder"], "ptrain",
+                       opts + ["--option", "detection=%s" % json.dumps(det)],
+                       os.path.join(out_dir, "e.npz"))
+    assert code == 2 and "detection" in se and not os.path.exists(os.path.join(out_dir, "e.npz")), \
+        (code, so, se)
+    _need_si()
+    from spikeinterface.core import NpzSortingExtractor, NumpySorting
+    # (b) a spikeinterface sorting of the same trains, the bundle declaring a detection:
+    # accepted, not applied, the same windows as the ptrain folder's
+    sorting = NumpySorting.from_unit_dict([{int(e): t for e, t in fx["trains"].items()}],
+                                          sampling_frequency=FS)
+    spath = os.path.join(out_dir, "sorting.npz")
+    NpzSortingExtractor.write_sorting(sorting, spath)
+    out = os.path.join(out_dir, "b.npz")
+    code, so, se = run(ext_det, spath, "spikeinterface",
+                       ["--option", "reader=npz", "--option", "n_samples=%d" % NSAMP,
+                        "--option", "grid=[%d, %d, %r]" % (GW, BASE, PITCH)], out)
+    assert code == 0 and "detected outside the tool" in so, (code, so, se)
+    meta, win = meta_of(out)
+    assert meta["detection"] == det and meta["detection_applied"] is None, meta
+    assert np.array_equal(win, win_ref), "the sorting's windows differ from the ptrain folder's"
+    # (c) raw voltage: the bundle's detection is applied
+    fs_raw, n_raw = 10000.0, 20000
+    rfolder = _raw_folder(os.path.join(out_dir, "raw"), np.random.default_rng(SEED + 3),
+                          fs_raw, n_raw, 3, 60.0)
+    ext_raw = _extraction(electrodes_per_subset=9, n_subsets=1, mfr_threshold_hz=0.0,
+                          grid_width=3, index_base=0, pitch_um=60.0, fs_raw_hz=fs_raw,
+                          detection=det)
+    out = os.path.join(out_dir, "c.npz")
+    code, so, se = run(ext_raw, rfolder, "spikeinterface", ["--option", "reader=binaryfolder"], out)
+    assert code == 0 and "detected outside" not in so and _last(so) == \
+        "WINDOWS OK: 14 window(s) of 1 subregion(s)", (code, so, se)
+    meta, win = meta_of(out)
+    assert meta["detection"] == det and meta["detection_applied"] == det, meta
+    direct = recordings.read(rfolder, "spikeinterface", reader="binaryfolder", detection=det)
+    assert sum(t.size for t in direct.spikes.values()) == 90, "the detection found %d of 90" % (
+        sum(t.size for t in direct.spikes.values()))
+    assert np.array_equal(win, W.extract(direct, ext_raw, 7)[0])
+    # (d) raw voltage, the bundle's detection null: the adapter's refusal, exit 3
+    out = os.path.join(out_dir, "d.npz")
+    code, so, se = run(dict(ext_raw, detection=None), rfolder, "spikeinterface",
+                       ["--option", "reader=binaryfolder"], out)
+    assert code == 3 and "detection" in se and not os.path.exists(out), (code, so, se)
 
 
 def _real_bundle(folder, extraction, Wn):
@@ -475,7 +620,7 @@ def test_t44d_refusals():
     with mock.patch.object(bundle_mod, "read",
                            lambda path: _stand_in_bundle({"extraction": ext, "W": 7})):
         code, so, se = _run_main(argv)
-        assert code == 0 and so.strip() == "WINDOWS OK: 42 window(s) of 3 subregion(s)", \
+        assert code == 0 and _last(so) == "WINDOWS OK: 42 window(s) of 3 subregion(s)" and "detected outside the tool" in so, \
             (code, so, se)
         code_rate, _so, se_rate = _run_main(argv[:-8] + ["--option", "fs_raw_hz=20000.0"]
                                             + opts[2:])
@@ -497,6 +642,8 @@ def test_t44d_refusals():
     assert meta["extraction"] == ext and meta["recording"]["name"] == rec.name
     assert [m["members"] for m in meta["subregions"]] == [list(s.members) for s in subs]
 
+    _detection_cases(fx, ext, _tmpdir("w44det"))
+
     # the same with a real bundle (block 41's bundle.write and bundle.read)
     try:
         bundle_mod.read(os.path.join(out_dir, "absent.sbibundle"))
@@ -517,7 +664,7 @@ def test_t44d_refusals():
     assert code == 3 and "extraction" in se and not os.path.exists(out2), (code, so, se)
     code, so, se = _run_main(["--bundle", path_ext, "--recording", fx["folder"], "--adapter",
                               "ptrain", "--out", out2] + opts)
-    assert code == 0 and so.strip() == "WINDOWS OK: 42 window(s) of 3 subregion(s)", (code, so, se)
+    assert code == 0 and _last(so) == "WINDOWS OK: 42 window(s) of 3 subregion(s)" and "detected outside the tool" in so, (code, so, se)
     with np.load(out2, allow_pickle=False) as z:
         assert np.array_equal(z["windows"], win)
 

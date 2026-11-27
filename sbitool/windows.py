@@ -74,30 +74,31 @@ def _check_rate(recording, extraction):
                            % (recording.name, fs_rec, fs_ext))
 
 
-def grid_of(recording, extraction):
-    """{electrode id: (row, col)} of the recording on the extraction's
-    grid, after the comparison block 44's Rule states (the recording's own
-    grid, or layout.as_grid of its positions); WindowsError naming both
-    values on a mismatch of the rate, the grid or the pitch."""
+def _placement(recording, extraction):
+    """(coords, key): coords {electrode id: (row, col)} as grid_of returns
+    it; key {electrode id: the partition's key}, the electrode's linear index
+    on the grid (amendment 1 of wave B): the id itself for a recording with a
+    grid, layout.as_grid's linear index for one with positions only."""
     from sbitool.recordings import layout
     _checked_extraction(extraction)
     _check_recording(recording)
     _check_rate(recording, extraction)
     if recording.grid is not None:
         width, base, pitch = recording.grid
-        for key, rec_v, ext_v in (("grid_width", width, extraction["grid_width"]),
-                                  ("index_base", base, extraction["index_base"])):
+        for name, rec_v, ext_v in (("grid_width", width, extraction["grid_width"]),
+                                   ("index_base", base, extraction["index_base"])):
             if int(rec_v) != int(ext_v):
                 raise WindowsError("the recording %r has %s %r, the extraction's %s is %r"
-                                   % (recording.name, key, rec_v, key, ext_v))
+                                   % (recording.name, name, rec_v, name, ext_v))
         ext_pitch = extraction["pitch_um"]
         if pitch is not None and ext_pitch is not None and float(pitch) != float(ext_pitch):
             raise WindowsError("the recording %r has pitch_um %r, the extraction's pitch_um is %r"
                                % (recording.name, float(pitch), float(ext_pitch)))
         try:
-            return layout.grid(recording)
+            coords = layout.grid(recording)
         except layout.LayoutError as exc:
             raise WindowsError(str(exc)) from exc
+        return coords, {int(e): int(e) for e in coords}
     if recording.positions_um is not None:
         try:
             width, pitch, lin = layout.as_grid(recording.positions_um)
@@ -110,17 +111,28 @@ def grid_of(recording, extraction):
                                "extraction's pitch_um is %r (tolerance %g um)"
                                % (recording.name, pitch, float(ext_pitch), PITCH_TOL_UM))
         # the grid's width is the recording's own and is not compared (block 44's Rule)
-        return {int(e): (int(k) // int(width), int(k) % int(width)) for e, k in lin.items()}
+        coords = {int(e): (int(k) // int(width), int(k) % int(width)) for e, k in lin.items()}
+        return coords, {int(e): int(k) for e, k in lin.items()}
     raise WindowsError("the recording %r has neither a grid nor electrode positions: its "
                        "electrodes cannot be placed on the extraction's grid" % (recording.name,))
 
 
-def _inventory(recording, index_base):
+def grid_of(recording, extraction):
+    """{electrode id: (row, col)} of the recording on the extraction's
+    grid, after the comparison block 44's Rule states (the recording's own
+    grid, or layout.as_grid of its positions); WindowsError naming both
+    values on a mismatch of the rate, the grid or the pitch."""
+    return _placement(recording, extraction)[0]
+
+
+def _inventory(recording, index_base, key=None):
     """The extractor's PtrainInventory of a Recording: its spikes, n_samples,
-    fs_raw, T_rec = n_samples / fs_raw (as load_ptrain_folder computes it)."""
+    fs_raw, T_rec = n_samples / fs_raw (as load_ptrain_folder computes it);
+    keyed by key[e] when `key` is given, by the electrode id otherwise."""
     cse = _cse()
-    spikes = {int(e): np.asarray(recording.spikes[e], dtype=np.int64)
-              for e in sorted(recording.spikes)}
+    key = key or {int(e): int(e) for e in recording.spikes}
+    spikes = {key[int(e)]: np.asarray(recording.spikes[e], dtype=np.int64)
+              for e in sorted(recording.spikes, key=lambda e: key[int(e)])}
     return cse.PtrainInventory(spikes=spikes, n_samples=int(recording.n_samples),
                                fs_raw=float(recording.fs_raw_hz),
                                T_rec=float(recording.n_samples) / float(recording.fs_raw_hz),
@@ -136,10 +148,15 @@ def _base_of(recording):
 def subregions(recording, extraction):
     """The extractor's Subregion objects for this recording
     (partition_subregions on grid_of's rows and columns and the
-    electrodes' mean firing rates)."""
-    coords = grid_of(recording, extraction)
+    electrodes' mean firing rates), keyed by the electrodes' linear index
+    on the grid (its tie-break) and returned with the recording's electrode
+    ids as members and centre (amendment 1 of wave B)."""
+    import dataclasses
+    coords_id, key = _placement(recording, extraction)
     cse = _cse()
-    inv = _inventory(recording, _base_of(recording))
+    id_of = {k: e for e, k in key.items()}
+    coords = {key[e]: rc for e, rc in coords_id.items()}
+    inv = _inventory(recording, _base_of(recording), key)
     mfrs = cse.mean_firing_rates(inv, inv.T_rec)
     try:
         subs, _discarded = cse.partition_subregions(
@@ -149,7 +166,8 @@ def subregions(recording, extraction):
     except cse.InsufficientElectrodesError as exc:
         raise WindowsError("the recording %r: the extractor refuses the partition: %s"
                            % (recording.name, exc)) from exc
-    return list(subs)
+    return [dataclasses.replace(s, center=id_of[int(s.center)],
+                                members=tuple(id_of[int(m)] for m in s.members)) for s in subs]
 
 
 def traces(recording, subs, extraction):
@@ -217,9 +235,12 @@ def _option(text):
     if not key:
         raise argparse.ArgumentTypeError("an option's key is empty in %r" % (text,))
     try:
-        return key, json.loads(val)
+        v = json.loads(val)
     except ValueError:
         return key, val
+    # JSON has no tuple: a list (an adapter's grid, (grid_width, index_base,
+    # pitch_um)) is passed as a tuple, the form a Recording holds
+    return key, tuple(v) if isinstance(v, list) else v
 
 
 def _parser():
@@ -247,6 +268,34 @@ def _jsonable(v):
     return str(v)
 
 
+def _read_recording(path, adapter, options, detection):
+    """(recording, detection_applied) for the command (amendment 2 of wave B).
+    The bundle's detection goes to the spikeinterface adapter only, and only
+    when the file is raw voltage: the file is first read without it, which
+    the adapter accepts for spike trains (a sorting) and refuses for raw
+    voltage; then, on that refusal, with it. detection_applied is the
+    bundle's detection when it was applied, None for spike trains. Without a
+    detection (or for another adapter) one read, the adapter's refusals
+    standing. RecordingError naming both reads when neither succeeds."""
+    from sbitool import recordings
+    if adapter != "spikeinterface" or detection is None:
+        return recordings.read(path, adapter, **options), None
+    try:
+        return recordings.read(path, adapter, **options), None
+    except recordings.RecordingError as first:
+        try:
+            rec = recordings.read(path, adapter, detection=dict(detection), **options)
+        except recordings.RecordingError as second:
+            raise recordings.RecordingError(
+                "neither as spike trains (%s) nor as raw voltage with the bundle's detection "
+                "(%s)" % (first, second)) from second
+    if rec.source.get("kind") != "recording":
+        raise recordings.RecordingError("the adapter read %r with the bundle's detection but "
+                                        "reports kind %r, not raw voltage"
+                                        % (path, rec.source.get("kind")))
+    return rec, dict(detection)
+
+
 def main(argv=None):
     """`python3 -m sbitool windows --bundle FILE --recording PATH --adapter
     NAME [--option key=value ...] --out windows.npz`: 0 with WINDOWS OK:
@@ -257,6 +306,10 @@ def main(argv=None):
     except SystemExit as exc:
         return 0 if exc.code == 0 else EXIT_ARGS
     options = dict(args.option)
+    if "detection" in options:
+        sys.stderr.write("sbitool windows: --option detection is refused: the detection is the "
+                         "bundle's (its extraction.detection), never the user's\n")
+        return EXIT_ARGS
     from sbitool import bundle as bundle_mod
     from sbitool import recordings
     try:
@@ -271,8 +324,9 @@ def main(argv=None):
                          "only, not a recording\n" % args.bundle)
         return EXIT_REFUSE
     W = manifest.get("W")
+    detection = extraction.get("detection")
     try:
-        recording = recordings.read(args.recording, args.adapter, **options)
+        recording, applied = _read_recording(args.recording, args.adapter, options, detection)
     except TypeError as exc:    # an option the adapter does not take: the arguments
         sys.stderr.write("sbitool windows: adapter %r: %s\n" % (args.adapter, exc))
         return EXIT_ARGS
@@ -295,6 +349,7 @@ def main(argv=None):
         return EXIT_REFUSE
     meta = {"recording": {"name": recording.name, "source": _jsonable(recording.source)},
             "extraction": _jsonable(extraction),
+            "detection": _jsonable(detection), "detection_applied": _jsonable(applied),
             "subregions": [{"center": int(s.center), "members": [int(m) for m in s.members],
                             "mean_mfr": float(s.mean_mfr), "center_mfr": float(s.center_mfr)}
                            for s in subs]}
@@ -306,6 +361,11 @@ def main(argv=None):
                  t_start_s=ids["t_start_s"], fs_ifr_hz=np.float64(fs_ifr),
                  meta=np.str_(json.dumps(meta, sort_keys=True)))
     os.replace(tmp, args.out)
+    if applied is None:
+        print("the spikes of %r arrived as spike trains (adapter %s): they were detected outside "
+              "the tool; the bundle's detection (%s) was not applied"
+              % (recording.name, args.adapter,
+                 "none" if detection is None else json.dumps(detection, sort_keys=True)))
     print("WINDOWS OK: %d window(s) of %d subregion(s)" % (windows.shape[0], len(subs)))
     return 0
 
