@@ -78,23 +78,13 @@ def _sha256_file(path):
 # ---------------------------------------------------------------- the card's header
 
 def _card_header(text):
-    """The card's YAML header, the mapping between the first two `---`
-    lines, by yaml.safe_load. [Until block 42 is merged: card.parse is a
-    stub there; the orchestrator replaces this helper by card.parse.]"""
-    import yaml
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        raise ExportRefused("the card has no header: its first line is not ---")
+    """The card's header by block 42's card.parse; a malformed card is a
+    refusal."""
+    from sbitool import card as CARD
     try:
-        end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
-    except StopIteration:
-        raise ExportRefused("the card's header has no closing --- line")
-    try:
-        header = yaml.safe_load("\n".join(lines[1:end]))
-    except yaml.YAMLError as exc:
-        raise ExportRefused("the card's header is not valid YAML: %s" % exc)
-    if not isinstance(header, dict):
-        raise ExportRefused("the card's header is not a mapping (got %s)" % type(header).__name__)
+        header, _body = CARD.parse(text)
+    except CARD.CardError as exc:
+        raise ExportRefused("the card is malformed: %s" % exc)
     return header
 
 
@@ -118,25 +108,45 @@ def _architecture(rec, meta, kind):
             "backbone_repr": meta["backbone_repr"]}
 
 
-def _units(sidecar, p):
-    """parameters.units (p strings). [PROVISIONAL, reported to the
-    orchestrator as an ISSUE: block 41's inputs name no source of the
-    units.] The sidecar's latent_spec.units when it holds p non-empty
-    strings; otherwise "1" (dimensionless) on every axis when the sidecar's
-    coordinate is the unit box itself (coord "unit_box" and bounds_theta
-    [0, 1] on every axis: the declared value is u); otherwise a refusal."""
+def _units(sidecar, p, bounds, given=None):
+    """parameters.units, p strings (block 41, "Inputs"; D-178): the list of
+    --units when given; else the sidecar's latent_spec.units when it holds
+    p non-empty strings; else "1" on every axis when the declared
+    coordinate is the unit box itself (no bounds, or every bound [0, 1]:
+    the value reported is u, a pure number); else a refusal naming --units.
+    A unit is never guessed."""
+    def ok(u):
+        return isinstance(u, list) and len(u) == p and all(isinstance(v, str) and v for v in u)
+    if given is not None:
+        if not ok(given):
+            raise ExportRefused("--units must be a JSON list of %d non-empty strings, got %r"
+                                % (p, given))
+        return list(given)
     side = sidecar or {}
     lat = side.get("latent_spec") or {}
     u = lat.get("units") if isinstance(lat, dict) else None
-    if isinstance(u, list) and len(u) == p and all(isinstance(s, str) and s for s in u):
+    if ok(u):
         return list(u)
-    b = side.get("bounds_theta")
-    if (side.get("coord") == "unit_box" and isinstance(b, list) and len(b) == p
-            and all(list(x) == [0.0, 1.0] for x in b)):
+    if bounds is None or (isinstance(bounds, list) and len(bounds) == p
+                          and all(isinstance(x, (list, tuple)) and len(x) == 2
+                                  and float(x[0]) == 0.0 and float(x[1]) == 1.0 for x in bounds)):
         return ["1"] * p
     raise ExportRefused("the parameters' units are not known: the simulated bank's sidecar has "
-                        "no latent_spec.units of %d entries and its coordinate is not the unit "
-                        "box" % p)
+                        "no latent_spec.units of %d entries and the parameters have declared "
+                        "bounds; give them with --units FILE.json (a list of %d strings, \"1\" "
+                        "for a dimensionless one)" % (p, p))
+
+
+def _n_train_networks(P, index, rec):
+    """The networks of the training split of a member's record: the bank's
+    donors on the rows grouped_split gives the record's fractions and seed
+    (split 0), as the runner and ev_models.rebuild split it."""
+    import numpy as np
+    split, h = P.ev_models.R.grouped_split(index.donor, fracs=tuple(rec["split_fracs"]),
+                                 seed=int(rec["split_seed"]))
+    if h != rec["split_hash"]:
+        raise ExportRefused("the bank's split is not the record's (another bank?)")
+    return int(np.unique(np.asarray(index.donor)[np.asarray(split) == 0]).size)
 
 
 def _software():
@@ -227,7 +237,7 @@ def _placeholder(manifest):
 # ---------------------------------------------------------------- the export
 
 def run(cfg_path, ecfg_path, name, out, extraction=None, card=None, bundle_name=None,
-        log=print):
+        log=print, units=None):
     """Exports ensemble `name` of the project at `cfg_path`, evaluated under
     `ecfg_path`, to the bundle `out`. `extraction`: None or the path of a
     JSON file with exactly schema.EXTRACTION_KEYS; `card`: None (block 42's
@@ -251,6 +261,12 @@ def run(cfg_path, ecfg_path, name, out, extraction=None, card=None, bundle_name=
         probs = S.validate_extraction(ext)
         if probs:
             raise ExportRefused("--extraction %s is not valid: %s" % (extraction, "; ".join(probs)))
+    units_given = None
+    if units is not None:
+        try:
+            units_given = _read_json(units)
+        except (OSError, ValueError) as exc:
+            raise ExportRefused("--units %s cannot be read as JSON: %s" % (units, exc))
     card_text = card_header = None
     if card is not None:
         try:
@@ -316,7 +332,7 @@ def run(cfg_path, ecfg_path, name, out, extraction=None, card=None, bundle_name=
     axes = prov.get("axes") or {}
     names = list(axes.get("names") or [])
     bounds = axes.get("bounds")
-    units = _units(index.sidecar, p)
+    units = _units(index.sidecar, p, bounds, units_given)
     d_z = int(gate_sets["z_ref"].shape[2])
 
     # ---- the manifest
@@ -350,7 +366,8 @@ def run(cfg_path, ecfg_path, name, out, extraction=None, card=None, bundle_name=
         complete = not S.validate_card_header(card_header, manifest, complete=True)
     else:
         from sbitool import card as CARD
-        card_text = CARD.template(manifest, records, project=tag)
+        card_text = CARD.template(manifest, records, project=tag,
+                                  n_networks=_n_train_networks(P, index, records[0]))
         complete = False
     manifest["card_complete"] = bool(complete)
 
@@ -384,6 +401,8 @@ def main(argv=None):
     ap.add_argument("--out", required=True, help="the bundle (<file>%s)" % B.EXTENSION)
     ap.add_argument("--extraction", default=None,
                     help="a JSON file with exactly the extraction's keys")
+    ap.add_argument("--units", default=None,
+                    help="a JSON list of the parameters' units (\"1\" for a dimensionless one)")
     ap.add_argument("--card", default=None, help="a CARD.md (default: block 42's template)")
     ap.add_argument("--name", default=None, help="the bundle's name (default: the file's)")
     try:
@@ -396,6 +415,7 @@ def main(argv=None):
     try:
         run(args.config, args.eval_config, args.ensemble, args.out,
             extraction=args.extraction, card=args.card, bundle_name=args.name,
+            units=args.units,
             log=lambda t: print(t, flush=True))
     except refusals as exc:
         print("REFUSE: %s" % exc, flush=True)

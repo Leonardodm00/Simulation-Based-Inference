@@ -674,6 +674,35 @@ def test_t41e_card():
     assert tuple(header) == S.CARD_KEYS, tuple(header)
     assert S.validate_card_header(header, bt.manifest) == [], S.validate_card_header(
         header, bt.manifest)
+    # [2026-11-27, D-178] the template's n_networks: the networks of the training split,
+    # counted here on the bank's donors with the record's own split (numpy only)
+    import glob
+    import numpy as np
+    rec0 = _read_json(e.records[0])
+    shards = sorted(glob.glob(rec0["config"]["sim_shards"]))
+    donors = np.concatenate([np.load(q)["donor"] for q in shards])
+    n_networks = header["training"]["n_networks"]
+    assert isinstance(n_networks, int) and 1 <= n_networks < np.unique(donors).size, n_networks
+    # every network has the same number of windows in the fixture, so the training
+    # windows are n_networks times that number
+    per = donors.size // np.unique(donors).size
+    assert n_networks * per == header["training"]["n_windows"] == rec0["n_train"], (
+        n_networks, per, rec0["n_train"])
+    # the units: "1" on the unit box; --units replaces them; a wrong list is refused
+    assert bt.manifest["parameters"]["units"] == ["1"] * bt.manifest["p"]
+    uf = os.path.join(work, "units.json")
+    want_u = ["Hz"] + ["1"] * (bt.manifest["p"] - 1)
+    with open(uf, "w") as fh:
+        json.dump(want_u, fh)
+    wu = os.path.join(work, "units.sbibundle")
+    code, text = _main(export.main, _export_argv(name, wu) + ["--units", uf])
+    assert code == 0 and bundle.read(wu).manifest["parameters"]["units"] == want_u, text[-800:]
+    with open(uf, "w") as fh:
+        json.dump(want_u[:-1], fh)
+    code, text = _main(export.main, _export_argv(name, os.path.join(work, "u2.sbibundle"))
+                       + ["--units", uf])
+    assert code == export.EXIT_REFUSE and "--units" in text, text[-800:]
+    assert not os.path.exists(os.path.join(work, "u2.sbibundle"))
 
 
 CHECKS = [("test_t41a_rebuild", test_t41a_rebuild),

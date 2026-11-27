@@ -7530,7 +7530,8 @@ plan; Confirmed: yes 2026-11-17]
 - Public API:
   - `python3 -m sbitool export --config <tag>.json --eval-config
     <tag>_rec_eval.json --ensemble <name> --out <file>.sbibundle
-    [--extraction FILE.json] [--card CARD.md] [--name NAME]`: pass line
+    [--extraction FILE.json] [--units FILE.json] [--card CARD.md]
+    [--name NAME]`: pass line
     `BUNDLE EXPORT OK: <file> (<M> members, <bytes> bytes, card complete |
     draft)`;
   - `python3 -m sbitool bundle-check <file>.sbibundle [--rebuild]`: pass
@@ -7546,7 +7547,15 @@ plan; Confirmed: yes 2026-11-17]
   `.pt` is read, with the pipeline's own loader); block 35's
   `<stem>_sample.json` and `<stem>_sim.npz`; block 36's `<stem>_sim.json`
   and `METRICS.json`; the parameters' names and bounds from the sample's
-  `axes`; optional `--extraction` (exactly `EXTRACTION_KEYS`) and
+  `axes`; their units [2026-11-27, after block 41's ISSUE, D-178]: the file
+  of `--units FILE.json` (a list of p non-empty strings) when given; else
+  the simulated bank's sidecar `latent_spec.units` when it holds p
+  non-empty strings; else "1" on every axis when the declared coordinate
+  is the unit box itself (no bounds, or every bound [0, 1]: the value
+  reported is u, a pure number); else a refusal naming `--units` (a unit
+  is never guessed); the number of networks of the training split,
+  counted on the bank with the members' own split, which the export
+  hands to the card's template; optional `--extraction` (exactly `EXTRACTION_KEYS`) and
   `--card`.
 - Rule (sec. 2.7): the export refuses (exit 3, nothing written) when the
   ensemble is not complete, its sample or its metrics are absent or not
@@ -7590,17 +7599,45 @@ plan; Confirmed: yes 2026-11-17]
     one `TODO` gives a draft; without `--card` the bundle carries block
     42's template and is a draft (SKIP, naming block 42, while
     `card.template` is a stub: blocks 41 and 42 are written in parallel).
+    [2026-11-27, D-178, on the merged tree] the template's
+    `training.n_networks` is an integer and, in the fixture, where every
+    network has the same number of windows, n_networks times that number
+    equals `training.n_windows` and the record's `n_train` (counted by
+    the test with numpy on the bank's donors); `parameters.units` is "1"
+    on every axis of the fixture (unit box); `--units` with p strings
+    replaces them; `--units` with p - 1 strings exits 3, names `--units`
+    and writes nothing.
   Mutations, each of which must fail a check: the members written in
   another order; a state tensor dropped; the digest not verified at
   reading; the gate's sets taken from the wrong roles.
-- Status: drafted 2026-11-27.
+- Status: smoke-tested 2026-11-27 (5 of 5 checks,
+  `test_smoke_tool_bundle.py`, on the merged tree with blocks 40, 42, 43,
+  44; the four mutations each caught, implementer's report). Measured in
+  T41a on the fixture's ensemble: largest absolute difference 0 between
+  the pipeline's networks and the bundle's for log q, the draws, the
+  densities at the draws and the embeddings, also in a separate process
+  in which `torch.load`, `numpy.load` and `pickle` raise; bundle of
+  2.43 MB.
+- Build notes (2026-11-27): science-side, D-178 [orchestrator]: the
+  source of `parameters.units` (Inputs, above), after the implementer's
+  ISSUE that the entry named none. Plumbing: the card's header is parsed
+  by block 42's `card.parse`; the export counts the networks of the
+  training split with the pipeline's `grouped_split` on the bank's
+  donors and the record's fractions and seed, refuses when the split's
+  hash is not the record's, and hands the count to `card.template`;
+  `safetensors.numpy.save_file` writes a non-contiguous array's raw
+  buffer, so every array is made contiguous before it is saved (block 45
+  does the same).
 - Confirmed: 2026-11-27 by D-176.
 
 ### Block 42: the card (added 2026-11-27; D-158 (4), D-173, D-175; roadmap tool, step S3)
 
 - Modules: `sbitool/card.py`, `sbitool/tests/test_smoke_tool_card.py`
   (new; PyYAML `safe_load` and `safe_dump`).
-- Public API: `card.template(manifest, records, project=None) -> str`
+- Public API: `card.template(manifest, records, project=None,
+  n_networks=None) -> str` [`n_networks`, 2026-11-27: the networks of the
+  training split, which no record holds; block 41's export counts them on
+  the bank and passes them; None leaves the field `TODO`]
   [`records`: the members' record dicts in member order; `project`: the
   project's tag or None] (a
   `CARD.md` with the header pre-filled and `TODO` elsewhere, and a body of
@@ -7635,7 +7672,17 @@ plan; Confirmed: yes 2026-11-17]
     header that is a list) exit 3 with one line; a card with YAML tags
     that would build Python objects is refused (`safe_load`);
   - T42d parse(template) then dump gives the same header (a round trip).
-- Status: drafted 2026-11-27.
+- Status: smoke-tested 2026-11-27 (6 of 6 checks, `test_smoke_tool_card.py`,
+  on the merged tree; the two checks of the commands, T42e
+  `card-template` and T42f `card-check` on a bundle written by block 41's
+  `bundle.write`, were added by the implementer).
+- Build notes (2026-11-27, plumbing): `training.n_networks` is no
+  record's (a record holds `n_train`, the training windows), so
+  `template` takes it as `n_networks` from the export and leaves `TODO`
+  without it; an `n_networks` that is not an integer >= 1 is a
+  ValueError; T42f's bundle carries gate sets of the sizes its manifest
+  declares, which `bundle.check` compares (the test first wrote sets of
+  4 rows, written before block 41 existed).
 - Confirmed: 2026-11-27 by D-176.
 
 ### Block 43: recordings and the device's layout (added 2026-11-27; D-158 (1), D-173; roadmap tool, step S4)
@@ -7781,7 +7828,17 @@ plan; Confirmed: yes 2026-11-17]
   - T44d a recording whose rate or grid differs from the extraction's is
     refused; a bundle without `extraction` is refused by the command.
   SKIP, naming `SBIX_DIR`, where the extractor's checkout is absent.
-- Status: drafted 2026-11-27.
+- Status: smoke-tested 2026-11-27 (4 of 4 checks,
+  `test_smoke_tool_windows.py`, on the merged tree, T44d's part with a
+  bundle written by block 41 included; extractor checkout
+  `feat/real-arm-parity` 0ff531d).
+- Build notes (2026-11-27): science-side, D-177 [orchestrator]: the
+  partition's key for a recording with positions and no grid, and the
+  detection being the bundle's (Rule, above). Plumbing: the traces are
+  float32 as the extractor returns them, so T44a compares at 1e-5, not
+  1e-12; the command reads a file first without detection and, when the
+  adapter refuses it as raw voltage, again with the bundle's detection,
+  and writes which was applied in `meta`.
 - Confirmed: 2026-11-27 by D-176.
 
 ### Block 45: inference from a bundle (added 2026-11-27; D-158 (3); roadmap tool, steps S3 and S4)

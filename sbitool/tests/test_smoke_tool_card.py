@@ -227,6 +227,15 @@ def test_t42a_template():
     assert t["n_windows"] == ident["n_train"], (t["n_windows"], ident["n_train"])  # 2nd source
     assert t["split_fracs"] == recs[0]["split_fracs"] == recs[0]["config"]["split_fracs"]
     assert t["n_networks"] == S.TODO, t["n_networks"]
+    # n_networks is no record's: the export counts it on the bank and passes it (block 42)
+    h_n, _ = C.parse(C.template(man, recs, project="rec_fixture", n_networks=136))
+    assert h_n["training"]["n_networks"] == 136 and h_n["training"]["n_windows"] == t["n_windows"]
+    for bad in (0, -1, True, 1.5, "136"):
+        try:
+            C.template(man, recs, n_networks=bad)
+            raise AssertionError("n_networks %r accepted" % (bad,))
+        except ValueError:
+            pass
     want_h = dict((k, v) for k, v in recs[0]["config"].items() if k not in _NOT_HYPER)
     assert t["hyperparameters"] == want_h, (sorted(t["hyperparameters"]), sorted(want_h))
     for r in recs[1:]:                              # every member trained with the same values
@@ -498,8 +507,9 @@ def test_t42f_bundle_commands():
     full = _filled(h, man)
     states = [{"w": torch.zeros(3, dtype=torch.float32) + k} for k in range(man["M"])]
     rng = np.random.default_rng(SEED)
-    gate = dict((k, rng.standard_normal((man["M"], 4, man["d_z"])).astype(np.float32))
-                for k in S.GATE_ARRAYS)
+    # the gate's sets of the sizes the manifest declares (bundle.check compares them)
+    gate = dict((k, rng.standard_normal((man["M"], man["gate"][n], man["d_z"])).astype(np.float32))
+                for k, n in (("z_ref", "n_ref"), ("z_rank", "n_rank"), ("z_null", "n_null")))
     bpath = os.path.join(d, "toy" + bundle.EXTENSION)
     man_w = copy.deepcopy(man)
     man_w["card_complete"] = True

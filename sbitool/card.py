@@ -385,12 +385,18 @@ def _body(header, manifest, project):
     return "\n".join(out)
 
 
-def template(manifest, records, project=None):
+def template(manifest, records, project=None, n_networks=None):
     """A CARD.md for the bundle of `manifest`: every field the manifest and
     the members' records hold pre-filled, schema.TODO elsewhere, and a body
     of headed sections that say what to write. `records`: the members'
-    record dicts (the runner's <arm>_seed<k>.json), in member order."""
+    record dicts (the runner's <arm>_seed<k>.json), in member order.
+    `n_networks`: the networks of the training split (no record holds
+    them; block 41's export counts them on the bank), or None for TODO."""
     header = _template_header(manifest, records)
+    if n_networks is not None:
+        if isinstance(n_networks, bool) or not isinstance(n_networks, int) or n_networks < 1:
+            raise ValueError("n_networks must be an integer >= 1, got %r" % (n_networks,))
+        header["training"]["n_networks"] = int(n_networks)
     return dump(header, _body(header, manifest, project))
 
 
