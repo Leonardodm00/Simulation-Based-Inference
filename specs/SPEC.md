@@ -7948,7 +7948,31 @@ plan; Confirmed: yes 2026-11-17]
     draws (the reason for D-179) when n exceeds the batch. The evaluated
     project and its bundles are those of block 41's test
     (`test_smoke_tool_bundle._ctx()`), not built again.
-- Status: drafted 2026-11-27.
+- Status: smoke-tested 2026-11-28 (5 of 5 checks,
+  `test_smoke_tool_infer.py`, on the merged tree; eleven mutations each
+  caught, implementer's report). Measured in T45a for the fixture's two
+  ensembles (A1; A2 of the search S-A2-R0), on the recording bank's 24
+  windows with 40 draws each and the bundle's batch of 16: `draws`,
+  `draw_member`, `logq_draws`, `logq_draws_own`, `z` and the six
+  summaries equal to block 35's and block 36's files bit for bit; the
+  gate's arrays with a largest absolute difference of 0; the flags equal
+  (2 and 0 windows flagged). T45b: the mixture against numpy on the
+  pooled draws, largest difference 0.
+- Build notes (2026-11-28, plumbing; the implementer's choices accepted
+  at the gate): T45c also checks the flag's strict inequality at the tie
+  (the gate replaced for one call by the real one with p set to alpha,
+  one ulp below and one ulp above: not flagged, flagged, not flagged),
+  added at the gate because p = (1 + c) / (1 + N_null) takes the value
+  alpha in practice; "two runs give identical files" is tested on the
+  npz members' bytes and the JSON's bytes (the zip's time stamps may
+  differ); of a `--windows` file `windows` is required and the ids
+  present are taken; an absent bundle or recording file is a refusal
+  (exit 3); `--adapter` or `--option` with `--windows`, and `--recording`
+  without `--adapter`, are argument errors (exit 2); `seed` >= 0 and
+  `batch` >= 1 are checked; the command has no `--batch` (the bundle's is
+  used); `mixture_note` is worded for a recording (block 36's speaks of
+  a well); T45b's comparison with block 36's `well_*` did not apply (the
+  fixture's bank has several wells).
 - Confirmed: 2026-11-27 by D-176.
 
 ### Block 46: the device and the window as figures (added 2026-11-27; D-158 (1); roadmap tool, step S4)
@@ -8034,7 +8058,14 @@ plan; Confirmed: yes 2026-11-17]
   - T46c's static check reads `device.py`'s source: no import of scipy,
     sklearn, statistics or pandas, and no call named mean, std, var,
     median, quantile, percentile, average, histogram or bincount.
-- Status: drafted 2026-11-27.
+- Status: smoke-tested 2026-11-28 (3 of 3 checks,
+  `test_smoke_tool_figures.py`, on the merged tree; eighteen mutations
+  each caught, implementer's report; the two figures looked at by the
+  orchestrator before and after amendment 1).
+- Build notes (2026-11-28, plumbing): the stairs are drawn with
+  `baseline=None` (an open path: matplotlib's default adds strokes down
+  to 0 at the window's ends, which read as the rate falling to 0);
+  T46b checks it.
 - Confirmed: 2026-11-27 by D-176.
 
 ## 6. Pipeline entry points
@@ -8067,6 +8098,9 @@ plan; Confirmed: yes 2026-11-17]
 | `python3 hpc/pipeline/evaluation/ev_rec_sample.py --config <tag>.json --eval-config <tag>_rec_eval.json --ensemble <name> [--out DIR]`, then `ev_rec_report.py --config ... --eval-config ...` | blocks 35-37 by hand: one ensemble's samples, then the metrics, the figures, `REC_REPORT.md` and `REC_REPORT_COMPLETE.json`; pass lines `REC SAMPLE OK`, `REC METRICS OK`, `REC FIGURES OK`, `REC REPORT OK` | `rec_fixture.fixture()`'s `cfg_rec` and `ecfg_rec` (the recorded kind) or `cfg` and `ecfg_as` (a synthetic project read as recorded), with `out_root` in a temporary directory | seconds per ensemble on the fixture |
 | `python3 hpc/pipeline/evaluation/ev_rec_validate.py --old <synthetic out_root> --new <as-recorded out_root> [--record FILE]` | block 36: D-162's validation of the recorded path against the synthetic evaluation; pass line `REC VALIDATION OK: <n> ensemble(s)` | the fixture's `old_out` and an as-recorded run of `cfg` with `ecfg_as` | under a second |
 | `bash hpc/pipeline/evaluation/submit_rec_eval.sh --project <tag> [--dry-run] [--what sample,report,validate] [--resample <name>,...]` | block 38: the launcher of a recorded project's evaluation on PBS; `--project synth` is D-162's validation on davinci (`synth_rec_eval.json`) | davinci (the tests: the fixture under the fake PBS, `SKIP_CONDA=1`) | seconds; the jobs hours |
+| `python3 -m sbitool export --config <tag>.json --eval-config <tag>_rec_eval.json --ensemble <name> --out <file>.sbibundle [--extraction FILE.json] [--units FILE.json] [--card CARD.md]`; `bundle-check <file>`; `card-template`, `card-check` | blocks 41 and 42 (2026-11-27): a trained and evaluated ensemble as a model bundle with its card; run from the repository's root | the training environment, safetensors, PyYAML; blocks 35 and 36's outputs of the project | seconds to a minute |
+| `python3 -m sbitool windows --bundle FILE --recording PATH --adapter ptrain\|spikeinterface [--option KEY=VALUE] --out windows.npz`; `infer --bundle FILE (--windows windows.npz \| --recording PATH --adapter NAME) --out DIR [--n-post N] [--seed S]`; `device-figure --bundle FILE --recording PATH --adapter NAME --out DIR [--subregion j --window i]` | blocks 43 to 46 (2026-11-27/28): a recording cut into a bundle's windows, the inference, the device and one window as figures | the Sbi-extractor's checkout (`SBIX_DIR` or `SBIX_CLONE`); spikeinterface for its adapter; the training environment for `infer` | seconds |
+| `python3 sbitool/tests/test_smoke_tool_schema.py`, `test_smoke_tool_recordings.py`, `test_smoke_tool_card.py`, `test_smoke_tool_windows.py`, `test_smoke_tool_bundle.py`, `test_smoke_tool_infer.py`, `test_smoke_tool_figures.py` | blocks 40 to 46: the tool's smoke tests (4, 4, 6, 4, 5, 5, 3 checks) | `SBIX_CLONE=<the Sbi-extractor's checkout>`; the training environment; the fixture of blocks 33-38 (`REC_FIXTURE` to reuse a kept one) | about a minute in all |
 
 ## 7. Not executable in the sandbox
 
@@ -8106,6 +8140,16 @@ project's real banks (the extractor's, on davinci), and D-162's validation at fu
 against `/davinci-1/home/ldellamea/runs/synth/evaluation`), whose cluster tolerances
 (sec. 2.6, "The validation") are therefore untested until that run; the sandbox tests
 its bit-for-bit form on the fixture (R35a, R36d, R38b).
+
+Blocks 40-46 (2026-11-28): the sandbox adds safetensors 0.8.0, PyYAML 6.0.3,
+spikeinterface 0.106.0 and probeinterface 0.5.0 and the Sbi-extractor's checkout
+(`feat/real-arm-parity` 0ff531d). Not executable here: an export and an inference on a
+real project's ensemble (five members, n_post 1,000, a null set of the real size), which
+is the check on davinci of D-172; a real recording file of any vendor (the adapters are
+tested on files the tests write: `ptrain` folders, and SpikeInterface's own generated
+sortings and recordings); whether the default spike detection of raw voltage matches the
+simulator's virtual MEA (no pair of raw voltage and reference spikes is in the
+repository).
 
 ## 8. Open questions
 
