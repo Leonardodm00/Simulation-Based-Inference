@@ -339,13 +339,41 @@ def test_t45c_contract():
     assert res4["json"]["batch_rows"] == nb
     assert not np.array_equal(res4["arrays"]["draws"], A["draws"]), "another batch, same draws"
     assert _max_abs(res4["arrays"]["z"], A["z"]) <= 1e-5, "another batch changed z"
+    # the flag is p < alpha_gate, strictly (sec. 2.6): p takes the values (1 + c) / (1 +
+    # N_null), so p = alpha occurs (alpha 0.05, N_null 199: p = 10 / 200). The gate is
+    # replaced for one call by the real one with p set at, just below and just above alpha
+    # on windows 0, 1, 2 (one ulp each side), and 1 on the others
+    import unittest.mock as mock
+    import ev_gate
+    alpha = float(man["gate"]["alpha"])
+    real_gate = ev_gate.gate
+    tie_p = np.array([alpha, np.nextafter(alpha, -np.inf), np.nextafter(alpha, np.inf)])
+
+    def tie_gate(*a, **k):
+        out = dict(real_gate(*a, **k))
+        pp = np.ones_like(out["p"])
+        pp[:3] = tie_p
+        out["p"] = pp
+        return out
+
+    nt = 5
+    with mock.patch.object(ev_gate, "gate", tie_gate):
+        rt = infer.run(b, rec["x"][:nt], seed=seed, log=_quiet)
+    assert ev_gate.gate is real_gate
+    At, jt = rt["arrays"], rt["json"]
+    assert _bits_equal(At["gate_p"][:3], tie_p), (At["gate_p"][:3], tie_p)
+    assert At["gate_flag"].tolist() == [False, True, False] + [False] * (nt - 3), \
+        "at the tie p = alpha = %r the flags are %s, expected [False, True, False, ...] " \
+        "(p < alpha strictly)" % (alpha, At["gate_flag"].tolist())
+    assert jt["gate"]["n_flagged"] == 1 and jt["gate"]["share_flagged"] == 1.0 / nt, jt["gate"]
     # n_post given: other per-member counts
     np2 = 2 * dims["M"]
     res5 = infer.run(b, rec["x"][:3], n_post=np2, seed=seed, log=_quiet)
     assert res5["arrays"]["draws"].shape == (3, np2, dims["p"])
     assert res5["json"]["n_post"] == np2 and res5["json"]["n"] == 3
     print("[T45c] %d arrays + rows + %d ids, %d JSON keys; two runs: identical members and JSON "
-          "(whole npz files %s); seed + 1000 and batch %d: other draws, z the same"
+          "(whole npz files %s); seed + 1000 and batch %d: other draws, z the same; at p = alpha "
+          "not flagged, one ulp below flagged, one above not"
           % (len(infer.ARRAYS), len(ids), len(js),
              "identical" if same_bytes else "differ only in the zip's time stamps", nb))
 
