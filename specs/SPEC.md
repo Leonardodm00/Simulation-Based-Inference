@@ -1070,7 +1070,9 @@ the rest is JSON and Markdown; reading a bundle never calls `torch.load`,
 - `gate`: `factors`, `alpha`, `n_ref`, `n_rank`, `n_null`, `k_gate`,
   `size_mean`, `size_lo`, `size_hi`, `level` (block 36's `gate` of
   `sim.json`, so that the tool flags as the evaluation did);
-- `sample`: `n_post` and `seed`, the defaults of an inference;
+- `sample`: `n_post`, `seed` and `batch_rows` [`batch_rows`, 2026-11-27,
+  D-179: the windows per batch through a member, block 35's; a member's
+  draws depend on it, measured], the defaults of an inference;
 - `provenance`: the project's tag, the ensemble's name, the search and the
   campaign, the sha256 of the best fit's `BEST_FIT_COMPLETE.json` and of
   block 35's `<stem>_sample.json`, the repository's commit, and the sha256
@@ -7838,7 +7840,14 @@ plan; Confirmed: yes 2026-11-17]
   float32 as the extractor returns them, so T44a compares at 1e-5, not
   1e-12; the command reads a file first without detection and, when the
   adapter refuses it as raw voltage, again with the bundle's detection,
-  and writes which was applied in `meta`.
+  and writes which was applied in `meta`. Added with wave C's contract
+  (2026-11-27, plumbing, the suite rerun: 4 of 4):
+  `windows.from_file(manifest, path, adapter, options) -> dict`
+  (`recording`, `detection_applied`, `subregions`, `x`, `fs_ifr_hz`,
+  `windows`, `ids`, `meta`), the command's work as one function that
+  `infer --recording` and `device-figure` call too; `windows.NoWindow`
+  (a `WindowsError`); `windows.parse_option` (the command line's
+  KEY=VALUE).
 - Confirmed: 2026-11-27 by D-176.
 
 ### Block 45: inference from a bundle (added 2026-11-27; D-158 (3); roadmap tool, steps S3 and S4)
@@ -7846,7 +7855,7 @@ plan; Confirmed: yes 2026-11-17]
 - Modules: `sbitool/infer.py`, `sbitool/tests/test_smoke_tool_infer.py`
   (new; torch, numpy; the evaluation's functions through `_sources`).
 - Public API: `infer.run(bundle, windows, ids=None, n_post=None,
-  seed=None, batch=256, log=print) -> dict` of arrays; `infer.write(result,
+  seed=None, batch=None, log=print) -> dict` (arrays and JSON); `infer.write(result,
   out_dir)`; `python3 -m sbitool infer --bundle FILE (--windows
   windows.npz | --recording PATH --adapter NAME [options]) --out DIR
   [--n-post N] [--seed S]`: pass line `INFER OK: <n> window(s), <k>
@@ -7885,6 +7894,60 @@ plan; Confirmed: yes 2026-11-17]
     `extraction` fits it: exit 0, n windows as T44c counts them;
   - T45e refusals: `n_post` not a multiple of M, windows of another
     length than W, a bundle that fails its check.
+- Contract of wave C (2026-11-27; these clauses complete the entry above
+  and prevail where the two differ):
+  - Defaults: `infer.run(bundle, windows, ids=None, n_post=None,
+    seed=None, batch=None, log=print)`; None for `n_post`, `seed` or
+    `batch` means the bundle's `sample.n_post`, `sample.seed`,
+    `sample.batch_rows` (D-179: a member's draws depend on the batch).
+    `bundle` is a `bundle.Bundle`; `windows` is (n, W) float32, finite,
+    n >= 1; `ids` None or a dict of (n,) arrays, written as given.
+  - The numbers are block 35's by construction: one call
+    `ev_sample.sample_set(models, windows, zeros (n, p) float64, zeros
+    (n,) bool, n_post, seed, batch, log)`, the call block 35 makes for a
+    recording bank, with `models = model.load(bundle)`; of its result
+    `draws`, `draw_member`, `logq_draws`, `logq_draws_own`, `z` are kept
+    and the two reference arrays dropped. Then
+    `ev_rec_metrics.window_summary(draws)`, each array cast to float32 as
+    block 36 writes it; `ev_gate.gate(z_ref, z_rank, z_null, z,
+    gate.factors)` on `bundle.gate_sets()`, its `t`, `r`, `p_member`, `T`,
+    `p` written as `gate_t`, `gate_r`, `gate_p_member`, `gate_T`, `gate_p`
+    (float64) and `gate_flag = gate_p < gate.alpha` (bool);
+    `ev_rec_metrics.well_summary(draws, zeros (n,))`, its one row written
+    as `mix_mean`, `mix_sd`, `mix_q05`, `mix_q50`, `mix_q95` ((p,)
+    float64). The draws are in the coordinate block 35 writes them in; the
+    manifest's bounds are reported, not applied.
+  - `run` returns `{"arrays": {...}, "json": {...}}`. The arrays:
+    `infer.ARRAYS` (name -> (shape, dtype)), plus `rows` = arange(n) int64
+    and the ids. The JSON: exactly `infer.JSON_KEYS` = `schema`
+    ("sbitool_posterior/1"), `bundle` (`name`, `sha256`), `n`, `n_post`,
+    `M`, `p`, `seed`, `batch_rows`, `parameters` (the manifest's), `gate`
+    (the manifest's `alpha`, `k_gate`, `n_null`, `size_mean`, `size_lo`,
+    `size_hi`, `level`, and `n_flagged`, `share_flagged` of this
+    inference), `ids` (the ids' names), `mixture_note`, `software` (as
+    the manifest's keys, of this run).
+  - `infer.write(result, out_dir)` writes `posterior.npz`
+    (`ev_sample.write_npz`) then `posterior.json` (sorted keys, ASCII),
+    each through a temporary name; the folder is created.
+  - The command: `--windows FILE` reads block 44's `windows.npz` (its
+    `windows`; its `subregion`, `window_idx`, `t_start_s` as the ids);
+    `--recording PATH --adapter NAME [--option KEY=VALUE ...]` goes
+    through `windows.from_file` (block 44; `--option detection` is
+    refused, exit 2). Exit 3 with one `REFUSED:` line and nothing written
+    for an `infer.InferRefused`, a `bundle.BundleError`, a
+    `windows.WindowsError`, a `recordings.RecordingError`, a
+    `_sources.SourceError`; exit 2 for the arguments.
+  - T45a reads the bank's windows with `ev_rec_data.recording`, the seed
+    from the sample's JSON (`seeds[r]`), leaves `n_post` and `batch` to
+    the bundle, and compares with `samples/<stem>_<r>.npz` (bit for bit)
+    and `metrics/<stem>_<r>.npz` (the summaries bit for bit as float32,
+    the gate's arrays within 1e-12, the flags equal). T45b's oracle is
+    numpy on the result's own draws pooled over the windows as float64
+    (mean, SD with ddof 1, quantiles 0.05, 0.50, 0.95; within 1e-12). In
+    T45c "another seed" also checks that another `batch` gives other
+    draws (the reason for D-179) when n exceeds the batch. The evaluated
+    project and its bundles are those of block 41's test
+    (`test_smoke_tool_bundle._ctx()`), not built again.
 - Status: drafted 2026-11-27.
 - Confirmed: 2026-11-27 by D-176.
 
@@ -7914,6 +7977,46 @@ plan; Confirmed: yes 2026-11-17]
   window's span, and its lower panel's data are the window's x; T46c the
   command writes PNG files with the PNG signature; the module imports no
   statistics library and calls no mean, SD, quantile or median (static).
+- Contract of wave C (2026-11-27; these clauses complete the entry above
+  and prevail where the two differ):
+  - Positions: `recording.positions_um` when present [um]; else, for a
+    grid with a pitch, x = column times pitch, y = row times pitch [um]
+    from `layout.grid`; else, for a grid without a pitch, x = column,
+    y = row and the axes say "column" and "row" (no um). A recording with
+    neither is a `device.FigureError`. Equal aspect.
+  - `fig_device`: one axes; one scatter (gid `electrodes`) with one
+    marker per electrode in sorted id order; an electrode outside every
+    subregion in `SIM_GRAY`; subregion j's electrodes in
+    `device.SUBREGION_COLORS[j mod 6]`, the six being block 21's
+    `ARM_COLOR["A1"]`, `ARM_COLOR["A2"]`, `ARM_COLOR["A5"]`, `OTHER_ARM`,
+    `COND_COLOR[0]`, `COND_COLOR[2]` (read from `ev_figures`, not
+    copied); an electrode with no spike has no face colour (hollow), its
+    edge in its colour; the index j written at subregion j's centre
+    electrode (a text with gid `subregion-<j>`), so that a subregion is
+    not told by its colour alone; `highlight` = j draws a ring in `INK`
+    around each electrode of subregion j (a second scatter, gid
+    `highlight`). `subregions` are block 44's objects (`members`,
+    `center`: electrode ids).
+  - `fig_window`: `x` is the subregion's window, (W,) [Hz per
+    electrode]; the window's span is [t0, t0 + W / fs_ifr_hz) with
+    t0 = window_idx W / fs_ifr_hz [s]. Upper axes: one `eventplot` row
+    per member electrode in the subregion's member order (gid
+    `raster-<electrode id>`), holding the electrode's spike times
+    index / fs_raw_hz that fall in the span. Lower axes, sharing the time
+    axis: one line (gid `ifr`), `drawstyle="steps-post"`, x data
+    t0 + k / fs_ifr_hz for k = 0..W-1 (each value drawn from the start of
+    its bin of width 1 / fs_ifr_hz), y data `x` unchanged. Labels: "time
+    [s]", "electrode", "IFR [Hz per electrode]".
+  - The command reads the bundle and the recording through
+    `windows.from_file` and writes `<out>/device.png` and, when
+    `--subregion j --window i` are given, `<out>/window_s<j>_w<i>.png`
+    (dpi 150); exit 3 with one `REFUSED:` line for a refusal (as block
+    45's list, with `device.FigureError`, a subregion or window that does
+    not exist included), exit 2 for the arguments. `ev_figures.style()`
+    is applied by the command, not at import.
+  - T46c's static check reads `device.py`'s source: no import of scipy,
+    sklearn, statistics or pandas, and no call named mean, std, var,
+    median, quantile, percentile, average, histogram or bincount.
 - Status: drafted 2026-11-27.
 - Confirmed: 2026-11-27 by D-176.
 

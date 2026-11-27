@@ -406,7 +406,8 @@ def test_t41b_content():
                     assert a[key] == rec["config"][key], (key, a[key], rec["config"][key])
                 assert a["hidden_layers"] == rec["config"]["flow_hidden_layers"]
         assert man["arm"] == e.arm and man["M"] == M
-        assert man["sample"] == {"n_post": prov["n_post"], "seed": c["ecfg_obj"].seed}
+        assert man["sample"] == {"n_post": prov["n_post"], "seed": c["ecfg_obj"].seed,
+                                 "batch_rows": c["ecfg_obj"].batch_rows}
         assert man["provenance"]["ensemble"] == name and man["provenance"]["project"] == c["tag"]
         assert man["provenance"]["best_fit_complete_sha256"] == prov["best_fit_complete_sha256"]
         assert man["provenance"]["sample_json_sha256"] == _sha(

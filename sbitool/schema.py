@@ -36,7 +36,7 @@ DETECTION_DEFAULT = {"method": "by_channel", "peak_sign": "neg", "detect_thresho
                      "exclude_sweep_ms": 1.0}
 GATE_KEYS = ("factors", "alpha", "n_ref", "n_rank", "n_null", "k_gate", "size_mean", "size_lo",
              "size_hi", "level")
-SAMPLE_KEYS = ("n_post", "seed")
+SAMPLE_KEYS = ("n_post", "seed", "batch_rows")
 PROVENANCE_KEYS = ("project", "ensemble", "search", "campaign", "best_fit_complete_sha256",
                    "sample_json_sha256", "commit", "sources")
 SOFTWARE_KEYS = ("python", "torch", "sbi", "zuko", "numpy", "safetensors")
@@ -367,6 +367,8 @@ def _manifest(probs, d):
             _int(probs, "sample.n_post", s["n_post"], 1)
         if "seed" in s:
             _int(probs, "sample.seed", s["seed"])
+        if "batch_rows" in s:
+            _int(probs, "sample.batch_rows", s["batch_rows"], 1)
     if has("provenance") and _keys(probs, "provenance", d["provenance"], PROVENANCE_KEYS):
         pv = d["provenance"]
         for k in ("project", "ensemble", "search", "campaign", "commit"):

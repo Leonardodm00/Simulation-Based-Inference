@@ -100,7 +100,7 @@ def _valid_manifest():
         "gate": {"factors": [0.5, 1.0, 2.0], "alpha": 0.05, "n_ref": 200, "n_rank": 100,
                  "n_null": 199, "k_gate": 9, "size_mean": 0.045, "size_lo": 0.02,
                  "size_hi": 0.08, "level": 0.95},
-        "sample": {"n_post": 300, "seed": 0},
+        "sample": {"n_post": 300, "seed": 0, "batch_rows": 256},
         "provenance": {"project": "toy", "ensemble": "S-A1:A1", "search": "S-A1",
                        "campaign": "toy_campaign", "best_fit_complete_sha256": _hex("bf"),
                        "sample_json_sha256": _hex("sj"), "commit": "1314931",

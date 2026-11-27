@@ -296,6 +296,59 @@ def _read_recording(path, adapter, options, detection):
     return rec, dict(detection)
 
 
+class NoWindow(WindowsError):
+    """Every trace of the recording is shorter than one window."""
+
+
+parse_option = _option      # the command line's KEY=VALUE, for the other commands
+
+
+def from_file(manifest, path, adapter, options):
+    """A recording file cut into the windows of a bundle: the command's
+    work, for `windows`, `infer --recording` and `device-figure` alike.
+
+    manifest: the bundle's (its `extraction` not None, its `W`); path,
+    adapter: the recording's file or folder and its adapter's name;
+    options: dict of the adapter's options (never `detection`: the caller
+    refuses it before).
+
+    Returns a dict: `recording` (interfaces.Recording), `detection_applied`
+    (the bundle's detection when the file was raw voltage, None for spike
+    trains), `subregions` (list, as subregions()), `x` ((n_sub, K) float32
+    traces, as traces()), `fs_ifr_hz` (float), `windows` ((n, W) float32),
+    `ids` (dict of (n,) arrays subregion, window_idx, t_start_s, as cut()),
+    `meta` (JSON-able dict: recording, extraction, detection,
+    detection_applied, subregions).
+
+    Raises WindowsError (no extraction in the bundle; a recording that
+    does not fit it; NoWindow), recordings.RecordingError,
+    _sources.SourceError, OSError, and TypeError for an option the adapter
+    does not take."""
+    extraction = manifest.get("extraction")
+    if extraction is None:
+        raise WindowsError("the bundle has no extraction (null): it accepts windows only, not "
+                           "a recording")
+    W = manifest.get("W")
+    detection = extraction.get("detection")
+    recording, applied = _read_recording(path, adapter, dict(options), detection)
+    # extract()'s three steps, called one by one to keep the extractor's fs_ifr
+    _checked_extraction(extraction)
+    subs = subregions(recording, extraction)
+    x, fs_ifr = traces(recording, subs, extraction)
+    windows, ids = cut(x, W, fs_ifr)
+    if windows.shape[0] == 0:
+        raise NoWindow("no window: every trace of the recording %r is shorter than one window "
+                       "(K = %d < W = %d samples)" % (recording.name, int(x.shape[1]), int(W)))
+    meta = {"recording": {"name": recording.name, "source": _jsonable(recording.source)},
+            "extraction": _jsonable(extraction),
+            "detection": _jsonable(detection), "detection_applied": _jsonable(applied),
+            "subregions": [{"center": int(s.center), "members": [int(m) for m in s.members],
+                            "mean_mfr": float(s.mean_mfr), "center_mfr": float(s.center_mfr)}
+                           for s in subs]}
+    return {"recording": recording, "detection_applied": applied, "subregions": subs, "x": x,
+            "fs_ifr_hz": float(fs_ifr), "windows": windows, "ids": ids, "meta": meta}
+
+
 def main(argv=None):
     """`python3 -m sbitool windows --bundle FILE --recording PATH --adapter
     NAME [--option key=value ...] --out windows.npz`: 0 with WINDOWS OK:
@@ -317,56 +370,36 @@ def main(argv=None):
     except (bundle_mod.BundleError, OSError) as exc:
         sys.stderr.write("REFUSED: the bundle %s: %s\n" % (args.bundle, exc))
         return EXIT_REFUSE
-    manifest = b.manifest
-    extraction = manifest.get("extraction")
-    if extraction is None:
+    if b.manifest.get("extraction") is None:
         sys.stderr.write("REFUSED: the bundle %s has no extraction (null): it accepts windows "
                          "only, not a recording\n" % args.bundle)
         return EXIT_REFUSE
-    W = manifest.get("W")
-    detection = extraction.get("detection")
     try:
-        recording, applied = _read_recording(args.recording, args.adapter, options, detection)
+        r = from_file(b.manifest, args.recording, args.adapter, options)
     except TypeError as exc:    # an option the adapter does not take: the arguments
         sys.stderr.write("sbitool windows: adapter %r: %s\n" % (args.adapter, exc))
         return EXIT_ARGS
-    except (recordings.RecordingError, _sources.SourceError, OSError) as exc:
+    except (WindowsError, recordings.RecordingError, _sources.SourceError, OSError) as exc:
         sys.stderr.write("REFUSED: %s\n" % exc)
         return EXIT_REFUSE
-    try:
-        # extract()'s three steps, called one by one to keep the extractor's fs_ifr
-        _checked_extraction(extraction)
-        subs = subregions(recording, extraction)
-        x, fs_ifr = traces(recording, subs, extraction)
-        windows, ids = cut(x, W, fs_ifr)
-    except (WindowsError, _sources.SourceError) as exc:
-        sys.stderr.write("REFUSED: %s\n" % exc)
-        return EXIT_REFUSE
-    if windows.shape[0] == 0:
-        sys.stderr.write("REFUSED: no window: every trace of the recording %r is shorter than "
-                         "one window (K = %d < W = %d samples)\n"
-                         % (recording.name, int(x.shape[1]), int(W)))
-        return EXIT_REFUSE
-    meta = {"recording": {"name": recording.name, "source": _jsonable(recording.source)},
-            "extraction": _jsonable(extraction),
-            "detection": _jsonable(detection), "detection_applied": _jsonable(applied),
-            "subregions": [{"center": int(s.center), "members": [int(m) for m in s.members],
-                            "mean_mfr": float(s.mean_mfr), "center_mfr": float(s.center_mfr)}
-                           for s in subs]}
+    recording, applied, ids = r["recording"], r["detection_applied"], r["ids"]
+    detection = b.manifest["extraction"].get("detection")
     out_dir = os.path.dirname(os.path.abspath(args.out))
     os.makedirs(out_dir, exist_ok=True)
     tmp = args.out + ".tmp"
     with open(tmp, "wb") as fh:
-        np.savez(fh, windows=windows, subregion=ids["subregion"], window_idx=ids["window_idx"],
-                 t_start_s=ids["t_start_s"], fs_ifr_hz=np.float64(fs_ifr),
-                 meta=np.str_(json.dumps(meta, sort_keys=True)))
+        np.savez(fh, windows=r["windows"], subregion=ids["subregion"],
+                 window_idx=ids["window_idx"], t_start_s=ids["t_start_s"],
+                 fs_ifr_hz=np.float64(r["fs_ifr_hz"]),
+                 meta=np.str_(json.dumps(r["meta"], sort_keys=True)))
     os.replace(tmp, args.out)
     if applied is None:
         print("the spikes of %r arrived as spike trains (adapter %s): they were detected outside "
               "the tool; the bundle's detection (%s) was not applied"
               % (recording.name, args.adapter,
                  "none" if detection is None else json.dumps(detection, sort_keys=True)))
-    print("WINDOWS OK: %d window(s) of %d subregion(s)" % (windows.shape[0], len(subs)))
+    print("WINDOWS OK: %d window(s) of %d subregion(s)" % (r["windows"].shape[0],
+                                                          len(r["subregions"])))
     return 0
 
 
