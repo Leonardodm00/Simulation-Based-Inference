@@ -6,6 +6,7 @@ that ran the check.
 
 | Date | Change |
 |---|---|
+| 2026-11-27 | v1.1. New section "Training-set files and I/O", for the portal's I/O field: the shard format and how a run reads it, from the code (SBI `sci/device` 8607e5c and Sbi-extractor `feat/real-arm-parity` 0ff531d, whose bank tools call SBI's `write_shard`); the files on davinci not yet inspected. |
 | 2026-11-27 | v1. M0, M1, M3 and M4 (largest configuration), M5 (partial) and M6 measured; M2 and the median configuration of M3 not yet run. |
 
 **Tags.** `[CLUSTER]` read from the user's pastes of davinci output (dates below).
@@ -154,6 +155,25 @@ settled (a cap for A5, or memory work).
 | M3, the median configuration | a finished trial of median cost, probed on the CPU (queue `cpu`) and on the GPU |
 | S for the full objectives of A2 and A5 | their probes with `--probe-full-loss` on the CPU (queue `cpu`) |
 | M7, M8 | optional in the v2 handoff |
+
+## Training-set files and I/O (the portal's I/O field)
+
+| Item | Value | Basis |
+|---|---|---|
+| Shard file | one `.npz` per shard: a ZIP archive of NumPy arrays, deflate-compressed (`np.savez_compressed`) | `[CODE]` `hpc/joint/stage1/latent_bank.py`, `write_shard` |
+| Beside each shard | a JSON sidecar `<shard>.json`: the bank's contract (schema `latent_bank/1`, parameter names and bounds, window length `W`, sampling rate) with its sha256 digest | `[CODE]` `build_sidecar`, `read_shard` |
+| Arrays in a shard | `x` (rows x `W` windows, float), `theta` (rows x parameters, float), per-row labels (`cls`, `nu`, `realisation_id`, `donor`, `well`, `batch`, `subregion`, `window_idx`, `contaminated`; `rep_group` in a real bank) | `[CODE]` `ROW_ARRAYS`, `OPTIONAL_ROW_ARRAYS` |
+| Written by | Sbi-extractor's bank tools, which import SBI's `latent_bank` and call its `write_shard` (`export_windows/bank_export.py` for the simulated bank, `bank_real.py` for the real one): one file per write, written to a temporary name then renamed | `[CODE]` `write_shard`; Sbi-extractor `feat/real-arm-parity` 0ff531d, which davinci's checkout is assumed to match (the command below checks the files themselves) |
+| Read by | one Python process per training job, plain POSIX file reads through `np.load`: every shard's small arrays once at the start, then the windows streamed shard by shard, `buffer_shards` shards resident while training and at most two while scoring the selection split | `[CODE]` `ShardIndex`, `iter_batches`; `stage2/joint_batches.py` |
+| Not used | HDF5, netCDF, zarr, MPI I/O, memory mapping | `[CODE]` a search of `hpc/joint` and `hpc/pipeline` for their calls |
+| Other files of a run | the model checkpoint (PyTorch `.pt`), the record (JSON), per-row results (`.npz`) | `[CODE]` `run_joint_arms.py` |
+| On davinci | not yet inspected; the command below prints the bank's file types, a sidecar, each array's dtype, shape and compression, and the shard count and total size | -- |
+
+Read-only, run on a login node; it takes the bank's path from the gate's own command file:
+
+```bash
+bash -c 'A=$1; G=$(grep -A1 -x -- "--sim-shards" $A | tail -1); B=$(dirname "$G"); S=$(ls $G | head -1); echo "bank folder: $B"; echo "--- file types in it:"; ls "$B" | sed "s/.*\.//" | sort | uniq -c; echo "--- sidecar $(basename ${S%.npz}.json), first 600 bytes:"; head -c 600 "${S%.npz}.json"; echo; echo "--- arrays inside $(basename $S):"; python3 -c "import sys,zipfile,ast,glob,os; p=sys.argv[1]; z=zipfile.ZipFile(p); [print(\"%-16s %-6s %-14s %9.2f MB raw %9.2f MB on disk  %s\" % (i.filename, d[\"descr\"], str(d[\"shape\"]), i.file_size/1e6, i.compress_size/1e6, {0:\"stored\",8:\"deflate\"}.get(i.compress_type,i.compress_type))) for i in z.infolist() for h in [z.open(i).read(512)] for d in [ast.literal_eval(h[h.index(b\"{\"):h.index(b\"}\")+1].decode())]]; fs=sorted(glob.glob(sys.argv[2])); t=sum(map(os.path.getsize,fs)); print(\"%d shards, %.2f GB on disk, %.1f MB per shard on average\" % (len(fs), t/1e9, t/1e6/max(len(fs),1)))" "$S" "$G"' _ ~/tune_joint_linddup/A1/S-A1/jobs/gate_b512.argv
+```
 
 ## On davinci
 
