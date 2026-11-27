@@ -6,6 +6,7 @@ that ran the check.
 
 | Date | Change |
 |---|---|
+| 2026-11-27 | v1.2. The LindDUP simulated bank inspected on davinci (the user's paste of 15:57): format confirmed, file counts and sizes; how many times a trial reads it, from the code. |
 | 2026-11-27 | v1.1. New section "Training-set files and I/O", for the portal's I/O field: the shard format and how a run reads it, from the code (SBI `sci/device` 8607e5c and Sbi-extractor `feat/real-arm-parity` 0ff531d, whose bank tools call SBI's `write_shard`); the files on davinci not yet inspected. |
 | 2026-11-27 | v1. M0, M1, M3 and M4 (largest configuration), M5 (partial) and M6 measured; M2 and the median configuration of M3 not yet run. |
 
@@ -167,7 +168,10 @@ settled (a cap for A5, or memory work).
 | Read by | one Python process per training job, plain POSIX file reads through `np.load`: every shard's small arrays once at the start, then the windows streamed shard by shard, `buffer_shards` shards resident while training and at most two while scoring the selection split | `[CODE]` `ShardIndex`, `iter_batches`; `stage2/joint_batches.py` |
 | Not used | HDF5, netCDF, zarr, MPI I/O, memory mapping | `[CODE]` a search of `hpc/joint` and `hpc/pipeline` for their calls |
 | Other files of a run | the model checkpoint (PyTorch `.pt`), the record (JSON), per-row results (`.npz`) | `[CODE]` `run_joint_arms.py` |
-| On davinci | not yet inspected; the command below prints the bank's file types, a sidecar, each array's dtype, shape and compression, and the shard count and total size | -- |
+| On davinci: the LindDUP simulated bank | `~/banks/linddup_sim/`: 189 shards (`.npz`) and their 189 sidecars, plus 2 bank-level `.json`, 2 `.sha256` and 1 task list; 25.43 GB on disk, 134.6 MB per shard on average; every array deflate-compressed | `[CLUSTER 2026-11-27 15:57]` |
+| A shard | `shard_0000`: 6,105 windows; `x` float32 (6,105 x 18,000; `T_win` 180 s, so 100 Hz): 439.6 MB raw, 331.8 MB on disk (75.5 %); `theta` float32 (6,105 x 14); the labels int64, uint64, bool | `[CLUSTER]`, `[calc]` |
+| How much a trial reads | the training stream and the selection scorer both decompress a shard's whole `x` and then keep the rows they need: each pass over the training rows decompresses every shard holding a training row (in practice the bank, 25.4 GB on disk, if every shard holds one: not checked), so about 150 GB in a 6-pass trial; each epoch's scoring decompresses every shard holding a selection row, a number set by how donors (the split's groups) fall across shards: not checked | `[CODE]` `joint_batches.py` `ShardStream._load`, `latent_bank.py` `iter_batches`, `run_joint_arms.py` `grouped_split(sim["donor"])`; `[calc]` |
+| An option not yet measured | `--buffer-shards 0` (the runner's default; the searches stream) loads the whole bank into memory once (at least 34 GB at float32, more while it loads; a GPU job may book 120 GB), so neither the passes nor the per-epoch scoring read the shards again; one GPU probe in that mode would show how much of the 56-62 % spent scoring a GPU trial it removes | `[CODE]` `run_joint_arms.py` (`streaming = buffer_shards >= 1`); the gain `[inference]` |
 
 Read-only, run on a login node; it takes the bank's path from the gate's own command file:
 
