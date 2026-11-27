@@ -14,6 +14,7 @@ import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 EXTRACTOR_ENV = ("SBIX_DIR", "SBIX_CLONE")     # the Sbi-extractor's checkout, first one set
+HPC_ENV = "SBI_HPC_DIR"     # set to REPO/hpc by use("extractor") when it is unset
 
 # group -> (root, the folders put on sys.path, the files whose sha256 is recorded);
 # paths relative to the root: REPO for the first three, the extractor's checkout for the last
@@ -90,4 +91,8 @@ def use(*names):
     # already on sys.path stays where it is
     new = [f for f in folders if f not in sys.path]
     sys.path[0:0] = new
+    if "extractor" in names and not os.environ.get(HPC_ENV):
+        # the extractor's modules find this repository's hpc tree (its dsn/ folder)
+        # through this variable (its dsn_tree.py); unset, it is this repository's
+        os.environ[HPC_ENV] = os.path.join(REPO, "hpc")
     return files

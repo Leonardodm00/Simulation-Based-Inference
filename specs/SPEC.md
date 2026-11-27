@@ -1023,6 +1023,10 @@ through one module, `sbitool/_sources.py`, which puts their folders on
   (`extractor/channel_subset_extraction.py`) and the windows of a trace
   (`export_windows/bank_real.py`: `windows_of`). Only blocks 43 and 44
   need it; a bundle is exported, checked and used on windows without it.
+  [2026-11-27, at block 40's gate] The extractor's modules find this
+  repository's `hpc/` tree through the environment variable
+  `SBI_HPC_DIR`; `_sources.use("extractor")` sets it to this repository's
+  `hpc/` when it is unset.
 So that one function stays in one place: the density a bundle returns is
 the pipeline's, by construction and by test (T41).
 
@@ -7504,7 +7508,18 @@ plan; Confirmed: yes 2026-11-17]
   - T40d `python3 -m sbitool` without a command exits 2 and lists the
     commands; the package's own modules import nothing outside the
     standard library, numpy and the libraries their block names (static).
-- Status: drafted 2026-11-27.
+- Status: smoke-tested 2026-11-27 (4 of 4 checks, `test_smoke_tool_schema.py`;
+  six mutations each caught, one of them as a hang: T40a a table of 54
+  single faults and a fuzz of more than 5,000 odd values, none raising).
+- Build notes (2026-11-27, plumbing): the card's `training.members` is the
+  integer M; the members' seeds are strictly ascending; `provenance`'s
+  `project`, `ensemble`, `search`, `campaign`, `commit` are non-empty
+  strings; a digest is 64 lower-case hex characters; `created` parses as
+  an ISO time; the ranges of `architecture` are the runner's own; not
+  checked in the manifest: `n_post` a multiple of M (block 45 refuses it),
+  the order size_lo <= size_mean <= size_hi; `python3 -m sbitool -h` lists
+  the commands and exits 0; `use("extractor")` sets `SBI_HPC_DIR` when
+  unset (the orchestrator's, at the gate, after the block's report).
 - Confirmed: 2026-11-27 by D-176 (the plan and the key lists as written).
 
 ### Block 41: the model bundle -- export, check, rebuild (added 2026-11-27; D-174, D-175; roadmap tool, step S3)
@@ -7570,8 +7585,11 @@ plan; Confirmed: yes 2026-11-17]
     ensemble, no sample, a sample of other values, an invalid
     `--extraction`; the same export twice gives members with the same
     digests;
-  - T41e a complete card (the test fills the template) gives
-    `card_complete` true; the template alone gives a draft.
+  - T41e a complete card (written by the test from `CARD_KEYS`, in
+    agreement with the manifest) gives `card_complete` true; a card with
+    one `TODO` gives a draft; without `--card` the bundle carries block
+    42's template and is a draft (SKIP, naming block 42, while
+    `card.template` is a stub: blocks 41 and 42 are written in parallel).
   Mutations, each of which must fail a check: the members written in
   another order; a state tensor dropped; the digest not verified at
   reading; the gate's sets taken from the wrong roles.
@@ -7582,7 +7600,9 @@ plan; Confirmed: yes 2026-11-17]
 
 - Modules: `sbitool/card.py`, `sbitool/tests/test_smoke_tool_card.py`
   (new; PyYAML `safe_load` and `safe_dump`).
-- Public API: `card.template(manifest, records, project) -> str` (a
+- Public API: `card.template(manifest, records, project=None) -> str`
+  [`records`: the members' record dicts in member order; `project`: the
+  project's tag or None] (a
   `CARD.md` with the header pre-filled and `TODO` elsewhere, and a body of
   headed sections that say what to write); `card.parse(text) -> (header,
   body)`; `card.check(text, manifest) -> [str]` (through
@@ -7669,7 +7689,20 @@ plan; Confirmed: yes 2026-11-17]
     round trip with `ptrain`'s positions.
   T43b and T43c are SKIP, naming the library, where spikeinterface is not
   installed.
-- Status: drafted 2026-11-27.
+- Status: smoke-tested 2026-11-27 (4 of 4 checks,
+  `test_smoke_tool_recordings.py`; three mutations each caught). Measured
+  in T43c: 48 spikes planted on 4 channels of noise SD 5 to 40, 48 found
+  at offset 0, none spurious, at thresholds 5 and 10; none found at 20.
+- Build notes (2026-11-27, plumbing): `detect_threshold` multiplies the
+  channel's MAD-based noise level (read in spikeinterface 0.106.0's
+  source); the noise is estimated on random chunks with a fixed seed (0),
+  so that one recording gives one set of spikes; no filter is applied
+  before the detection; a peak's sample index is the detector's (the
+  trough); `ptrain.read` without a pitch gives `grid` None; the
+  `spikeinterface` adapter gives positions and no grid (block 44 derives
+  it); a unit's electrode is its `channel` property or its id; probes in
+  um or mm, 2-D, one segment; `as_grid`'s width is the larger extent in
+  cells, so it equals the device's width only when the electrodes span it.
 - Confirmed: 2026-11-27 by D-176 (the detection: Q-T1).
 
 ### Block 44: from a recording to windows (added 2026-11-27; D-158 (1); roadmap tool, step S4)
@@ -7680,7 +7713,9 @@ plan; Confirmed: yes 2026-11-17]
 - Public API: `windows.subregions(recording, extraction) -> [Subregion]`
   (the extractor's objects: the electrodes of each, its centre);
   `windows.traces(recording, subregions, extraction) -> (x, fs_ifr_hz)`,
-  x (n_subregions, K) float64 [Hz per electrode]; `windows.cut(x, W) ->
+  x (n_subregions, K) [Hz per electrode], float32 as the extractor's
+  `subregion_ifrs` returns it [2026-11-27, wave B's contract; the first
+  draft said float64]; `windows.cut(x, W) ->
   (windows, ids)`: windows (n, W) float32, ids a dict of (n,) arrays
   `subregion`, `window_idx`, `t_start_s`; `windows.extract(recording,
   extraction, W) -> (windows, ids, subregions)`; `python3 -m sbitool
@@ -7692,6 +7727,21 @@ plan; Confirmed: yes 2026-11-17]
   `fs_raw_hz` and grid must equal the extraction's or the tool refuses,
   naming both values (a bundle is not applied to a device it was not
   trained for without the user saying so, Q-T2).
+  [2026-11-27, wave B's contract, after block 43's report] The grid of a
+  recording: its `grid` when it has one (`grid_width`, `index_base` and
+  `pitch_um` each equal to the extraction's; a null pitch on either side
+  is not compared); for a recording with positions and no grid (the
+  `spikeinterface` adapter's), `layout.as_grid(positions_um)` gives the
+  linear index of each electrode on the smallest square grid that holds
+  them, its pitch must equal the extraction's `pitch_um` within 1 um, and
+  the grid's width is then the recording's own, not compared (the
+  partition uses rows and columns, which do not depend on it); a
+  recording with neither is refused. The rows and columns go to
+  `partition_subregions` with the electrodes' mean firing rates
+  (`mean_firing_rates`) and the extraction's `n_subsets`,
+  `electrodes_per_subset`, `mfr_threshold_hz`; the traces are
+  `subregion_ifrs` with `w_size_s` and `gaussian_window_s`; the windows'
+  starts are `windows_of(K, W)`.
 - Libraries: the extractor (`partition_subregions`, `subregion_ifrs`),
   `compute_ifr_trace`, `windows_of`. Custom code: none.
 - Test oracles (`test_smoke_tool_windows.py`, T44*):
@@ -7699,7 +7749,8 @@ plan; Confirmed: yes 2026-11-17]
     a few spikes at chosen times, the trace equals an independent
     computation by the test (the counts per bin by `numpy.histogram`
     divided by n_e Delta t, smoothed as eq. (3) of EXTRACTOR_USAGE.md
-    states) within 1e-12;
+    states) within 1e-5 relative to the trace's largest value (the
+    extractor returns float32) [2026-11-27; the first draft said 1e-12];
   - T44b the partition: on a 6 x 6 grid with chosen rates, the subregions
     are disjoint, each of n_e electrodes above the threshold, and equal
     the extractor's command-line result on the same folder (its own
