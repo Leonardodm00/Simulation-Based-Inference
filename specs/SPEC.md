@@ -7991,9 +7991,13 @@ plan; Confirmed: yes 2026-11-17]
     `ARM_COLOR["A1"]`, `ARM_COLOR["A2"]`, `ARM_COLOR["A5"]`, `OTHER_ARM`,
     `COND_COLOR[0]`, `COND_COLOR[2]` (read from `ev_figures`, not
     copied); an electrode with no spike has no face colour (hollow), its
-    edge in its colour; the index j written at subregion j's centre
-    electrode (a text with gid `subregion-<j>`), so that a subregion is
-    not told by its colour alone; `highlight` = j draws a ring in `INK`
+    edge in its colour; the index j written beside subregion j's centre
+    electrode, so that a subregion is not told by its colour alone
+    [amendment 1 of wave C, 2026-11-28: an annotation with gid
+    `subregion-<j>` whose `xy` is the centre's position and whose text is
+    offset by (6, 6) points, with no halo over the marker: written on the
+    marker with a white halo, as first specified and built, the label hid
+    the marker's face and a centre read as an electrode without a spike]; `highlight` = j draws a ring in `INK`
     around each electrode of subregion j (a second scatter, gid
     `highlight`). `subregions` are block 44's objects (`members`,
     `center`: electrode ids).
@@ -8003,9 +8007,13 @@ plan; Confirmed: yes 2026-11-17]
     per member electrode in the subregion's member order (gid
     `raster-<electrode id>`), holding the electrode's spike times
     index / fs_raw_hz that fall in the span. Lower axes, sharing the time
-    axis: one line (gid `ifr`), `drawstyle="steps-post"`, x data
-    t0 + k / fs_ifr_hz for k = 0..W-1 (each value drawn from the start of
-    its bin of width 1 / fs_ifr_hz), y data `x` unchanged. Labels: "time
+    axis: [amendment 1 of wave C, 2026-11-28] one `Axes.stairs` (a
+    `StepPatch`, gid `ifr`) with values `x` unchanged and W + 1 edges
+    t0 + k / fs_ifr_hz for k = 0..W, so that each of the W values is
+    drawn over its whole bin [t0 + k / fs_ifr_hz, t0 + (k + 1) /
+    fs_ifr_hz) (read back with `get_data()`); as first specified, a line
+    with `drawstyle="steps-post"` on W points, the last bin had no
+    width and showed as a vertical stroke only. Labels: "time
     [s]", "electrode", "IFR [Hz per electrode]".
   - The command reads the bundle and the recording through
     `windows.from_file` and writes `<out>/device.png` and, when
@@ -8014,6 +8022,15 @@ plan; Confirmed: yes 2026-11-17]
     45's list, with `device.FigureError`, a subregion or window that does
     not exist included), exit 2 for the arguments. `ev_figures.style()`
     is applied by the command, not at import.
+  - Accepted at the gate (2026-11-28, plumbing): the y axis increases
+    upward, in plain data coordinates (row 0 at the bottom on a grid);
+    in the raster the first member, the centre, is the top row and the
+    ticks carry the electrode ids; with `--subregion j --window i` the
+    command's `device.png` rings subregion j; an electrode in two
+    subregions is a `FigureError`; the figures are made without pyplot;
+    `device.SUBREGION_COLORS` is read lazily (the function
+    `subregion_colors()`), so that importing the module does not import
+    `ev_figures`; a refusal's message is folded onto one line.
   - T46c's static check reads `device.py`'s source: no import of scipy,
     sklearn, statistics or pandas, and no call named mean, std, var,
     median, quantile, percentile, average, histogram or bincount.
