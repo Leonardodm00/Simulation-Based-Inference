@@ -31,6 +31,7 @@ DPI = 150
 
 # drawing sizes (points^2 for the markers, points for the lines); style only
 _S_ELECTRODE, _S_RING, _LW_EDGE, _LW_RING = 60.0, 160.0, 1.0, 1.2
+_LABEL_OFFSET_PT = (6, 6)      # the subregion's index, beside its centre (amendment 1 of wave C)
 
 
 class FigureError(ValueError):
@@ -121,15 +122,16 @@ def fig_device(recording, subregions=None, highlight=None):
     with one marker per electrode in sorted id order at positions(); an
     electrode outside every subregion in ev_figures.SIM_GRAY, subregion j's
     in subregion_colors()[j % N_COLORS]; an electrode without a spike
-    hollow (no face colour); the index j as a text (gid GID_SUBREGION % j)
-    at subregion j's centre electrode; highlight = j: a second scatter (gid
+    hollow (no face colour); the index j as an annotation (gid
+    GID_SUBREGION % j) whose xy is subregion j's centre electrode and whose
+    text is offset by (6, 6) points, with no halo over the marker
+    (amendment 1 of wave C); highlight = j: a second scatter (gid
     GID_HIGHLIGHT), rings in ev_figures.INK around subregion j's
     electrodes. Axes labelled "x [um]", "y [um]", or "column", "row"
     without a pitch. Returns the Figure. FigureError for a highlight that
     is no subregion's index or a subregion naming an unknown electrode."""
     from matplotlib.colors import to_rgba
     from matplotlib.figure import Figure
-    import matplotlib.patheffects as pe
     ev = _evf()
     subregions = list(subregions) if subregions is not None else []
     if highlight is not None and not (_is_index(highlight)
@@ -157,9 +159,9 @@ def fig_device(recording, subregions=None, highlight=None):
                linewidths=_LW_EDGE, gid=GID_ELECTRODES, zorder=2)
     for j, s in enumerate(subregions):
         cx, cy = pos[int(s.center)]
-        ax.text(cx, cy, str(j), gid=GID_SUBREGION % j, ha="center", va="center", color=ev.INK,
-                fontsize=7, fontweight="bold", zorder=4,
-                path_effects=[pe.withStroke(linewidth=2.0, foreground="white")])
+        ax.annotate(str(j), xy=(cx, cy), xytext=_LABEL_OFFSET_PT, textcoords="offset points",
+                    gid=GID_SUBREGION % j, ha="left", va="bottom", color=ev.INK, fontsize=7,
+                    fontweight="bold", zorder=4)
     if highlight is not None:
         hx = np.array([pos[int(m)] for m in subregions[int(highlight)].members],
                       dtype=np.float64).reshape(-1, 2)
@@ -181,9 +183,9 @@ def fig_window(recording, subregion, x, window_idx, W, fs_ifr_hz):
     fs_ifr_hz [s]. Above: one eventplot row per member electrode, in the
     subregion's member order (gid GID_RASTER % electrode id), with the
     electrode's spike times index / fs_raw_hz [s] inside the span. Below:
-    one line (gid GID_IFR, drawstyle "steps-post"), x data t0 + k /
-    fs_ifr_hz for k = 0..W-1, y data `x` ((W,), [Hz per electrode])
-    unchanged. Labels "time [s]", "electrode", "IFR [Hz per electrode]".
+    one Axes.stairs (a StepPatch, gid GID_IFR; amendment 1 of wave C) with
+    values `x` ((W,), [Hz per electrode]) unchanged and the W + 1 edges
+    t0 + k / fs_ifr_hz, k = 0..W, each value over its whole bin. Labels "time [s]", "electrode", "IFR [Hz per electrode]".
     Returns the Figure. FigureError for x of another length than W."""
     from matplotlib.figure import Figure
     ev = _evf()
@@ -222,8 +224,10 @@ def fig_window(recording, subregion, x, window_idx, W, fs_ifr_hz):
     ax_r.set_ylabel("electrode")
     ax_r.set_title("%s: subregion of centre %d, window %d"
                    % (recording.name, int(subregion.center), int(window_idx)))
-    tk = t0 + np.arange(W) / fs_ifr_hz
-    ax_x.plot(tk, x, drawstyle="steps-post", color=ev.INK, lw=1.0, gid=GID_IFR)
+    edges = t0 + np.arange(W + 1) / fs_ifr_hz
+    # baseline None: an open path, no vertical strokes down to 0 at t0 and t1 (which
+    # would read as the rate falling to 0 at the window's ends)
+    ax_x.stairs(x, edges, baseline=None, color=ev.INK, lw=1.0, gid=GID_IFR)
     ax_x.set_xlim(t0, t1)
     ax_x.set_xlabel("time [s]")
     ax_x.set_ylabel("IFR [Hz per electrode]")

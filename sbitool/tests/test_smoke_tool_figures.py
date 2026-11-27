@@ -7,7 +7,7 @@ unittest.SkipTest("<reason>"), so the summary shows why.
 
 Checks
     test_t46a_device         one marker per electrode at its position, the subregions' colours
-    test_t46b_window         the raster holds the span's spikes; the lower panel's data are x
+    test_t46b_window         the raster holds the span's spikes; the stairs' data are x and the edges
     test_t46c_command        PNG files with the PNG signature; no statistic in the module
 
 Run
@@ -185,10 +185,19 @@ def _check_device(fig, rec, subs, highlight, unit_um=True, pitch=PITCH):
             assert np.array_equal(face[i], col), "electrode %d: face %s, expected %s" % (
                 e, face[i], col)
     for j, s in enumerate(subs):
+        # amendment 1 of wave C: an annotation whose xy is the centre electrode, its text
+        # offset by (6, 6) points, with no halo over the marker
+        from matplotlib.text import Annotation
         t = _by_gid(ax.texts, "subregion-%d" % j)
+        assert isinstance(t, Annotation), "subregion %d's index is a %s, not an annotation" % (
+            j, type(t).__name__)
         assert t.get_text() == str(j), (j, t.get_text())
-        assert tuple(map(float, t.get_position())) == _expected_xy(int(s.center), pitch), \
-            "subregion %d's index is not at its centre electrode %d" % (j, s.center)
+        assert tuple(map(float, t.xy)) == _expected_xy(int(s.center), pitch), \
+            "subregion %d's index does not point at its centre electrode %d" % (j, s.center)
+        assert t.anncoords == "offset points" and tuple(map(float, t.xyann)) == (6.0, 6.0), \
+            "subregion %d's index offset %r %r, expected (6, 6) points" % (j, t.anncoords,
+                                                                           t.xyann)
+        assert not t.get_path_effects(), "subregion %d's index has a halo" % j
     assert len([t for t in ax.texts if str(t.get_gid()).startswith("subregion-")]) == len(subs)
     rings = [c for c in ax.collections if c.get_gid() == "highlight"]
     if highlight is None:
@@ -286,13 +295,18 @@ def _check_window(fig, rec, sub, x, i, Wn, fs_ifr):
         assert np.array_equal(got, want), "electrode %d: drawn %s, in the span %s" % (
             m, got.tolist(), want.tolist())
         n_drawn += got.size
-    line = _by_gid(ax_x.lines, "ifr")
-    assert line.get_drawstyle() == "steps-post", line.get_drawstyle()
-    tk = t0 + np.arange(Wn) / fs_ifr
-    assert np.array_equal(np.asarray(line.get_xdata(), dtype=np.float64), tk), \
-        "the IFR's x data are not the bins' starts"
-    assert np.array_equal(np.asarray(line.get_ydata()), np.asarray(x)), \
-        "the IFR's y data are not the window's x"
+    # amendment 1 of wave C: one StepPatch (Axes.stairs), values x, the W + 1 bin edges
+    from matplotlib.patches import StepPatch
+    st = _by_gid(ax_x.patches, "ifr")
+    assert isinstance(st, StepPatch), "the IFR is a %s, not a StepPatch" % type(st).__name__
+    assert not [a for a in ax_x.lines if a.get_gid() == "ifr"], "an IFR line is drawn too"
+    data = st.get_data()
+    edges = t0 + np.arange(Wn + 1) / fs_ifr
+    assert np.array_equal(np.asarray(data.edges, dtype=np.float64), edges), \
+        "the IFR's edges are not t0 + k / fs_ifr, k = 0..W"
+    assert np.array_equal(np.asarray(data.values), np.asarray(x)), \
+        "the IFR's values are not the window's x"
+    assert data.baseline is None, "the stairs are closed down to %r" % (data.baseline,)
     assert ax_x.get_xlabel() == "time [s]" and ax_r.get_ylabel() == "electrode" and \
         ax_x.get_ylabel() == "IFR [Hz per electrode]", (ax_x.get_xlabel(), ax_r.get_ylabel(),
                                                          ax_x.get_ylabel())
@@ -302,7 +316,8 @@ def _check_window(fig, rec, sub, x, i, Wn, fs_ifr):
 
 def test_t46b_window():
     """T46b: the raster holds exactly the spikes of the subregion's electrodes inside the
-    window's span; the lower panel's y data are the window's x and its x data the bins' starts."""
+    window's span; the lower panel's stairs have the window's x as values and the W + 1 bins'
+    edges as edges (amendment 1 of wave C)."""
     _need_extractor()
     dev = _device()
     from sbitool import windows
