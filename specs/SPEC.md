@@ -1161,8 +1161,10 @@ recording must be cut exactly as the training banks were (D-180):
 K = int(T_rec / Delta t) in float64, which is floor(T_rec / Delta t)
 except where the quotient falls just below an integer (2900 samples at
 10 kHz with Delta t = 0.01 s: K = 28, not 29; the tester's F3), and the
-bins' edges are k Delta t in float64, so that a spike exactly on an edge
-can be counted in the bin before it (the tester's F4: about 0.13 % of
+bins' edges are k Delta t in float64 (and `numpy.histogram` closes its
+last bin, so that a spike exactly at K Delta t is counted in bin K - 1
+rather than dropped; the second tester's S2), so that a spike exactly on
+an edge can be counted in the bin before it (the tester's F4: about 0.13 % of
 the spikes of a recording sampled at a multiple of 1 / Delta t). The
 trace x_S in R_{>=0}^K is cut
 into floor(K / W) consecutive windows of W bins from its start
@@ -1191,7 +1193,7 @@ route to the same numbers, not another estimator.
 | n_train, n_d | training rows; distinct donors in the bank | int | rows; donors |
 | B_sim, P, N_ep, S | batch size, passes, epochs, steps per epoch | int, float, int, int | rows; passes; epochs; steps |
 | (f_tr, f_sel, f_rep) | split fractions by donor | floats summing to 1 | -- |
-| theta, x | a parameter vector in the unit box; a window | (p,), (W,) float32 | -- ; Hz (IFR) [corrected 2026-11-12: in the bench banks of the synthetic data set, x is the Gaussian-smoothed population spike count per bin of w_size = 1/f_s s divided by the units (sidecar `scale_convention` per_unit_mean; `bench_burst_provider.py`), so spikes per unit per bin and x f_s in spikes/s per unit; the extractor's banks not checked here] |
+| theta, x | a parameter vector in the unit box; a window | (p,), (W,) float32 | -- ; Hz (IFR) [corrected 2026-11-12: in the bench banks of the synthetic data set, x is the Gaussian-smoothed population spike count per bin of w_size = 1/f_s s divided by the units (sidecar `scale_convention` per_unit_mean; `bench_burst_provider.py`), so spikes per unit per bin and x f_s in spikes/s per unit; the extractor's banks not checked here] [checked 2026-11-28, D-180: the extractor's windows are the same quantity, the smoothed spike count per bin of w_size divided by the subregion's n_e electrodes (`subregion_ifr`), so spikes per bin per electrode there too; "Hz (IFR)" at the head of this cell is superseded by both corrections] |
 | q_omega(theta \| h_psi(x)) | the flow's density at theta given the encoder's summary of x | density on (0, 1)^p | -- |
 | l_{m,i}, L_bar | member m's NLL on report row i; the ensemble's mean NLL | float64 | nats per row |
 | L_sel(e), e_best | selection-split NLL after epoch e; the best epoch | float; int | nats per row; epochs |
@@ -7663,11 +7665,18 @@ plan; Confirmed: yes 2026-11-17]
   - The export refuses (exit 3, nothing written) an `--extraction` whose
     `w_size_s` is not the simulated bank's sidecar `w_size` (compared
     with math.isclose, rel_tol 1e-12): the bin width the networks were
-    trained on. Where the sidecar holds `gaussian_window` or
-    `electrodes_per_subset`, the same for `gaussian_window_s` and
-    `electrodes_per_subset`. The other extraction values are the
-    author's declaration and are checked against nothing.
-  - Tests: T41c gains the three edits of the tester's F2 (the gate's
+    trained on. [Corrected 2026-11-28, D-182, after the second tester's
+    F1] Where the sidecar's `latent_spec` holds `n_e` (the banks the
+    Sbi-extractor's `export_windows` writes), the same for
+    `electrodes_per_subset`. `gaussian_window_s` is compared with
+    nothing: no bank's sidecar holds the smoothing width. It and the
+    other extraction values are the author's declaration. [As first
+    written, 2026-11-28: "where the sidecar holds `gaussian_window` or
+    `electrodes_per_subset`", top-level keys that no bank writer
+    writes, so that the two comparisons could never run.]
+  - Tests: [D-182] T41d compares `electrodes_per_subset` on a sidecar
+    with `latent_spec.n_e`, and shows that a `gaussian_window_s` of
+    another value is accepted. T41c gains the three edits of the tester's F2 (the gate's
     alpha, a parameter's name, `card_complete` on a draft), each exit 3
     naming what disagrees, and the sha256 on the pass line; T41d gains
     the `--extraction` of another `w_size_s`.
@@ -8075,8 +8084,9 @@ plan; Confirmed: yes 2026-11-17]
   one colour with its index, one subregion emphasised);
   `device.fig_window(recording, subregion, x, window_idx, W, fs_ifr_hz)
   -> Figure` (above, the spike raster of the subregion's n_e electrodes
-  over the window's time span; below, the window's IFR x [Hz per
-  electrode] against time [s]); `python3 -m sbitool device-figure
+  over the window's time span; below, the window's x [spikes per bin
+  per electrode; D-180, the entry first said Hz per electrode] against
+  time [s]); `python3 -m sbitool device-figure
   --bundle FILE --recording PATH --adapter NAME [options] --out DIR
   [--subregion j --window i]`: pass line `DEVICE FIGURES OK: <n> file(s)`.
 - Rule: the figures draw what blocks 43 and 44 return and compute
@@ -8115,8 +8125,8 @@ plan; Confirmed: yes 2026-11-17]
     around each electrode of subregion j (a second scatter, gid
     `highlight`). `subregions` are block 44's objects (`members`,
     `center`: electrode ids).
-  - `fig_window`: `x` is the subregion's window, (W,) [Hz per
-    electrode]; the window's span is [t0, t0 + W / fs_ifr_hz) with
+  - `fig_window`: `x` is the subregion's window, (W,) [spikes per bin
+    per electrode; D-180]; the window's span is [t0, t0 + W / fs_ifr_hz) with
     t0 = window_idx W / fs_ifr_hz [s]. Upper axes: one `eventplot` row
     per member electrode in the subregion's member order (gid
     `raster-<electrode id>`), holding the electrode's spike times

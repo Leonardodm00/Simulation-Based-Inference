@@ -12,8 +12,8 @@ simulated bank's index (the one place a checkpoint, a .pt, is read); block
 35's <stem>_sample.json and <stem>_sim.npz (the gate's sets: the rows of `z`
 at the roles 1, 2, 3 of `gate_role`, in row order); block 36's
 <stem>_sim.json and METRICS.json. An --extraction whose w_size_s (and, where
-the bank's sidecar holds them, gaussian_window_s, electrodes_per_subset) is
-not the simulated bank's is refused. Every refusal (exit 3) comes before
+the bank's sidecar holds latent_spec.n_e, electrodes_per_subset) is not the
+simulated bank's is refused. Every refusal (exit 3) comes before
 anything is written; the bundle is written to a temporary name, re-read,
 checked and every member rebuilt from it (model.load), then renamed.
 
@@ -202,35 +202,45 @@ def _metrics_left_out(P, ecfg, e, sample_json):
 # the extraction's values compared with the simulated bank's sidecar (block 41,
 # fix round of 2026-11-28, D-180 (4)): --extraction key -> the sidecar's key;
 # w_size always, the other two where the sidecar holds them
-_EXTRACTION_VS_SIDECAR = (("w_size_s", "w_size", True),
-                          ("gaussian_window_s", "gaussian_window", False),
-                          ("electrodes_per_subset", "electrodes_per_subset", False))
+# (D-182: the sidecar's key as a path; electrodes_per_subset against latent_spec.n_e,
+# which the Sbi-extractor's banks hold; gaussian_window_s against nothing: no bank's
+# sidecar holds the smoothing width)
+_EXTRACTION_VS_SIDECAR = (("w_size_s", ("w_size",), True),
+                          ("electrodes_per_subset", ("latent_spec", "n_e"), False))
 _EXTRACTION_REL_TOL = 1e-12
 
 
 def _extraction_vs_bank(ext, sidecar, where):
     """ExportRefused when --extraction's w_size_s is not the simulated bank's
     sidecar w_size (math.isclose, rel_tol 1e-12; the bin width the networks
-    were trained on), or, where the sidecar holds gaussian_window or
-    electrodes_per_subset, when gaussian_window_s or electrodes_per_subset
-    is not it. The other extraction values are the author's declaration."""
+    were trained on), or, where the sidecar's latent_spec holds n_e, when
+    electrodes_per_subset is not it (D-182). gaussian_window_s and the other
+    extraction values are the author's declaration: no sidecar holds them."""
     import math
     side = sidecar or {}
     bad = []
-    for ek, sk, required in _EXTRACTION_VS_SIDECAR:
-        if sk not in side:
+    for ek, path, required in _EXTRACTION_VS_SIDECAR:
+        node, found = side, True
+        for key in path:
+            if isinstance(node, dict) and key in node:
+                node = node[key]
+            else:
+                found = False
+                break
+        sk = ".".join(path)
+        if not found:
             if required:
                 bad.append("the simulated bank's sidecar has no %s to compare %s with"
                            % (sk, ek))
             continue
         try:
-            same = math.isclose(float(ext[ek]), float(side[sk]), rel_tol=_EXTRACTION_REL_TOL,
+            same = math.isclose(float(ext[ek]), float(node), rel_tol=_EXTRACTION_REL_TOL,
                                 abs_tol=0.0)
         except (TypeError, ValueError):
             same = False
         if not same:
             bad.append("%s is %r but the simulated bank's sidecar %s is %r (the value the "
-                       "networks were trained on)" % (ek, ext[ek], sk, side[sk]))
+                       "networks were trained on)" % (ek, ext[ek], sk, node))
     if bad:
         raise ExportRefused("--extraction %s does not match the simulated bank: %s"
                             % (where, "; ".join(bad)))

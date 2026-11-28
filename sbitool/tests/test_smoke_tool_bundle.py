@@ -767,20 +767,30 @@ def test_t41d_refusals():
     from sbitool import bundle
     assert bundle.read(okb).manifest["extraction"] == ext_ok
     os.remove(okb)
-    # where a sidecar holds gaussian_window and electrodes_per_subset they are compared too
-    # (the fixture's sidecar holds neither: the comparison itself, on a sidecar written here)
-    side = {"w_size": w_size, "gaussian_window": 2.0 * w_size, "electrodes_per_subset": 9}
+    # [D-182] where the sidecar's latent_spec holds n_e (the Sbi-extractor's banks; the
+    # fixture's does not), electrodes_per_subset is compared with it: the comparison itself,
+    # on a sidecar written here as export_windows/bank_export.py's contract_kwargs lays it out
+    side = {"w_size": w_size, "latent_spec": {"kind": "campaign", "n_e": 9}}
     export._extraction_vs_bank(ext_ok, side, "x.json")
     export._extraction_vs_bank(dict(ext_ok, w_size_s=w_size * (1.0 + 1e-14)), side, "x.json")
-    for key, skey, val in (("gaussian_window_s", "gaussian_window", 3.0 * w_size),
-                           ("electrodes_per_subset", "electrodes_per_subset", 4),
+    for key, skey, val in (("electrodes_per_subset", "latent_spec.n_e", 4),
                            ("w_size_s", "w_size", 2.0 * w_size)):
         try:
             export._extraction_vs_bank(dict(ext_ok, **{key: val}), side, "x.json")
-            raise AssertionError("%s = %r against the sidecar's %r was taken"
-                                 % (key, val, side[skey]))
+            raise AssertionError("%s = %r against the sidecar's %s was taken" % (key, val, skey))
         except export.ExportRefused as exc:
             assert "%s is %r" % (key, val) in str(exc) and skey in str(exc), str(exc)
+    # the smoothing width is in no sidecar: another value is the author's declaration, taken
+    export._extraction_vs_bank(dict(ext_ok, gaussian_window_s=30.0 * w_size), side, "x.json")
+    # top-level keys of those names are not the bank's contract and are not read
+    export._extraction_vs_bank(dict(ext_ok, electrodes_per_subset=4),
+                               {"w_size": w_size, "electrodes_per_subset": 9}, "x.json")
+    # a sidecar without w_size is refused
+    try:
+        export._extraction_vs_bank(ext_ok, {"latent_spec": {"n_e": 9}}, "x.json")
+        raise AssertionError("a sidecar without w_size was taken")
+    except export.ExportRefused as exc:
+        assert "no w_size" in str(exc), str(exc)
     # the same export twice: the members' digests are the same
     a, b = os.path.join(outd, "a.sbibundle"), os.path.join(outd, "b.sbibundle")
     for path in (a, b):
