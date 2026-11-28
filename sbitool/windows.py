@@ -145,19 +145,53 @@ def _base_of(recording):
 
 # ------------------------------------------------------------ the steps
 
-def subregions(recording, extraction):
+def _excluded_ids(recording, exclude):
+    """The set of electrode ids in `exclude` (an iterable of ids);
+    WindowsError for an id that is not an integer or that the recording
+    does not hold."""
+    if exclude is None:
+        return set()
+    if isinstance(exclude, (str, bytes)) or not hasattr(exclude, "__iter__"):
+        raise WindowsError("exclude must be an iterable of electrode ids, got %r" % (exclude,))
+    known = set(int(e) for e in recording.spikes)
+    out, bad = set(), []
+    for e in exclude:
+        if isinstance(e, (bool, np.bool_)) or not isinstance(e, (int, np.integer)):
+            bad.append(e)
+        elif int(e) not in known:
+            bad.append(int(e))
+        else:
+            out.add(int(e))
+    if bad:
+        raise WindowsError("the recording %r has no electrode(s) %s to exclude"
+                           % (recording.name, bad[:10]))
+    return out
+
+
+def subregions(recording, extraction, exclude=()):
     """The extractor's Subregion objects for this recording
     (partition_subregions on grid_of's rows and columns and the
     electrodes' mean firing rates), keyed by the electrodes' linear index
     on the grid (its tie-break) and returned with the recording's electrode
-    ids as members and centre (amendment 1 of wave B)."""
+    ids as members and centre (amendment 1 of wave B).
+
+    exclude: an iterable of electrode ids (block 49; D-189). An excluded
+    electrode is treated as the extractor treats one whose mean firing rate
+    is under the threshold: it is left out of the set of valid electrodes
+    the partition draws from (its rate is not passed to
+    partition_subregions), so that it is the centre of no subregion and a
+    member of none; the partition is otherwise the extractor's.
+    WindowsError for an id the recording does not hold."""
     import dataclasses
     coords_id, key = _placement(recording, extraction)
+    left_out = _excluded_ids(recording, exclude)
     cse = _cse()
     id_of = {k: e for e, k in key.items()}
     coords = {key[e]: rc for e, rc in coords_id.items()}
     inv = _inventory(recording, _base_of(recording), key)
     mfrs = cse.mean_firing_rates(inv, inv.T_rec)
+    for e in left_out:
+        del mfrs[key[e]]
     try:
         subs, _discarded = cse.partition_subregions(
             coords, mfrs, n_subsets=int(extraction["n_subsets"]),
