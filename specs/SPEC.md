@@ -1048,7 +1048,10 @@ the rest is JSON and Markdown; reading a bundle never calls `torch.load`,
 `pickle` or `numpy.load`.
 
 `manifest.json` has exactly the keys `MANIFEST_KEYS` (block 40):
-- `schema`: "sbitool_bundle/1"; `name`; `created` (ISO time);
+- `schema`: "sbitool_bundle/2" [corrected 2026-11-28, block 48: "sbitool_bundle/1" until then; a
+  file of the first format is refused, naming both]; `training` (null, or `{"members": M,
+  "search": bool}`: the files `training/member_<k>.json` and `training/search.json` of block 48,
+  digested in `files`); `name`; `created` (ISO time);
   `card_complete` (bool: false for a draft, see the card);
 - `arm`, `M`, `p` (the number of parameters), `d_z` (the embedding's
   dimension), `W` (the window's length in samples of the IFR);
@@ -1233,7 +1236,7 @@ route to the same numbers, not another estimator.
 | p(x), p_m(x), alpha_gate | the gate's p-value of window x and member m's own (R8); the gate's threshold (`gate.alpha`) | float in (0, 1]; float in (0, 1) | -- |
 | k_gate, q_gate | [2026-11-23, D-165] the rank among the null values that a flagged window's T must exceed (R9); the gate's size given its sets, random through the null set (R10) | int >= 1; float in (0, 1) | -- |
 
-### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184, D-186..D-191; added 2026-11-28)
+### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184, D-186..D-192; added 2026-11-28)
 
 A design section, no code: what the viewer (S6) shows and lets a user change, in which layer. It binds
 S6's SPEC entries. Status: the layers and the four choices below are the user's (D-184); the assignment
@@ -1361,6 +1364,30 @@ step and moves to any other. The summary is a page of its own, to be consulted a
 (recording, span, windows, electrodes excluded, regions), the model and the settings, the pooled
 posterior with the share of flagged windows. A layer of use (D-184) decides how much each section
 shows, not which sections exist. The look of the flowchart is to be worked on later (the user).
+
+**Progress while something runs (D-192).** Whatever does not return at once -- an analysis (the
+windows of a span, the statistics of a long recording), an inference, a query of the model for a
+diagnostic test, and in the author's layer a simulation, a training, an optimisation of the
+hyper-parameters -- reports, while it runs, the point it has reached and the estimated time
+remaining. One record serves every operation: `operation` (str), `stage` (str, with `stage_index` of
+`n_stages`), `done` and `total` (units of the stage: windows, rows, networks, epochs, trials,
+simulations; `total` null when unknown, and `total_is_bound` true when it is only an upper bound, as
+the epochs of a training that may stop early), `elapsed_s`, `remaining_s` (null until enough units
+are done to estimate it; an upper bound when `total_is_bound`), `detail` (a dict of the operation's
+live numbers). Three levels of information, one per layer of use:
+
+| Layer | What is shown while it runs |
+|---|---|
+| guided | one plain sentence naming what is being done; one bar; the time remaining ("about 2 min left"; "at most" when the total is a bound) |
+| standard | also the list of the stages with the current one marked; `done` of `total` in the stage's units; the time elapsed |
+| expert (and author) | also `detail`: for an inference the network and the rows per second and the windows flagged so far; for a training the loss per epoch as a growing curve, the best epoch, the epochs without improvement; for a search the trial, its status and the best value so far; for a simulation the simulations per second; and the last lines of the log |
+
+The summary stays visible in the frame on every page while an operation runs, and the page of the
+running step shows it in full. The estimate comes from an established library, not from a formula of
+ours (candidate: tqdm's smoothed rate, already installed with sbi; inspected and fixed at block 49's
+amendment). Not decided (D-192): whether the viewer starts a simulation, a training or a search
+itself or follows the files the cluster's jobs write -- today the three run on the cluster (D-172),
+so the first operations to report are those of block 49; cancelling a running operation.
 
 **Mockups (2026-11-28).** One recording at the four layers, as four screens on a design canvas the user
 can edit and comment: https://claude.ai/artifact/6a9n1zweCyM4suuAvu3HsU ("SBI tool viewer: the four
@@ -7708,7 +7735,8 @@ plan; Confirmed: yes 2026-11-17]
     `"extractor"`) and returns, per imported file of the group, its path
     and sha256; `SourceError` when a folder is absent (for `"extractor"`:
     naming `SBIX_DIR`);
-  - `sbitool.schema`: `BUNDLE_SCHEMA = "sbitool_bundle/1"`,
+  - `sbitool.schema`: `BUNDLE_SCHEMA = "sbitool_bundle/1"` [corrected 2026-11-28, block 48:
+    "sbitool_bundle/2", with `BUNDLE_SCHEMA_1` the refused first format],
     `MANIFEST_KEYS`, `MEMBER_KEYS`, `ARCHITECTURE_KEYS`, `PARAMETER_KEYS`,
     `EXTRACTION_KEYS`, `DETECTION_KEYS`, `GATE_KEYS`, `CARD_KEYS` and the
     nested card keys;
@@ -8547,7 +8575,26 @@ plan; Confirmed: yes 2026-11-17]
     `Bundle.training()` is None.
   - T48d a manifest of schema "sbitool_bundle/1" is refused naming both schemas; every earlier
     suite of the tool passes with the new format.
-- Status: drafted 2026-11-28.
+- Status: smoke-tested 2026-11-28 (4 of 4 checks, `test_smoke_tool_training.py`, rerun by the
+  orchestrator on the merged tree: T48d reruns the schema, bundle, card, recordings, windows, infer,
+  figures and verify suites, all passing; the session suite, block 49's, 5 of 5 on the same tree;
+  11 planted faults caught by the implementer). Merged 891906f.
+- Build notes (2026-11-28, the implementer's readings, accepted at the gate):
+  - `chosen` compares a trial file's whole `config` with the first finalist's whole `config` (the
+    finalist's holds keys starting with "_"; the restricted configs give the same answer on the
+    fixture).
+  - The search's folder is `<tune_root of the search's view>/<campaign>`, the view found through
+    `ev_rec_plan.search_views` by `e.search`; a trial's file is a regular file ending in ".json" (a
+    ".json.tmp" being written is skipped).
+  - A trial's entry: `trial_id` the file's or the file name's stem; `status` the file's string or
+    "absent"; `nll` the file's when finite, else null; a file that is not a JSON object is the
+    entry `{stem, "unreadable", null, {}}` with a log line.
+  - In a member's lists a missing key and an infinity are written null, as a NaN.
+  - A record whose `history` is empty or absent is a refusal of the export (exit 3) that names
+    `--no-training`: the entry named no behaviour for it.
+  - `bundle.check` also validates `search.json`'s form (keys, order, `n_trials`, `chosen` null or
+    one of the ids); the training's files are written as the manifest is (indent 1, sorted keys,
+    ASCII, a final newline), after the gate's file in the zip.
 - Confirmed: 2026-11-28 by D-184 (2), D-190 (2).
 
 ### Block 49: the session engine
@@ -8637,12 +8684,18 @@ plan; Confirmed: yes 2026-11-17]
 
 Planned 2026-11-28 (D-190 (2)); each entry is completed before its wave starts.
 
+- Block 49, amendment 2 (with wave B's contract; D-192): the session engine's long calls
+  (`windows`, `statistics`, `infer`) take `progress=None`, a callable given sec. 2.8's progress
+  record at each unit done.
+
 - Block 50, the server and the command `view`: `sbitool/server.py`; the session engine over HTTP on
   127.0.0.1 with a random token, one session per process; `python3 -m sbitool view [--bundle FILE]
-  [--recording PATH --adapter NAME] [--port N] [--no-browser]`. Wave B.
+  [--recording PATH --adapter NAME] [--port N] [--no-browser]`; a long call runs in the background
+  and its progress record (sec. 2.8, D-192) is served while it runs. Wave B.
 - Block 51, the application's frame: `sbitool/web/`; the four palettes of sec. 2.8 as tokens, the
   menu, the panels with a layout the user changes and that is kept, the four layers as presets of
-  it, animated transitions. Wave B.
+  it, animated transitions; the running operation's summary at the layer's level of information
+  (D-192), visible on every page. Wave B.
 - Block 52, the probe, the raster and the single-electrode view: the statistic per electrode on the
   probe with its legend, playback of the activity, the raster with animated zoom, the span chosen
   by dragging, electrodes excluded by the user. Wave B.
@@ -8650,8 +8703,9 @@ Planned 2026-11-28 (D-190 (2)); each entry is completed before its wave starts.
   the flagged share, each window's posterior and gate, the card, the held-out calibration. Wave C.
 - Block 54, the expert's and the author's panels: per network values, sampling settings, the
   model's file and training, the reproducing command; export, card, check, verify; the
-  preprocessing layout (one configuration for the simulated data and the recordings, D-190 (4)).
-  Wave C.
+  preprocessing layout (one configuration for the simulated data and the recordings, D-190 (4));
+  the progress of a simulation, a training and a search at the expert's level (D-192; started by
+  the viewer or followed from the jobs' files: not decided). Wave C.
 
 ## 6. Pipeline entry points
 
