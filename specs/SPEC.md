@@ -8603,7 +8603,9 @@ plan; Confirmed: yes 2026-11-17]
     intervals gives 0 within 1e-9; a bad span is refused.
   - T49c exclusion: with electrodes excluded, `subregions()` equals the subregions of a copy of the
     recording in which those electrodes have no spike (the oracle: the extractor's own treatment
-    of a silent electrode), and no excluded id is a member; excluding nothing changes nothing; an
+    of a silent electrode; it holds for a rate threshold above 0, since at a threshold of 0 a
+    silent electrode is valid: the rule itself, in no subregion, is checked alone there), and no
+    excluded id is a member; excluding nothing changes nothing; an
     unknown id is refused; so many excluded that fewer subregions exist than the bundle needs is a
     `SessionError` with the extractor's message.
   - T49d windows of a span: equal to block 44's windows filtered by the rule above, computed by
@@ -8613,7 +8615,22 @@ plan; Confirmed: yes 2026-11-17]
   - T49e refusals and the record: a device that does not fit the bundle, an unreadable recording,
     `infer` with no window: `SessionError`; the result has exactly `RESULT_KEYS`, is
     JSON-serialisable, and names the excluded electrodes and the span.
-- Status: drafted 2026-11-28.
+- Status: smoke-tested 2026-11-28 (5 of 5 checks, `test_smoke_tool_session.py`, rerun by the
+  orchestrator at the gate; block 44's suite 5 of 5 with the new check T44e of the exclusion; 17
+  mutations each caught, implementer's report). Measured: 40 CVs against numpy's std / mean,
+  largest difference 0; three exclusions give the partition and the traces of the copy with those
+  electrodes silent, bit for bit; `infer` on a span equals block 45's `infer.run` on the same
+  windows, bit for bit.
+- Build notes (2026-11-28, plumbing; the implementer's choices accepted at the gate): the
+  exclusion removes the electrodes' rates before the extractor's partition, so it holds at any
+  threshold; `describe()` gives the card's header under `card` (None when the card does not
+  parse); a device that does not fit, or a bundle without extraction, is refused when the session
+  opens; `spikes()` checks its span as `statistics()` does and refuses an unknown electrode;
+  `windows()` returns lists, `per_subregion` in subregion order; `coordinate` is one string (the
+  schema's bounds are all or none); `files` is the two paths or None; `infer(log=None)` is
+  silent; the test's bundle uses a rate threshold of 0.5 Hz on a 4 x 4 device so that the
+  exclusion's oracle applies; the test for the physical map sets the manifest's bounds itself
+  (the fixture's all start at 0, where a wrong map passed).
 - Confirmed: 2026-11-28 by D-189, D-190 (2) and (3).
 
 ### Blocks 50-54: the viewer's server and front end (outlines)
