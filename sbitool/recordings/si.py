@@ -7,6 +7,7 @@ CONTRACT (wave A): the signatures are fixed.
 Pure ASCII, LF only.
 """
 
+import math
 import os
 
 import numpy as np
@@ -40,10 +41,67 @@ def _as_int(v):
     return None
 
 
+def _key_of(k):
+    """k as an int when it is an integer (not a bool) or an integer's text
+    (ASCII decimal digits, an optional leading minus); None otherwise."""
+    if isinstance(k, (bool, np.bool_)):
+        return None
+    if isinstance(k, (int, np.integer)):
+        return int(k)
+    if isinstance(k, str) and k.isascii():
+        digits = k[1:] if k.startswith("-") else k
+        if digits.isdecimal():
+            return int(k)
+    return None
+
+
+def _is_finite_number(v):
+    """v is an int or a float (not a bool) whose float is finite; an int
+    beyond the float range is not."""
+    if isinstance(v, (bool, np.bool_)) or not isinstance(v, (int, float, np.integer, np.floating)):
+        return False
+    try:
+        return math.isfinite(float(v))
+    except OverflowError:
+        return False
+
+
+def _positions_option(positions_um):
+    """positions_um as a Recording holds it, {int: (x, y) floats} [um]
+    (block 43, fix round of 2026-11-28, the tester's F6): the option may
+    arrive as a JSON object, whose keys are strings and whose pairs are
+    lists; each key must be an integer or an integer's text and each value
+    two finite numbers, or the option is refused naming the key. None stays
+    None. Nothing is rescaled: the numbers are taken as um."""
+    if positions_um is None:
+        return None
+    if not isinstance(positions_um, dict):
+        raise RecordingError("spikeinterface: positions_um must be an object {electrode id: "
+                             "[x, y]} [um], got a %s" % type(positions_um).__name__)
+    out = {}
+    for k, v in positions_um.items():
+        e = _key_of(k)
+        if e is None:
+            raise RecordingError("spikeinterface: positions_um has the key %r, which is not an "
+                                 "integer's text (an electrode id)" % (k,))
+        if e in out:
+            raise RecordingError("spikeinterface: positions_um names electrode %d twice (the key "
+                                 "%r)" % (e, k))
+        if (not isinstance(v, (list, tuple)) or len(v) != 2
+                or not all(_is_finite_number(u) for u in v)):
+            raise RecordingError("spikeinterface: positions_um[%r] is %r, not two finite numbers "
+                                 "(x, y) [um]" % (k, v))
+        out[e] = (float(v[0]), float(v[1]))
+    return out
+
+
 def from_sorting(sorting, n_samples, positions_um=None, grid=None, name=None, source=None):
     """A SpikeInterface sorting (spike trains) as a Recording: one unit per
     electrode required (the unit's id, or its channel property, an int);
-    two units on one electrode are refused."""
+    two units on one electrode are refused. `positions_um` may be a JSON
+    object (string keys, list pairs; _positions_option), turned into
+    {int: (x, y)} [um] before Recording.check."""
+    positions_um = _positions_option(positions_um)
     if n_samples is None:
         raise RecordingError("spikeinterface: n_samples not given; a sorting does not hold the "
                              "recording's length, so it is an argument")

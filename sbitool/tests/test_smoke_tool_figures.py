@@ -64,6 +64,9 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 GW, BASE, PITCH, FS, NSAMP = 6, 1, 60.0, 10000.0, 20000
 NE, NSUB, THR = 4, 2, 2.0          # two subregions of 4 electrodes, 2 Hz (4 spikes in 2 s)
 DT, SIG, WIN = 0.02, 0.04, 7       # fs_ifr = 50 Hz, K = 100 bins, 14 windows of 7 bins
+# the window figure's lower label at the fixture's 20-ms bin (block 46, fix round of
+# 2026-11-28, D-180), written out by hand
+LABEL_20MS = "x [spikes per electrode per 20-ms bin]"
 
 
 def _need_extractor():
@@ -274,8 +277,10 @@ def test_t46a_device():
           % (len(rec.spikes), n_hollow, len(subs), [list(s.members) for s in subs]))
 
 
-def _check_window(fig, rec, sub, x, i, Wn, fs_ifr):
-    """The oracle of T46b on one window figure; returns the spikes drawn."""
+def _check_window(fig, rec, sub, x, i, Wn, fs_ifr, x_label):
+    """The oracle of T46b on one window figure; returns the spikes drawn.
+    `x_label` is the lower axis's label the test expects, written out by hand
+    (fix round of 2026-11-28, D-180)."""
     assert len(fig.axes) == 2, "%d axes, expected two" % len(fig.axes)
     ax_r, ax_x = fig.axes
     t0 = i * Wn / fs_ifr                    # the span, as SPEC block 46 states it
@@ -308,8 +313,8 @@ def _check_window(fig, rec, sub, x, i, Wn, fs_ifr):
         "the IFR's values are not the window's x"
     assert data.baseline is None, "the stairs are closed down to %r" % (data.baseline,)
     assert ax_x.get_xlabel() == "time [s]" and ax_r.get_ylabel() == "electrode" and \
-        ax_x.get_ylabel() == "IFR [Hz per electrode]", (ax_x.get_xlabel(), ax_r.get_ylabel(),
-                                                         ax_x.get_ylabel())
+        ax_x.get_ylabel() == x_label, (ax_x.get_xlabel(), ax_r.get_ylabel(), ax_x.get_ylabel(),
+                                       x_label)
     assert ax_x.get_shared_x_axes().joined(ax_r, ax_x), "the two axes do not share time"
     return n_drawn
 
@@ -333,7 +338,7 @@ def test_t46b_window():
         if i % 3:                           # every third window of each subregion: small and fast
             continue
         fig = dev.fig_window(rec, subs[j], win[row], i, WIN, fs_ifr)
-        total += _check_window(fig, rec, subs[j], win[row], i, WIN, fs_ifr)
+        total += _check_window(fig, rec, subs[j], win[row], i, WIN, fs_ifr, LABEL_20MS)
         checked += 1
     assert total > 0, "no spike fell in the windows checked: the case tests nothing"
     # the span's two ends, on spikes placed there: [t0, t1) holds t0 and not t1
@@ -347,13 +352,33 @@ def test_t46b_window():
                       grid=(3, 0, None), source={})
     sub = SimpleNamespace(members=(2, 0, 1), center=2)
     xe = np.arange(Wn, dtype=np.float32) * 1.5
-    n = _check_window(dev.fig_window(rec_e, sub, xe, i, Wn, fs_i), rec_e, sub, xe, i, Wn, fs_i)
+    n = _check_window(dev.fig_window(rec_e, sub, xe, i, Wn, fs_i), rec_e, sub, xe, i, Wn, fs_i,
+                      LABEL_20MS)
     # by hand: t0 = 15 / 50 = 300 / 1000 and t1 = 0.3 + 0.1 = 400 / 1000 in float64, so the
     # span holds the samples 300, 301 and 399 of electrode 0 and nothing of the others
     assert (t0, t1) == (0.3, 0.4) and n == 3, (t0, t1, n)
     fig = dev.fig_window(rec_e, sub, xe, i, Wn, fs_i)
     r0 = _by_gid(fig.axes[0].collections, "raster-0")
     assert np.array_equal(np.sort(r0.get_positions()), np.array([300, 301, 399]) / 1000.0)
+    # the window's unit at other bin widths (fix round of 2026-11-28, D-180): x is
+    # spikes per bin per electrode, so the label names the bin, 1000 / fs_ifr_hz ms
+    # written with %g, and the values stay x unchanged (not x * fs_ifr_hz, the Hz).
+    # The labels are written out by hand, not built as the module builds them;
+    # 1 / 0.03 s gives 1000 / 33.33... = 30.000000000000004, which %g writes "30"
+    for fs_b, want in ((100.0, "x [spikes per electrode per 10-ms bin]"),
+                       (400.0, "x [spikes per electrode per 2.5-ms bin]"),
+                       (1.0 / 0.03, "x [spikes per electrode per 30-ms bin]"),
+                       (1.0, "x [spikes per electrode per 1000-ms bin]")):
+        _check_window(dev.fig_window(rec_e, sub, xe, 0, Wn, fs_b), rec_e, sub, xe, 0, Wn, fs_b,
+                      want)
+    # and on the fixture's own traces at a 10-ms bin (fs_ifr 100 Hz): the drawn values are
+    # the window's x, a smoothed count of order 1 / n_e per spike, not that times 100
+    ext10 = _extraction(w_size_s=0.01)
+    x10, fs10 = windows.traces(rec, subs, ext10)
+    assert fs10 == 100.0, fs10
+    win10, _ids10 = windows.cut(x10, WIN, fs10)
+    _check_window(dev.fig_window(rec, subs[0], win10[0], 0, WIN, fs10), rec, subs[0], win10[0],
+                  0, WIN, fs10, "x [spikes per electrode per 10-ms bin]")
     # refusals: x of another length than W, an unknown electrode
     _refused(lambda: dev.fig_window(rec_e, sub, xe[:-1], i, Wn, fs_i), ["shape", "5"])
     _refused(lambda: dev.fig_window(rec_e, SimpleNamespace(members=(0, 7), center=0), xe, i, Wn,
