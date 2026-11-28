@@ -11,6 +11,7 @@ Checks
     test_t44b_partition      the subregions equal the extractor's command-line result
     test_t44c_windows        the windows' count, order, start times and dtype
     test_t44d_refusals       another rate, grid or pitch; a bundle without extraction
+    test_t44e_exclude        block 49's `exclude`: an excluded electrode as a silent one
 
 Run
     SBIX_CLONE=<the Sbi-extractor's checkout> PYTHONDONTWRITEBYTECODE=1 \
@@ -680,10 +681,60 @@ def test_t44d_refusals():
         assert np.array_equal(z["windows"], win)
 
 
+def _silenced(rec, ids):
+    import dataclasses
+    sp = dict(rec.spikes)
+    for e in ids:
+        sp[e] = np.zeros(0, dtype=np.int64)
+    return dataclasses.replace(rec, spikes=sp)
+
+
+def _parts(subs):
+    return [(int(s.center), tuple(int(m) for m in s.members), float(s.mean_mfr),
+             float(s.center_mfr)) for s in subs]
+
+
+def test_t44e_exclude():
+    """block 49's `exclude` of subregions (specs/SPEC.md block 49, D-189): an excluded electrode
+    is in no subregion, and the partition equals the extractor's on a copy of the recording in
+    which that electrode has no spike; on a grid and on positions with other ids; an unknown id
+    is refused."""
+    _need_extractor()
+    W = _W()
+    fx = _fixture()
+    rec, ext = fx["rec"], _grid_ext()
+    base = _parts(W.subregions(rec, ext))
+    assert _parts(W.subregions(rec, ext, exclude=())) == base
+    assert _parts(W.subregions(rec, ext, exclude=[])) == base
+    # the same device as positions only, under other ids (the partition's key is the place)
+    off = 1000
+    pos = {e + off: (float((e - BASE) % GW) * PITCH, float((e - BASE) // GW) * PITCH)
+           for e in rec.spikes}
+    rec_p = _rec({e + off: t for e, t in rec.spikes.items()}, FS, NSAMP, positions=pos)
+    cases = [[base[0][0]], [base[0][0], base[1][1][1]], [base[2][0], base[0][1][2], base[1][0]]]
+    for ex in cases:
+        got = _parts(W.subregions(rec, ext, exclude=ex))
+        assert got == _parts(W.subregions(_silenced(rec, ex), ext)), ex
+        assert got != base, ex
+        assert not set(ex) & set(m for s in got for m in s[1]), (ex, got)
+        exp = [e + off for e in ex]
+        got_p = _parts(W.subregions(rec_p, ext, exclude=exp))
+        want_p = [(c + off, tuple(m + off for m in ms), a, b) for c, ms, a, b in got]
+        assert got_p == want_p, (ex, got_p, want_p)
+    _refused(lambda: W.subregions(rec, ext, exclude=[999]), ["999"])
+    _refused(lambda: W.subregions(rec, ext, exclude=[base[0][0], "x"]), ["'x'"])
+    _refused(lambda: W.subregions(rec, ext, exclude=[True]), ["True"])
+    _refused(lambda: W.subregions(rec, ext, exclude=5), ["iterable"])
+    _refused(lambda: W.subregions(rec_p, ext, exclude=[base[0][0]]), [str(base[0][0])])
+    print("[T44e] %d exclusions on the grid and on positions with ids + %d: the silenced copies' "
+          "partition; 5 bad exclusions refused" % (len(cases), off))
+
+
 CHECKS = [("test_t44a_ifr", test_t44a_ifr),
           ("test_t44b_partition", test_t44b_partition),
           ("test_t44c_windows", test_t44c_windows),
-          ("test_t44d_refusals", test_t44d_refusals)]
+          ("test_t44d_refusals", test_t44d_refusals),
+          ("test_t44e_exclude", test_t44e_exclude)]
 
 
 def main():
