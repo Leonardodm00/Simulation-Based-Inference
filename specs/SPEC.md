@@ -1300,11 +1300,32 @@ box: u_j in [0, 1] for each inferred parameter j in {1, ..., p}. Where the bundl
 banks' map, with the bundle's unit for axis j; where it declares none they show u_j. The expert layer
 can show either.
 
+**The look (D-185).** The viewer is minimalistic: one typeface, flat surfaces separated by space and
+hairlines rather than boxes, few words on screen, one accent colour and one attention colour. The user
+chooses among four palettes, two bright and two dark. The palettes are Claude's selection from the five
+reference images the user gave (the user's delegation); each is nine tokens, every text pair at a
+contrast of at least 4.5 to 1 (computed, WCAG relative luminance):
+
+| palette | ground | surface | line | ink | muted | accent | on accent | attention | from |
+|---|---|---|---|---|---|---|---|---|---|
+| Sand (bright) | #F5EFEA | #FBF8F5 | #DCCFC5 | #0F4454 | #47656E | #0F4454 | #F5EFEA | #A6461C | sand #CAB5A7 lightened, forest #0F4454; the attention colour added |
+| Mint (bright) | #F6FBEE | #FFFFFF | #D3E4CC | #4A4141 | #4B6C73 | #1E7470 | #FFFFFF | #B4432F | #E5FCC2, #45ADA8, #547980, #594F4F adjusted for contrast; the attention colour added |
+| Plum (dark) | #1B1931 | #25203F | #3D3458 | #F4ECEC | #BBAAC0 | #E9BCB9 | #1B1931 | #ED9E59 | #1B1931, #E9BCB9, #ED9E59 as given |
+| Navy (dark) | #14213D | #1B2B4B | #2F4F4F | #ECE9E2 | #BDB7AB | #8A9A5B | #14213D | #E27D60 | #14213D, #2F4F4F, #8A9A5B, #BDB7AB, #E27D60 as given |
+
+The attention colour marks only what the gate flags and what is left to do, always with a shape as well
+(a triangle, a dashed border, a hollow square), never by colour alone. Not used: the reference with
+#99B898, #FECEA8, #FF847C, #E84A5F on #2A363B (a dark blue-grey with a green and a coral, which Navy
+already is), and the strong reds and purples of the plum reference (#44174E, #662249, #A34054), which
+have no role in an interface with one accent.
+
 **Mockups (2026-11-28).** One recording at the four layers, as four screens on a design canvas the user
 can edit and comment: https://claude.ai/artifact/6a9n1zweCyM4suuAvu3HsU ("SBI tool viewer: the four
 layers (mockups)"; names and numbers are placeholders, drawn by a generator script kept outside the
 repository). They show this section's assignment; the user's corrections on them are written back here
-before S6's entries.
+before S6's entries. Second version of the same day, after the user's "to start is ok": the minimal
+look, the guided screen in each of the four palettes, the standard, expert and author screens in one
+palette each.
 
 **Not yet built, with or before S6.** The time-range selection of windows; the comparison of several
 recordings; the training curves and the trials' summary in the bundle; the reproducing command line;
