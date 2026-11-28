@@ -55,13 +55,13 @@ implementation:
   - id: S6
     title: "The viewer (GUI)"
     summary: "Load a bundle and recordings, get posteriors with the three checks. Views: the device with its electrodes and the chosen subregions, traces and windows, posteriors, checks, wells and conditions compared."
-    depends_on: [S3, S4]
+    depends_on: [S3, S4, S7a]
     needs_theory: []
     needs_hpc: false
   - id: S7
     title: "Layers of use"
-    summary: "Guided, standard and expert modes; plain and formal explanations inside the interface; presets, a glossary, tutorials, an example data set and an example bundle."
-    depends_on: [S6]
+    summary: "Guided, standard and expert modes; plain and formal explanations inside the interface; presets, a glossary, tutorials, an example data set and an example bundle. In two parts (D-183): the design before the viewer (S7a), the content after it (S7b)."
+    depends_on: []
     needs_theory: []
     needs_hpc: false
   - id: S8
@@ -208,3 +208,17 @@ implementation:
     needs_theory: []
     needs_hpc: false
     jobs: []
+  - id: S7a
+    title: "Layer design"
+    summary: "Before the viewer, no code: the layers of use (guided, standard, expert) and who each is for; an inventory of every option and every output the tool exposes, each assigned to a layer; mockups of the key screens at each layer; the viewer's framework chosen"
+    parent: S7
+    depends_on: [S3, S4]
+    needs_theory: []
+    needs_hpc: false
+  - id: S7b
+    title: "Layer content"
+    summary: "After the viewer: the plain and formal explanations inside the interface, the glossary, the presets, the tutorials, an example data set and an example bundle"
+    parent: S7
+    depends_on: [S6]
+    needs_theory: []
+    needs_hpc: false
