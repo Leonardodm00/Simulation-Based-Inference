@@ -1300,6 +1300,12 @@ box: u_j in [0, 1] for each inferred parameter j in {1, ..., p}. Where the bundl
 banks' map, with the bundle's unit for axis j; where it declares none they show u_j. The expert layer
 can show either.
 
+**Mockups (2026-11-28).** One recording at the four layers, as four screens on a design canvas the user
+can edit and comment: https://claude.ai/artifact/6a9n1zweCyM4suuAvu3HsU ("SBI tool viewer: the four
+layers (mockups)"; names and numbers are placeholders, drawn by a generator script kept outside the
+repository). They show this section's assignment; the user's corrections on them are written back here
+before S6's entries.
+
 **Not yet built, with or before S6.** The time-range selection of windows; the comparison of several
 recordings; the training curves and the trials' summary in the bundle; the reproducing command line;
 the third check of the roadmap's S6 summary, the predictive check, which is wave 2 of S2 and does not
