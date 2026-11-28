@@ -1233,6 +1233,79 @@ route to the same numbers, not another estimator.
 | p(x), p_m(x), alpha_gate | the gate's p-value of window x and member m's own (R8); the gate's threshold (`gate.alpha`) | float in (0, 1]; float in (0, 1) | -- |
 | k_gate, q_gate | [2026-11-23, D-165] the rank among the null values that a flagged window's T must exceed (R9); the gate's size given its sets, random through the null set (R10) | int >= 1; float in (0, 1) | -- |
 
+### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184; added 2026-11-28)
+
+A design section, no code: what the viewer (S6) shows and lets a user change, in which layer. It binds
+S6's SPEC entries. Status: the layers and the four choices below are the user's (D-184); the assignment
+of each item to a layer is Claude's proposal, to be corrected on the mockups before S6 starts.
+
+**The layers.** Four, each containing the one before it; one switch in the interface chooses the layer,
+and nothing a lower layer shows changes its value when a higher one is chosen.
+
+| layer | who it is for | what they come to do |
+|---|---|---|
+| guided | an experimentalist with a recording and a published model | load both, run, read one result per recording |
+| standard | a computational user | choose windows and subregions, read each window's posterior and the checks, compare recordings |
+| expert | someone auditing a model or a result | see every array, every setting and the model's training |
+| author | someone preparing a model for others | export a bundle, write and check its card, verify it |
+
+**The user's choices (D-184).** (1) Four layers, the fourth for the author. (2) The viewer shows the
+model's training beyond the card: the export also packs each network's training curve and a summary of
+the hyper-parameter search's trials into the bundle (a change of the bundle's format; a block of its
+own, to be specified before S6). (3) The guided layer has a few named settings, not none: the number of
+posterior draws and the part of the recording to use. (4) The guided layer's headline for one
+recording is, per parameter, the pooled median and 90% interval over all windows with the windows' own
+medians drawn beside it, and the share of windows the gate flags; the windows' detail is one step away.
+
+**Standing decisions the interface keeps.** The pooled result over the windows of a recording or a well
+is the equal-weight mixture of the windows' ensemble posteriors, a description of where the windows put
+their mass, not the posterior of the culture given all its windows (D-160): every layer labels it so.
+The share of windows the gate flags is shown as a number, with no verdict on the recording (D-172). The
+extraction and the spike detection are the bundle's and are never editable (D-176). A device that does
+not fit the bundle is refused, naming both (D-176).
+
+**Inventory.** Every setting and every output the tool exposes today (blocks 40-47), with the first
+layer that shows it (G guided, S standard, E expert, A author). "new" marks what S6 or a block before
+it has to add.
+
+| item | first layer | note |
+|---|---|---|
+| the bundle file; the recording file and its format | G | the tool asks for a layout (grid or positions) only when the file does not carry one |
+| number of posterior draws n_post | G | a multiple of the bundle's M members; default the bundle's |
+| part of the recording to use (a time range) | G | new: a selection of windows by their start time |
+| the recording's reader options (grid, positions, sampling, reader) | S | block 43's adapter options |
+| which subregion and which window is looked at | S | G shows one example window |
+| seed; batch size | E | defaults the bundle's (D-179) |
+| the extraction and the detection (electrodes per subregion, number of subregions, rate threshold, bin width, smoothing width, grid, pitch, detection) | S (summary), E (all) | read-only at every layer |
+| the device with its electrodes, those used, the subregions | G | block 46 |
+| a window: the spike raster and x [spikes per electrode per bin] | G (one example), S (any) | block 46 |
+| per parameter, the pooled median and 90% interval over the windows, with the windows' medians beside it | G | block 45's `mix_*` and `q50`; labelled a description (D-160) |
+| the share of windows the gate flags | G | block 45's `gate_flag`; no verdict (D-172); with one sentence on what a flag means |
+| what the model is: the card's title, question, simulator, the parameters it infers and their units | G | block 42 |
+| the whole card | S | block 42 |
+| each window's posterior: marginals and pairs, median, intervals, contraction | S | block 45's `draws`, `mhat`, `sigma`, `q05`, `q50`, `q95`, `contraction` |
+| the gate per window: statistic T, p-value, flag | S | block 45's `gate_T`, `gate_p`, `gate_flag` |
+| the model's held-out evaluation: coverage, SBC, TARP, NLL, recovery | S (summary), E (tables) | the bundle's `evaluation/sim.json` (block 36) |
+| several recordings (wells, conditions) side by side | S | new |
+| the results as files (`posterior.npz`, `posterior.json`, the figures) | S | block 45 |
+| per member: the gate's values, which member drew each draw, the member's own log-density; the embeddings z | E | block 45's `gate_t`, `gate_r`, `gate_p_member`, `draw_member`, `logq_draws_own`, `z` |
+| the model's training: each network's training curve, the search's trials | E | new: not in a bundle today (choice (2)) |
+| the manifest, the bundle's sha256, the bundle check, the software's versions | E | block 41 |
+| the command line that reproduces what the interface did | E | new |
+| export; the card's template, editing and check; `bundle-check --rebuild`; `verify`; the units and extraction files | A | blocks 41, 42, 47 |
+
+**Display of a parameter (proposal, to be confirmed on the mockups).** The networks work in the unit
+box: u_j in [0, 1] for each inferred parameter j in {1, ..., p}. Where the bundle declares bounds
+[lo_j, hi_j] for axis j, the guided and standard layers show theta_j = lo_j + u_j (hi_j - lo_j), the
+banks' map, with the bundle's unit for axis j; where it declares none they show u_j. The expert layer
+can show either.
+
+**Not yet built, with or before S6.** The time-range selection of windows; the comparison of several
+recordings; the training curves and the trials' summary in the bundle; the reproducing command line;
+the third check of the roadmap's S6 summary, the predictive check, which is wave 2 of S2 and does not
+exist: until it does the viewer shows two checks (the model's held-out calibration and the per-window
+gate).
+
 ## 3. Data contracts
 
 ### 3.1 The project configuration `hpc/pipeline/projects/<tag>/<tag>.json`
