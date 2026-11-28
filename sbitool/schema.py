@@ -12,13 +12,16 @@ import datetime
 import math
 import re
 
-BUNDLE_SCHEMA = "sbitool_bundle/1"
+BUNDLE_SCHEMA = "sbitool_bundle/2"
+# the first format (block 41): refused, naming both (block 48; no bundle of it exists
+# outside the sandbox)
+BUNDLE_SCHEMA_1 = "sbitool_bundle/1"
 
 # manifest.json: exactly these top-level keys (sec. 2.7, "The model bundle")
 MANIFEST_KEYS = (
     "schema", "name", "created", "card_complete", "arm", "M", "p", "d_z", "W", "members",
     "architecture", "parameters", "extraction", "gate", "sample", "provenance", "software",
-    "files")
+    "training", "files")
 MEMBER_KEYS = ("file", "sha256", "seed", "state_sha256", "split_seed", "split_hash")
 ARCHITECTURE_KEYS = (
     "backbone", "embedding_size", "depth_exponent", "width_multiplier", "block_family",
@@ -40,6 +43,12 @@ SAMPLE_KEYS = ("n_post", "seed", "batch_rows")
 PROVENANCE_KEYS = ("project", "ensemble", "search", "campaign", "best_fit_complete_sha256",
                    "sample_json_sha256", "commit", "sources")
 SOFTWARE_KEYS = ("python", "torch", "sbi", "zuko", "numpy", "safetensors")
+# manifest["training"]: None, or exactly these (block 48): the members' curves
+# training/member_<k>.json, k = 0..members-1, and training/search.json when search
+TRAINING_KEYS = ("members", "search")
+TRAINING_MEMBER_FILE = "training/member_%d.json"
+TRAINING_SEARCH_FILE = "training/search.json"
+TRAINING_PREFIX = "training/"
 
 # the members of the zip besides members/member_<k>.safetensors
 MEMBER_FILE = "members/member_%d.safetensors"
@@ -339,7 +348,11 @@ def _manifest(probs, d):
         return
     has = d.__contains__
     if has("schema") and d["schema"] != BUNDLE_SCHEMA:
-        probs.append("schema must be %r, got %s" % (BUNDLE_SCHEMA, _r(d["schema"])))
+        if d["schema"] == BUNDLE_SCHEMA_1:
+            probs.append("schema is %r, the first format, which this tool no longer reads: a "
+                         "bundle must be %r (export it again)" % (BUNDLE_SCHEMA_1, BUNDLE_SCHEMA))
+        else:
+            probs.append("schema must be %r, got %s" % (BUNDLE_SCHEMA, _r(d["schema"])))
     if has("name"):
         _str(probs, "name", d["name"])
     if has("created") and not _iso_time(d["created"]):
@@ -383,6 +396,21 @@ def _manifest(probs, d):
         for k in SOFTWARE_KEYS:
             if k in d["software"]:
                 _str(probs, "software." + k, d["software"][k])
+    if has("training") and d["training"] is not None:
+        t = d["training"]
+        if not isinstance(t, dict):
+            probs.append("training must be null or an object with exactly the keys %s, got %s"
+                         % (", ".join(TRAINING_KEYS), _r(t)))
+        elif _keys(probs, "training", t, TRAINING_KEYS):
+            if "members" in t:
+                M = d.get("M")
+                if not (_is_int(t["members"]) and t["members"] >= 1):
+                    probs.append("training.members must be an integer >= 1, got %s"
+                                 % _r(t["members"]))
+                elif _is_int(M) and t["members"] != M:
+                    probs.append("training.members is %s but M = %s" % (_r(t["members"]), _r(M)))
+            if "search" in t and not isinstance(t["search"], bool):
+                probs.append("training.search must be true or false, got %s" % _r(t["search"]))
     if has("files"):
         f = d["files"]
         if not isinstance(f, dict):
@@ -393,6 +421,17 @@ def _manifest(probs, d):
                     probs.append("files: the member name %s is not a non-empty string" % _r(k))
                 else:
                     _hex(probs, "files[%r]" % k, f[k])
+
+
+def training_files(training):
+    """The zip members a manifest's `training` announces: [] for null (or a
+    value that is not a valid training object), else training/member_<k>.json
+    for k < members, then training/search.json when search is true."""
+    if not (isinstance(training, dict) and _is_int(training.get("members"))
+            and training["members"] >= 1 and isinstance(training.get("search"), bool)):
+        return []
+    names = [TRAINING_MEMBER_FILE % k for k in range(training["members"])]
+    return names + ([TRAINING_SEARCH_FILE] if training["search"] else [])
 
 
 def validate_manifest(data):

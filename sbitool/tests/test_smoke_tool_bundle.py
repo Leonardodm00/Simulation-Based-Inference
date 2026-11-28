@@ -372,9 +372,11 @@ def test_t41b_content():
         path, card = c["bundles"][name]
         zm = _zip_members(path)
         M = len(e.records)
-        want = sorted(list(S.FIXED_MEMBERS) + [S.MEMBER_FILE % k for k in range(M)])
-        assert sorted(zm) == want, (name, sorted(zm))
         man = json.loads(zm["manifest.json"].decode("ascii"))
+        # [block 48] and the training's files the manifest announces (block 48's test checks them)
+        want = sorted(list(S.FIXED_MEMBERS) + [S.MEMBER_FILE % k for k in range(M)]
+                      + S.training_files(man["training"]))
+        assert sorted(zm) == want, (name, sorted(zm))
         assert S.validate_manifest(man) == [], S.validate_manifest(man)
         assert bundle.check(path) == [], bundle.check(path)
         # parameters: the sample's axes

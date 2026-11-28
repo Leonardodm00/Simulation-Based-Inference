@@ -4,7 +4,7 @@ project, with its evaluation (blocks 35-36), written as a model bundle
 
     python3 -m sbitool export --config <tag>.json --eval-config <tag>_rec_eval.json \\
         --ensemble <name> --out <file>.sbibundle [--extraction FILE.json] [--card CARD.md] \\
-        [--name NAME]
+        [--name NAME] [--no-training]
 
 What is read: the project's view and the evaluation's configuration (block
 33); the members, rebuilt by the pipeline's own ev_models.rebuild on the
@@ -13,7 +13,9 @@ simulated bank's index (the one place a checkpoint, a .pt, is read); block
 at the roles 1, 2, 3 of `gate_role`, in row order); block 36's
 <stem>_sim.json and METRICS.json. An --extraction whose w_size_s (and, where
 the bank's sidecar holds latent_spec.n_e, electrodes_per_subset) is not the
-simulated bank's is refused. Every refusal (exit 3) comes before
+simulated bank's is refused. The model's training (block 48: each member's
+curve from its record's history, the search's trials) is packed unless
+--no-training is given (then the manifest's training is null). Every refusal (exit 3) comes before
 anything is written; the bundle is written to a temporary name, re-read,
 checked and every member rebuilt from it (model.load), then renamed.
 
@@ -34,6 +36,7 @@ import types
 from sbitool import _sources
 from sbitool import bundle as B
 from sbitool import schema as S
+from sbitool import training_info as TI
 
 EXIT_ARGS, EXIT_REFUSE = 2, 3
 _TMP = ".tmp"
@@ -279,18 +282,21 @@ def _placeholder(manifest):
     m = json.loads(json.dumps(manifest))
     for mem in m["members"]:
         mem["sha256"] = "0" * 64
-    m["files"] = dict((n, "0" * 64) for n in S.FIXED_MEMBERS[1:])
+    m["files"] = dict((n, "0" * 64) for n in list(S.FIXED_MEMBERS[1:])
+                      + S.training_files(m.get("training")))
     return m
 
 
 # ---------------------------------------------------------------- the export
 
 def run(cfg_path, ecfg_path, name, out, extraction=None, card=None, bundle_name=None,
-        log=print, units=None):
+        log=print, units=None, training=True):
     """Exports ensemble `name` of the project at `cfg_path`, evaluated under
     `ecfg_path`, to the bundle `out`. `extraction`: None or the path of a
     JSON file with exactly schema.EXTRACTION_KEYS; `card`: None (block 42's
-    template, a draft) or the path of a CARD.md. Returns the manifest.
+    template, a draft) or the path of a CARD.md; `training`: pack the
+    model's training (block 48), or leave it out (the manifest's training
+    null). Returns the manifest.
     ExportRefused (or ev_plan.RefuseError) before anything is written."""
     P = _pipeline()
     out = os.path.abspath(out)
@@ -385,6 +391,16 @@ def run(cfg_path, ecfg_path, name, out, extraction=None, card=None, bundle_name=
     bounds = axes.get("bounds")
     units = _units(index.sidecar, p, bounds, units_given)
     d_z = int(gate_sets["z_ref"].shape[2])
+    tr = None
+    if training:
+        try:
+            tr = TI.collect(P, view, e, records, log=log)
+        except TI.TrainingInfoError as exc:
+            raise ExportRefused("the model's training cannot be packed: %s" % exc)
+        log("training: %d member curve(s) of %s epoch(s); search summary %s"
+            % (M, "/".join(str(len(m["epoch"])) for m in tr[0]),
+               "of %d trial(s), chosen %s" % (tr[1]["n_trials"], tr[1]["chosen"])
+               if tr[1] is not None else "absent"))
 
     # ---- the manifest
     tag = view.cfg.data["dataset"]
@@ -404,7 +420,9 @@ def run(cfg_path, ecfg_path, name, out, extraction=None, card=None, bundle_name=
                        "best_fit_complete_sha256": prov["best_fit_complete_sha256"],
                        "sample_json_sha256": _sha256_file(sample_json),
                        "commit": _commit(), "sources": sources},
-        "software": _software(), "files": {}}
+        "software": _software(),
+        "training": None if tr is None else {"members": M, "search": tr[1] is not None},
+        "files": {}}
     probs = S.validate_manifest(_placeholder(manifest))
     if probs:
         raise ExportRefused("the manifest would not be valid: %s" % "; ".join(probs))
@@ -426,7 +444,7 @@ def run(cfg_path, ecfg_path, name, out, extraction=None, card=None, bundle_name=
     # ---- written to a temporary name, re-read, checked, rebuilt; then renamed
     tmp = out + _TMP
     try:
-        final = B.write(tmp, manifest, card_text, states, gate_sets, sim_bytes)
+        final = B.write(tmp, manifest, card_text, states, gate_sets, sim_bytes, training=tr)
         from sbitool import model as SM
         SM.load(B.read(tmp))
     except Exception:
@@ -457,6 +475,9 @@ def main(argv=None):
                     help="a JSON list of the parameters' units (\"1\" for a dimensionless one)")
     ap.add_argument("--card", default=None, help="a CARD.md (default: block 42's template)")
     ap.add_argument("--name", default=None, help="the bundle's name (default: the file's)")
+    ap.add_argument("--no-training", action="store_true",
+                    help="leave the model's training (the members' curves, the search's "
+                         "trials) out of the bundle: its manifest's training is null")
     try:
         args = ap.parse_args(argv)
     except SystemExit as exc:
@@ -467,7 +488,7 @@ def main(argv=None):
     try:
         run(args.config, args.eval_config, args.ensemble, args.out,
             extraction=args.extraction, card=args.card, bundle_name=args.name,
-            units=args.units,
+            units=args.units, training=not args.no_training,
             log=lambda t: print(t, flush=True))
     except refusals as exc:
         print("REFUSE: %s" % exc, flush=True)
