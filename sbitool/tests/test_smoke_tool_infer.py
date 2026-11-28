@@ -380,29 +380,58 @@ def test_t45c_contract():
 
 # ------------------------------------------------------------ T45d
 
-GW, BASE, PITCH, FS, NSAMP = 3, 1, 60.0, 1000.0, 6000        # T_rec = 6 s
-NE, NSUB, WSIZE, GWIN = 4, 2, 0.01, 0.03
+GW, BASE, PITCH, FS = 3, 1, 60.0, 1000.0
+NE, NSUB = 4, 2
+N_PER = 2          # windows per subregion the folder is long enough for
+GWIN_BINS = 3.0    # gaussian_window_s in bins of w_size_s, where the sidecar holds none
 
 
-def _ptrain_folder(folder, rng):
+def _sim_sidecar():
+    """The fixture's simulated bank's sidecar (the JSON beside its first
+    shard): the bin width w_size [s] and W the networks were trained on
+    (D-180: the export refuses another w_size_s)."""
+    import glob
+    paths = sorted(glob.glob(_ctx()["view"].sim_glob))
+    assert paths, "the fixture's simulated bank has no shard"
+    with open(os.path.splitext(paths[0])[0] + ".json") as fh:
+        return json.load(fh)
+
+
+def _n_samples(side):
+    """Raw samples of the folder: N_PER windows of W bins of w_size each,
+    plus a third of a window (so that floor(K / W) is N_PER whichever way the
+    last partial bin is counted)."""
+    K = N_PER * int(side["W"]) + int(side["W"]) // 3
+    return int(round(K * float(side["w_size"]) * FS))
+
+
+def _ptrain_folder(folder, rng, n_samples):
     """A ptrain folder of the 3 x 3 grid (ids 1..9), raster format, every
     electrode its own count of spikes (no tie in the ranking by rate)."""
     import scipy.io as sio
     os.makedirs(folder, exist_ok=True)
     counts = 40 + 7 * rng.permutation(GW * GW)
     for i, k in enumerate(counts):
-        t = np.sort(rng.choice(NSAMP, size=int(k), replace=False))
-        r = np.zeros((NSAMP, 1), dtype=np.uint8)
+        t = np.sort(rng.choice(n_samples, size=int(k), replace=False))
+        r = np.zeros((n_samples, 1), dtype=np.uint8)
         r[t, 0] = 1
         sio.savemat(os.path.join(folder, "ptrain_%d.mat" % (BASE + i)), {"ptrain": r},
                     format="5", do_compression=True)
     return folder
 
 
-def _extraction():
+def _extraction(side):
+    """The extraction at the simulated bank's bin width (its sidecar's
+    w_size), and its gaussian_window and electrodes_per_subset where the
+    sidecar holds them (the export compares those too, D-180)."""
     from sbitool import schema as S
-    e = {"electrodes_per_subset": NE, "n_subsets": NSUB, "mfr_threshold_hz": 0.0,
-         "w_size_s": WSIZE, "gaussian_window_s": GWIN, "grid_width": GW, "index_base": BASE,
+    w = float(side["w_size"])
+    gwin = float(side["gaussian_window"]) if side.get("gaussian_window") is not None \
+        else GWIN_BINS * w
+    ne = int(side["electrodes_per_subset"]) if side.get("electrodes_per_subset") is not None \
+        else NE
+    e = {"electrodes_per_subset": ne, "n_subsets": NSUB, "mfr_threshold_hz": 0.0,
+         "w_size_s": w, "gaussian_window_s": gwin, "grid_width": GW, "index_base": BASE,
          "pitch_um": PITCH, "fs_raw_hz": FS, "detection": None}
     assert not S.validate_extraction(e), S.validate_extraction(e)
     return e
@@ -438,18 +467,22 @@ def test_t45d_end_to_end():
     from sbitool import bundle, windows
     from sbitool.recordings import ptrain
     rng = np.random.default_rng(SEED + 45)
-    folder = _ptrain_folder(os.path.join(_tmpdir("i45d"), "rec"), rng)
-    ext = _extraction()
+    side = _sim_sidecar()
+    n_samples = _n_samples(side)
+    folder = _ptrain_folder(os.path.join(_tmpdir("i45d"), "rec"), rng, n_samples)
+    ext = _extraction(side)
+    assert ext["w_size_s"] == float(side["w_size"])
     bpath = _bundle_with_extraction(ext)
     man = bundle.read(bpath).manifest
     assert man["extraction"] == ext
     Wn = int(man["W"])
+    assert Wn == int(side["W"]), (Wn, side["W"])
     # n as T44c counts it: floor(K / W) windows per subregion, K the trace's bins
     rec = ptrain.read(folder, fs_raw_hz=FS, grid_width=GW, index_base=BASE, pitch_um=PITCH)
     subs = windows.subregions(rec, ext)
     x, _fs = windows.traces(rec, subs, ext)
     n_exp = len(subs) * (x.shape[1] // Wn)
-    assert len(subs) == NSUB and n_exp >= NSUB, (len(subs), x.shape, Wn)
+    assert len(subs) == NSUB and x.shape[1] // Wn == N_PER, (len(subs), x.shape, Wn)
     opts = ["--option", "fs_raw_hz=%r" % FS, "--option", "grid_width=%d" % GW,
             "--option", "index_base=%d" % BASE, "--option", "pitch_um=%r" % PITCH]
     wdir = _tmpdir("i45d_out")
@@ -481,8 +514,10 @@ def test_t45d_end_to_end():
     with open(os.path.join(o2, "posterior.json")) as fh:
         js = json.load(fh)
     assert js["ids"] == ["subregion", "window_idx", "t_start_s"] and js["n"] == n_exp
-    print("[T45d] %d subregion(s), K %d, W %d: %d window(s), %d flagged; windows -> infer and "
-          "infer --recording give the same files' arrays" % (NSUB, x.shape[1], Wn, n_exp, k))
+    print("[T45d] w_size_s %g s (the bank's sidecar), %d raw samples at %g Hz: %d subregion(s), "
+          "K %d, W %d: %d window(s), %d flagged; windows -> infer and infer --recording give "
+          "the same files' arrays" % (ext["w_size_s"], n_samples, FS, NSUB, x.shape[1], Wn,
+                                      n_exp, k))
 
 
 # ------------------------------------------------------------ T45e
