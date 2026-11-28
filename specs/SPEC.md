@@ -5701,7 +5701,17 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   linddup.json's caps, `test_smoke_runs.py` (t29a (3)) and
   `test_smoke_inputs_check.py` (T32a's searches row), expect A1's 440.]
 - Custom code: none.
-- Status: [Reopened 2026-11-28 by amendment 6 (D-185): drafted.] Before: [Reopened 2026-11-17 by contract amendment 5 (F1: the reset tool sets the request aside);
+- Status: [Reopened 2026-11-28 by amendment 6 (D-185); smoke-tested 2026-11-28 at 89ecffe: `tests/test_smoke_best_fit_stop.py` 5 pass, 2 skip (convergence, determinism); T30l at the
+  sequencer's level under the fake PBS: A1 at 144 cores before the stop, 432 after, the project at
+  most 432 of the stages' 440; six mutations (no deletion, the request ignored, done(s) ignoring
+  the stopped record, the command without its state checks, a start that submits, a stopped
+  record of any trial taken as done), each caught; regression as at the parent commit: stop 6/2,
+  runs 5/1, finalist 6/2, block7 7 of 8, block7b 6 of 7, block7c 6 of 7, synthetic 18 of 19,
+  identity 5 of 7, report 6/1, reset 6/1, inputs check 8 of 9, pipeline 6/1, block1b 6/1, every
+  non-pass a skip `[SANDBOX 2026-11-28]`. Accepted deviation: a running member with no job (a
+  state the stage never writes) is taken as cancelled. The independent check: specs/test_reports/
+  2026-11-28_1351_incremental.md (running at this write). Not run on davinci (PBS Pro's qdel of a
+  running member from the sequencer's job).] Before: [Reopened 2026-11-17 by contract amendment 5 (F1: the reset tool sets the request aside);
   smoke-tested again 2026-11-17 (block 30c, merged 79f882d): `test_smoke_reset.py`
   6 pass, 1 skip, its new `test_stop_request` (the CODE changes when a request
   appears; a search ended user_stop reset with --confirm: the request listed, moved
