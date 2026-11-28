@@ -1233,7 +1233,7 @@ route to the same numbers, not another estimator.
 | p(x), p_m(x), alpha_gate | the gate's p-value of window x and member m's own (R8); the gate's threshold (`gate.alpha`) | float in (0, 1]; float in (0, 1) | -- |
 | k_gate, q_gate | [2026-11-23, D-165] the rank among the null values that a flagged window's T must exceed (R9); the gate's size given its sets, random through the null set (R10) | int >= 1; float in (0, 1) | -- |
 
-### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184; added 2026-11-28)
+### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184, D-186; added 2026-11-28)
 
 A design section, no code: what the viewer (S6) shows and lets a user change, in which layer. It binds
 S6's SPEC entries. Status: the layers and the four choices below are the user's (D-184); the assignment
@@ -1300,7 +1300,7 @@ box: u_j in [0, 1] for each inferred parameter j in {1, ..., p}. Where the bundl
 banks' map, with the bundle's unit for axis j; where it declares none they show u_j. The expert layer
 can show either.
 
-**The look (D-185).** The viewer is minimalistic: one typeface, flat surfaces separated by space and
+**The look (D-186).** The viewer is minimalistic: one typeface, flat surfaces separated by space and
 hairlines rather than boxes, few words on screen, one accent colour and one attention colour. The user
 chooses among four palettes, two bright and two dark. The palettes are Claude's selection from the five
 reference images the user gave (the user's delegation); each is nine tokens, every text pair at a
