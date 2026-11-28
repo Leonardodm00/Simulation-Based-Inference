@@ -7648,10 +7648,14 @@ plan; Confirmed: yes 2026-11-17]
   - `bundle.check` also compares the manifest with the members it
     describes, one problem per disagreement: `card_complete` with what
     `schema.validate_card_header(header, manifest, complete=True)` gives
-    for the bundle's own CARD.md; `gate` with the `gate` of
-    `evaluation/sim.json` on the keys the export copied from it;
-    `parameters.names` and `parameters.bounds` with `evaluation/sim.json`'s
-    `axes`; `M`, `p`, `d_z` with the shapes of the gate's sets.
+    for the bundle's own CARD.md (a card that does not parse is not
+    complete); `gate` with the `gate` of `evaluation/sim.json` on
+    `schema.GATE_KEYS`, the keys the export copies from it (a
+    `sim.json` without `gate` is a problem); `parameters.names` and
+    `parameters.bounds` with `evaluation/sim.json`'s `axes` where it
+    holds `axes`; `M` and `d_z` with the shapes of the gate's sets. The
+    tests' hand-made bundles therefore carry an `evaluation/sim.json`
+    that holds the manifest's `gate`.
   - `bundle-check`'s pass line ends with the file's sha256 in full: the
     bundle's identity, which a publication or a hub holds outside the
     file. A bundle cannot vouch for itself; authenticity against a
