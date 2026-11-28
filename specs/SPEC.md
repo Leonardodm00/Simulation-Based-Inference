@@ -1359,7 +1359,11 @@ look, the guided screen in each of the four palettes, the standard, expert and a
 palette each. Third version (D-188): the guided screen as an interactive prototype in each palette
 (probe with a statistic per electrode and playback, raster with zoom and a span chosen by dragging, a
 selected electrode's train, a menu with layout switches, a live palette switch); its spikes are drawn
-from a seed, its results are placeholders; the other three screens are still the static sketches.
+from a seed, its results are placeholders. Fourth version: a playback speed control, and the layer
+switch made live: guided, standard, expert and author are presets of the same screen's panels (the
+standard adds the windows and each window's posterior, the expert the per-network values, sampling,
+model file, training and command, the author the preprocessing layout, the project, the card and the
+check), any of which the menu's switches turn on or off; the three static sketches are removed.
 
 **Not yet built, with or before S6.** The time-range selection of windows; the comparison of several
 recordings; the training curves and the trials' summary in the bundle; the reproducing command line;
@@ -1380,6 +1384,26 @@ electrodes per region, threshold) are set when a model is prepared, in the autho
 preview, and nowhere else: one configuration defines the extraction of the simulated data and of the
 recordings alike, and everything must match (D-190 (4)); with an existing model they are shown and not
 editable (D-176).
+
+**The burst statistic: proposal, not yet confirmed by the user (2026-11-28).** Bursts of one electrode
+are detected with the MaxInterval method: a series of consecutive spikes is a burst when it meets five
+fixed thresholds, the same on every electrode. The method and the values are those of Cotterill et al.
+2016 (J Neurophysiol 116:306-321, doi 10.1152/jn.00093.2016; PubMed, full text read in PMC4969396),
+who compared eight burst detectors on synthetic and recorded spike trains and recommend MaxInterval as
+the first choice; their Table 1, taken from the NeuroExplorer manual: maximum inter-spike interval at
+the start of a burst 0.17 s; maximum inter-spike interval inside a burst 0.3 s; minimum interval
+between two bursts 0.2 s (closer bursts are merged); minimum burst duration 0.01 s; minimum number of
+spikes in a burst 3. (For their own recordings of human stem-cell-derived networks they used 0.2 s for
+the first value, their Table 6.) Per electrode e and span [t0, t1), on the spikes of e at times in
+[t0, t1): the burst rate, the number of bursts divided by (t1 - t0) / 60 [bursts per minute]; and the
+share of those spikes that lie inside a burst [a number in [0, 1]]; both undefined for an electrode
+with fewer than 3 spikes in the span. The five values are settings of the expert layer, their defaults
+the ones above. Implementation, libraries first: the published reference is in R (the authors' code,
+and `mi_find_bursts` of the CRAN package meaRtools); Python packages that name the method (autoMEA,
+MaxIntervalPy) were seen in a web search and are not yet inspected; one of them is used if it is
+installable, separable and agrees with the reference's three phases (detection, merging, quality
+control) on planted trains, and otherwise the three phases are written here and tested against planted
+bursts.
 
 ### 2.9 The viewer (roadmap `tool`, step S6; D-158 (1) and (3), D-183..D-190; added 2026-11-28)
 
