@@ -1446,7 +1446,13 @@ installable, separable and agrees with the reference's three phases (detection, 
 control) on planted trains, and otherwise the three phases are written here and tested against planted
 bursts.
 
-### 2.9 The viewer (roadmap `tool`, step S6; D-158 (1) and (3), D-183..D-190; added 2026-11-28)
+**Prototype, 2026-11-28 (D-192).** The four interactive screens of the canvas above now simulate a run:
+"Run" in the inference section shows the progress record of this section at the layer's level (a
+sentence, a bar and the time left; the stages and the counts; the live numbers and the log), with a
+thin bar under the flowchart on every page while it runs. Its numbers are invented; its logic was
+exercised with node, its rendering not checked.
+
+### 2.9 The viewer (roadmap `tool`, step S6; D-158 (1) and (3), D-183..D-190, D-192; added 2026-11-28)
 
 **Framework (D-190 (1)).** A browser application with a local Python server: the screens are written in
 web technology, as the prototype of sec. 2.8; the Python side does every computation. `python3 -m
