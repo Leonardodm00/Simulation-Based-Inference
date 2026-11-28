@@ -12,8 +12,10 @@ unittest.SkipTest("<reason>"), so the summary shows why.
 Checks
     test_t41a_rebuild        the rebuild is the pipeline's: digests, densities, draws, embeddings bit for bit
     test_t41b_content        the bundle's members, manifest, gate sets and metrics
-    test_t41c_safety         a changed byte is refused; no pickle on the reading path
-    test_t41d_refusals       the refusals write nothing; the same export twice
+    test_t41c_safety         a changed byte is refused; the manifest agrees with its members;
+                             the pass line's sha256; no pickle on the reading path
+    test_t41d_refusals       the refusals write nothing (an --extraction of another bin
+                             width included); the same export twice
     test_t41e_card           a complete card, a draft, the template
 
 Run
@@ -454,6 +456,52 @@ def _flip_last(target):
     return edit
 
 
+def _manifest_text(m):
+    """A manifest as the export writes it (indent 1, sorted keys, ASCII, a final
+    newline)."""
+    return (json.dumps(m, indent=1, sort_keys=True, ensure_ascii=True) + "\n").encode("ascii")
+
+
+def _rebundle(src, dst, man_edit=None, members=None):
+    """A copy of the bundle `src` at `dst` whose members `members` (name -> bytes)
+    replace the originals, with the manifest's files digests made to match them
+    (so that only the manifest's agreement with its members can see the change),
+    and then man_edit(manifest) applied: a valid manifest whose every digest
+    holds."""
+    ents = _zip_members(src)
+    man = json.loads(ents["manifest.json"].decode("ascii"))
+    for n, data in (members or {}).items():
+        ents[n] = data
+        man["files"][n] = _sha(data)
+    if man_edit:
+        man_edit(man)
+    ents["manifest.json"] = _manifest_text(man)
+    with zipfile.ZipFile(src) as zin:
+        order = zin.namelist()
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        for n in order:
+            zout.writestr(n, ents[n])
+    assert S.validate_manifest(man) == [], S.validate_manifest(man)
+    return dst
+
+
+def _refused_naming(bundle, path, what, names):
+    """bundle-check exits 3 with REFUSE lines naming each of `names`; read()
+    refuses too."""
+    code, text = _main(bundle.main, [path])
+    assert code == bundle.EXIT_REFUSE, (what, code, text)
+    lines = [l for l in text.splitlines() if l.strip()]
+    assert lines and all(l.startswith("REFUSE: ") for l in lines), (what, text)
+    for n in names:
+        assert n in text, (what, n, text)
+    try:
+        bundle.read(path)
+        raise AssertionError("%s: read() did not refuse" % what)
+    except bundle.BundleError:
+        pass
+    return text
+
+
 def _calls(path):
     """The dotted names of every call and every imported module of a file."""
     tree = ast.parse(open(path, "rb").read().decode("ascii"), filename=path)
@@ -487,6 +535,9 @@ def test_t41c_safety():
     work = _tmpdir("safety")
     code, text = _main(bundle.main, [good])
     assert code == 0 and text.startswith("BUNDLE CHECK OK: %s" % good), (code, text)
+    # [fix round of 2026-11-28] the pass line ends with the file's sha256 in full
+    good_sha = _sha(open(good, "rb").read())
+    assert text.rstrip("\n").endswith(", sha256 %s" % good_sha), (text, good_sha)
     # one byte changed: in a member's weights, in the manifest (a digest's hex digit; and a
     # byte that breaks its JSON), in the gate's file: exit 3 naming the member
     man = _zip_members(good)["manifest.json"]
@@ -515,6 +566,78 @@ def test_t41c_safety():
             raise AssertionError("%s: read() did not refuse" % what)
         except bundle.BundleError as exc:
             assert named in str(exc), (what, str(exc))
+    # [fix round of 2026-11-28, D-180, the tester's F2] the manifest compared with the
+    # members it describes: an edit that leaves it valid JSON of a valid form, every
+    # digest holding, is refused where it disagrees with a member, naming what disagrees
+    ents = _zip_members(good)
+    man0 = json.loads(ents["manifest.json"].decode("ascii"))
+    sim0 = json.loads(ents["evaluation/sim.json"].decode("utf-8"))
+    assert man0["card_complete"] is True and sim0["gate"]["alpha"] == man0["gate"]["alpha"]
+    assert "axes" in sim0 and sim0["axes"]["names"] == man0["parameters"]["names"], sim0.get("axes")
+    new_alpha = 0.6 if man0["gate"]["alpha"] != 0.6 else 0.5
+
+    def setp(*path_value):
+        *path, value = path_value
+
+        def f(m):
+            d = m
+            for k in path[:-1]:
+                d = d[k]
+            d[path[-1]] = value
+        return f
+    p_tamper = os.path.join(work, "tamper.sbibundle")
+    tampered = [
+        ("the gate's alpha", setp("gate", "alpha", new_alpha), None, ["gate.alpha"]),
+        ("a parameter's name", setp("parameters", "names",
+                                    [man0["parameters"]["names"][0] + "x"]
+                                    + man0["parameters"]["names"][1:]), None,
+         ["parameters.names"]),
+        ("a parameter's bound", setp("parameters", "bounds",
+                                     None if man0["parameters"]["bounds"] is not None
+                                     else [[0.0, 2.0]] * man0["p"]), None, ["parameters.bounds"]),
+        ("card_complete false on a complete card", setp("card_complete", False), None,
+         ["card_complete", "CARD.md"]),
+        # sim.json without its gate (its digest made to match): a problem
+        ("sim.json without gate", None,
+         {"evaluation/sim.json": json.dumps(dict((k, v) for k, v in sim0.items()
+                                                 if k != "gate"), allow_nan=False).encode("ascii")},
+         ["evaluation/sim.json has no gate"]),
+        # sim.json's gate of another value (its digest made to match)
+        ("sim.json's gate.k_gate", None,
+         {"evaluation/sim.json": json.dumps(dict(sim0, gate=dict(
+             sim0["gate"], k_gate=sim0["gate"]["k_gate"] + 1)), allow_nan=False).encode("ascii")},
+         ["gate.k_gate"]),
+        # sim.json's axes of other names (its digest made to match)
+        ("sim.json's axes", None,
+         {"evaluation/sim.json": json.dumps(dict(sim0, axes=dict(
+             sim0["axes"], names=["y" + n for n in sim0["axes"]["names"]])), allow_nan=False).encode("ascii")},
+         ["parameters.names", "axes.names"])]
+    for what, man_edit, members, names in tampered:
+        _rebundle(good, p_tamper, man_edit=man_edit, members=members)
+        _refused_naming(bundle, p_tamper, what, names)
+    # a draft: the card replaced by one with a TODO and card_complete false passes;
+    # card_complete true on that draft is refused (the hub would take it as complete)
+    e0, prov0 = _ensemble(ENSEMBLES[0])
+    todo_card = _card_text(e0.arm, len(e0.records), prov0["axes"]["names"],
+                           todo="licence").encode("utf-8")
+    draft = _rebundle(good, os.path.join(work, "draft.sbibundle"),
+                      man_edit=setp("card_complete", False), members={"CARD.md": todo_card})
+    code, text = _main(bundle.main, [draft])
+    assert code == 0 and " bytes, draft), sha256 " in text, (code, text)
+    _rebundle(good, p_tamper, man_edit=setp("card_complete", True),
+              members={"CARD.md": todo_card})
+    _refused_naming(bundle, p_tamper, "card_complete true on a draft", ["card_complete"])
+    # a card that does not parse is not complete
+    _rebundle(good, p_tamper, members={"CARD.md": b"no header\n"})
+    _refused_naming(bundle, p_tamper, "card_complete true on a card that does not parse",
+                    ["card_complete", "does not parse"])
+    # a manifest edited into another valid one that agrees with every member passes (the
+    # file cannot vouch for itself): its sha256 on the pass line is another one
+    _rebundle(good, p_tamper, man_edit=setp("name", man0["name"] + "-renamed"))
+    code, text = _main(bundle.main, [p_tamper])
+    other_sha = _sha(open(p_tamper, "rb").read())
+    assert code == 0 and text.rstrip("\n").endswith(", sha256 %s" % other_sha), (code, text)
+    assert other_sha != good_sha
     # an extra member, a .pt member: refused
     for extra in ("extra.txt", "members/member_0.pt", "evaluation/z.npy"):
         bad = _rezip(good, os.path.join(work, "extra.sbibundle"), add={extra: b"x"})
@@ -549,6 +672,7 @@ def test_t41c_safety():
     r = subprocess.run([sys.executable, "-m", "sbitool", "bundle-check", good, "--rebuild"],
                        cwd=_REPO, env=env, capture_output=True, text=True, timeout=900)
     assert r.returncode == 0 and "BUNDLE CHECK OK: " in r.stdout, (r.stdout, r.stderr[-2000:])
+    assert r.stdout.rstrip("\n").endswith(", sha256 %s" % good_sha), r.stdout
     bad = _rezip(good, os.path.join(work, "bad.sbibundle"), edit=_flip_last(S.MEMBER_FILE % 1))
     r = subprocess.run([sys.executable, "-m", "sbitool", "bundle-check", bad], cwd=_REPO,
                        env=env, capture_output=True, text=True, timeout=900)
@@ -603,19 +727,60 @@ def test_t41d_refusals():
     bad_ext = os.path.join(work, "extraction.json")
     with open(bad_ext, "w") as fh:
         json.dump({"electrodes_per_subset": 4}, fh)             # most keys missing
+    # [fix round of 2026-11-28, D-180 (4)] a valid --extraction whose w_size_s is not the
+    # simulated bank's sidecar w_size (the bin width the networks were trained on)
+    import ev_rec_data
+    index, _ = ev_rec_data.sim_index(c["view"])
+    w_size = float(index.sidecar["w_size"])
+    ext_ok = {"electrodes_per_subset": 9, "n_subsets": 9, "mfr_threshold_hz": 0.1,
+              "w_size_s": w_size, "gaussian_window_s": 2.0 * w_size, "grid_width": 64,
+              "index_base": 0, "pitch_um": 60.0, "fs_raw_hz": 10000.0,
+              "detection": dict(S.DETECTION_DEFAULT)}
+    assert S.validate_extraction(ext_ok) == [], S.validate_extraction(ext_ok)
+    other_w = os.path.join(work, "extraction_other_w.json")
+    with open(other_w, "w") as fh:
+        json.dump(dict(ext_ok, w_size_s=w_size * (1.0 + 1e-9)), fh)
     cases = [("unknown ensemble", _export_argv("S-XX:A1", out, card=card), "no complete ensemble"),
              ("no sample", _export_argv(name, out, card=card, ecfg=nos), "not sampled"),
              ("no metrics", _export_argv(name, out, card=card, ecfg=nom), "no metrics"),
              ("a sample of other values", _export_argv(name, out, card=card, ecfg=other),
               "sampled with other values"),
              ("an invalid --extraction", _export_argv(name, out, card=card, extraction=bad_ext),
-              "missing key extraction.n_subsets")]
+              "missing key extraction.n_subsets"),
+             ("an --extraction of another w_size_s",
+              _export_argv(name, out, card=card, extraction=other_w),
+              "w_size_s is %r but the simulated bank's sidecar w_size is %r"
+              % (w_size * (1.0 + 1e-9), w_size))]
     before = _listing(work)
     for what, argv, says in cases:
         code, text = _main(export.main, argv)
         assert code == export.EXIT_REFUSE, (what, code, text[-2000:])
         assert "REFUSE: " in text and says in text, (what, says, text[-2000:])
         assert _listing(work) == before, (what, sorted(set(_listing(work)) - set(before)))
+    # the sidecar's value itself is taken (no --card: the template carries the extraction)
+    ok_path = os.path.join(work, "extraction_ok.json")
+    with open(ok_path, "w") as fh:
+        json.dump(ext_ok, fh)
+    okb = os.path.join(work, "ok_ext.sbibundle")
+    code, text = _main(export.main, _export_argv(name, okb, extraction=ok_path))
+    assert code == 0 and "BUNDLE EXPORT OK: " in text, text[-2000:]
+    from sbitool import bundle
+    assert bundle.read(okb).manifest["extraction"] == ext_ok
+    os.remove(okb)
+    # where a sidecar holds gaussian_window and electrodes_per_subset they are compared too
+    # (the fixture's sidecar holds neither: the comparison itself, on a sidecar written here)
+    side = {"w_size": w_size, "gaussian_window": 2.0 * w_size, "electrodes_per_subset": 9}
+    export._extraction_vs_bank(ext_ok, side, "x.json")
+    export._extraction_vs_bank(dict(ext_ok, w_size_s=w_size * (1.0 + 1e-14)), side, "x.json")
+    for key, skey, val in (("gaussian_window_s", "gaussian_window", 3.0 * w_size),
+                           ("electrodes_per_subset", "electrodes_per_subset", 4),
+                           ("w_size_s", "w_size", 2.0 * w_size)):
+        try:
+            export._extraction_vs_bank(dict(ext_ok, **{key: val}), side, "x.json")
+            raise AssertionError("%s = %r against the sidecar's %r was taken"
+                                 % (key, val, side[skey]))
+        except export.ExportRefused as exc:
+            assert "%s is %r" % (key, val) in str(exc) and skey in str(exc), str(exc)
     # the same export twice: the members' digests are the same
     a, b = os.path.join(outd, "a.sbibundle"), os.path.join(outd, "b.sbibundle")
     for path in (a, b):

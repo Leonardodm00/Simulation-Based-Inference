@@ -19,6 +19,7 @@ Pure ASCII, LF only.
 import glob
 import json
 import os
+import zipfile
 
 import _evalpath  # noqa: F401
 
@@ -42,8 +43,8 @@ def _first_bad_theta(pattern):
         try:
             with np.load(path) as z:
                 th = np.asarray(z["theta"], dtype=np.float64)
-        except Exception:                      # an unreadable shard: the contract's message stands
-            continue
+        except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
+            continue                           # an unreadable shard: the contract's message stands
         bad = np.argwhere(~np.isfinite(th))
         if bad.size:
             i, k = (int(v) for v in bad[0][:2]) if th.ndim == 2 else (int(bad[0][0]), 0)
