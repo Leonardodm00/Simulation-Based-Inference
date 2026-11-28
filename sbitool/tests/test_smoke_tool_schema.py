@@ -80,7 +80,7 @@ def _hex(tag):
 def _valid_manifest():
     M, p = 3, 2
     return {
-        "schema": "sbitool_bundle/1", "name": "toy_bundle", "created": "2026-11-27T10:00:00Z",
+        "schema": "sbitool_bundle/2", "name": "toy_bundle", "created": "2026-11-27T10:00:00Z",
         "card_complete": True, "arm": "A1", "M": M, "p": p, "d_z": 4, "W": 50,
         "members": [{"file": "members/member_%d.safetensors" % k, "sha256": _hex("w%d" % k),
                      "seed": 10 + k, "state_sha256": _hex("s%d" % k), "split_seed": 7,
@@ -107,6 +107,7 @@ def _valid_manifest():
                        "sources": {"hpc/dsn/backbone.py": _hex("bb")}},
         "software": {"python": "3.13.0", "torch": "2.5.1", "sbi": "0.27.0", "zuko": "1.2.0",
                      "numpy": "2.1.0", "safetensors": "0.4.5"},
+        "training": None,       # block 48: no training information
         "files": {"CARD.md": _hex("card"), "evaluation/sim.json": _hex("sim"),
                   "evaluation/gate.safetensors": _hex("gate")},
     }
@@ -275,7 +276,7 @@ def _fault_table():
         ("a provenance digest's form", "manifest",
          m(lambda d: _set(d, ["provenance", "sample_json_sha256"], 12)),
          "provenance.sample_json_sha256"),
-        ("schema", "manifest", m(lambda d: _set(d, ["schema"], "sbitool_bundle/2")), "schema"),
+        ("schema", "manifest", m(lambda d: _set(d, ["schema"], "sbitool_bundle/1")), "schema"),
         ("created not ISO", "manifest", m(lambda d: _set(d, ["created"], "yesterday")), "created"),
         # non-finite numbers and an integer beyond float range
         ("NaN", "manifest", m(lambda d: _set(d, ["gate", "level"], nan)), "gate.level"),

@@ -2,8 +2,10 @@
 sec. 2.7, "The model bundle", and block 41; D-174, D-175).
 
 A bundle is one zip: manifest.json, CARD.md, members/member_<k>.safetensors,
-evaluation/sim.json, evaluation/gate.safetensors. Reading one never calls
-torch.load, pickle or numpy.load.
+evaluation/sim.json, evaluation/gate.safetensors, and, when the manifest's
+`training` is not null (format "sbitool_bundle/2", block 48),
+training/member_<k>.json and, when it says so, training/search.json.
+Reading one never calls torch.load, pickle or numpy.load.
 
 CONTRACT (wave B): the names and signatures below are fixed.
 
@@ -23,6 +25,7 @@ import sys
 import zipfile
 
 from sbitool import schema as S
+from sbitool import training_info as TI
 
 EXIT_ARGS, EXIT_REFUSE = 2, 3
 EXTENSION = ".sbibundle"
@@ -55,9 +58,11 @@ def _member_names(M):
     return [S.MEMBER_FILE % k for k in range(M)]
 
 
-def _expected_names(M):
-    """sec. 2.7's members, in the order write() puts them."""
-    return [S.FIXED_MEMBERS[0], S.FIXED_MEMBERS[1]] + _member_names(M) + list(S.FIXED_MEMBERS[2:])
+def _expected_names(M, training=None):
+    """sec. 2.7's members, in the order write() puts them, then the training's
+    files the manifest's `training` announces (block 48)."""
+    return ([S.FIXED_MEMBERS[0], S.FIXED_MEMBERS[1]] + _member_names(M) + list(S.FIXED_MEMBERS[2:])
+            + S.training_files(training))
 
 
 def _manifest_bytes(manifest):
@@ -170,9 +175,24 @@ def _agreement_problems(data, manifest):
     return probs
 
 
+def _training_problems(n, data, manifest):
+    """A training file whose digest holds: valid JSON of block 48's form;
+    a member's seed the manifest's member's."""
+    try:
+        d = _parse_json(data)
+    except (ValueError, UnicodeDecodeError) as exc:
+        return ["%s: not valid JSON (%s)" % (n, exc)]
+    if n == S.TRAINING_SEARCH_FILE:
+        return TI.search_problems(d)
+    k = int(n[len(S.TRAINING_PREFIX) + len("member_"):-len(".json")])
+    return TI.member_problems(d, k, seed=manifest["members"][k]["seed"])
+
+
 def check(path):
     """Every problem of the file as a bundle, as a list of strings ([] when
-    valid): not a zip, members other than exactly sec. 2.7's, a manifest
+    valid): not a zip, members other than exactly sec. 2.7's (and the
+    training's files the manifest announces, block 48: a training/ member
+    it does not announce is refused), a manifest
     that does not validate, a digest that does not hold, a member whose
     name ends in .pt, .pkl, .npy or .npz; a manifest that disagrees with the
     members it describes (card_complete with CARD.md, gate and parameters
@@ -216,13 +236,19 @@ def check(path):
     M = manifest.get("M") if isinstance(manifest, dict) else None
     if not (isinstance(M, int) and not isinstance(M, bool) and M >= 1):
         return probs
-    expected = _expected_names(M)
+    training = manifest.get("training")
+    tr_names = S.training_files(training)
+    expected = _expected_names(M, training)
     for n in expected:
         if n not in names:
             probs.append("missing member %s" % n)
     for n in sorted(set(names) - set(expected)):
-        probs.append("unexpected member %s (a bundle holds exactly %s)"
-                     % (n, ", ".join(expected)))
+        if n.startswith(S.TRAINING_PREFIX):
+            probs.append("unexpected member %s: a %s member the manifest's training (%s) does "
+                         "not announce" % (n, S.TRAINING_PREFIX, json.dumps(training)))
+        else:
+            probs.append("unexpected member %s (a bundle holds exactly %s)"
+                         % (n, ", ".join(expected)))
     if mprobs:
         return probs            # the digests and shapes below need a valid manifest
     for k, mem in enumerate(manifest["members"]):
@@ -233,7 +259,7 @@ def check(path):
                 probs.append(p)
             else:
                 probs.extend(_state_problems(n, data[n]))
-    fixed = set(S.FIXED_MEMBERS[1:])
+    fixed = set(S.FIXED_MEMBERS[1:]) | set(tr_names)
     files = manifest["files"]
     for n in sorted(fixed - set(files)):
         probs.append("%s: files has no digest of %s" % (man_name, n))
@@ -257,6 +283,8 @@ def check(path):
                     data[n].decode("utf-8")
                 except UnicodeDecodeError as exc:
                     probs.append("%s: not UTF-8 text (%s)" % (n, exc))
+            elif n in tr_names:
+                probs.extend(_training_problems(n, data[n], manifest))
     probs.extend(_agreement_problems(data, manifest))
     return probs
 
@@ -266,6 +294,8 @@ def check(path):
 class Bundle:
     """An open bundle. Attributes: `path`; `manifest` (dict, validated);
     `card` (str, CARD.md's text); `sha256` (of the zip file). Methods:
+    `training() -> None | {"members": [...], "search": dict | None}` (block
+    48; each file's sha256 verified when read);
     `state(k) -> {name: torch.Tensor}` member k's state, its file's sha256
     verified when read; `gate_sets() -> {"z_ref", "z_rank", "z_null":
     numpy float32 arrays (M, N, d_z)}`; `sim_metrics() -> dict`
@@ -327,6 +357,23 @@ class Bundle:
         name = S.FIXED_MEMBERS[2]
         return _parse_json(self._read(name, self.manifest["files"][name]))
 
+    def training(self):
+        """None when the manifest's training is null; else {"members": the M
+        dicts of training/member_<k>.json, "search": training/search.json's
+        dict or None}, each file's sha256 verified as it is read."""
+        tr = self.manifest.get("training")
+        if tr is None:
+            return None
+        files = self.manifest["files"]
+        members = [_parse_json(self._read(S.TRAINING_MEMBER_FILE % k,
+                                          files[S.TRAINING_MEMBER_FILE % k]))
+                   for k in range(tr["members"])]
+        search = None
+        if tr["search"]:
+            search = _parse_json(self._read(S.TRAINING_SEARCH_FILE,
+                                            files[S.TRAINING_SEARCH_FILE]))
+        return {"members": members, "search": search}
+
 
 def read(path):
     """The Bundle at `path`; BundleError listing the problems when
@@ -371,18 +418,59 @@ def _zip_bytes(entries):
     return buf.getvalue()
 
 
-def write(path, manifest, card_text, states, gate_sets, sim_json_bytes):
+def _training_entries(training, man):
+    """[(name, bytes)] of the training's files, and the manifest's
+    `training` value; BundleError when a member's curve is not of block 48's
+    form (the five lists of one length >= 1, its seed the manifest's
+    member's) or the search's summary is not."""
+    if training is None:
+        return [], None
+    try:
+        members, search = training
+    except (TypeError, ValueError):
+        raise BundleError("training must be None or (members, search), got %r"
+                          % type(training).__name__)
+    M = man.get("M")
+    if not isinstance(members, (list, tuple)) or len(members) != M:
+        raise BundleError("training: %s member curve(s) for M = %r"
+                          % (len(members) if isinstance(members, (list, tuple)) else "no", M))
+    entries, probs = [], []
+    for k, m in enumerate(members):
+        m = dict(m) if isinstance(m, dict) else m
+        if isinstance(m, dict):
+            for key in TI.MEMBER_LISTS:
+                if isinstance(m.get(key), (list, tuple)):
+                    m[key] = [TI.finite_or_none(x) for x in m[key]]
+        p = TI.member_problems(m, k, seed=man["members"][k].get("seed"))
+        probs.extend(p)
+        if not p:
+            entries.append((S.TRAINING_MEMBER_FILE % k, TI.json_bytes(m)))
+    if search is not None:
+        p = TI.search_problems(search)
+        probs.extend(p)
+        if not p:
+            entries.append((S.TRAINING_SEARCH_FILE, TI.json_bytes(search)))
+    if probs:
+        raise BundleError("the training cannot be written:\n%s" % "\n".join(probs))
+    return entries, {"members": M, "search": search is not None}
+
+
+def write(path, manifest, card_text, states, gate_sets, sim_json_bytes, training=None):
     """Writes a bundle to `path` (a temporary name, re-read and checked,
-    then renamed). `manifest` complete except `members[k]["sha256"]` and
-    `files`, which this function fills; `states` a list of M state dicts;
-    `gate_sets` the three arrays; `sim_json_bytes` the metrics' file as
-    bytes. Returns the final manifest. BundleError when the result does not
+    then renamed). `manifest` complete except `members[k]["sha256"]`,
+    `training` and `files`, which this function fills; `states` a list of M
+    state dicts; `gate_sets` the three arrays; `sim_json_bytes` the metrics'
+    file as bytes; `training` None (the manifest's training null) or
+    (members, search) as training_info.collect returns them (block 48; a NaN
+    in a curve is written null). Returns the final manifest. BundleError
+    when the training is not of block 48's form or the result does not
     pass check()."""
     man = json.loads(json.dumps(manifest))          # a copy; the caller's is not changed
     M = man.get("M")
     if len(states) != M or len(man.get("members") or []) != M:
         raise BundleError("%d state(s) and %d member entries for M = %r"
                           % (len(states), len(man.get("members") or []), M))
+    tr_entries, man["training"] = _training_entries(training, man)
     entries = []
     for k, st in enumerate(states):
         data = _state_bytes(st)
@@ -393,8 +481,11 @@ def write(path, manifest, card_text, states, gate_sets, sim_json_bytes):
     sim = bytes(sim_json_bytes)
     man["files"] = {S.FIXED_MEMBERS[1]: _sha256(card), S.FIXED_MEMBERS[2]: _sha256(sim),
                     S.FIXED_MEMBERS[3]: _sha256(gate)}
+    for n, data in tr_entries:
+        man["files"][n] = _sha256(data)
     blob = _zip_bytes([(S.FIXED_MEMBERS[0], _manifest_bytes(man)), (S.FIXED_MEMBERS[1], card)]
-                      + entries + [(S.FIXED_MEMBERS[2], sim), (S.FIXED_MEMBERS[3], gate)])
+                      + entries + [(S.FIXED_MEMBERS[2], sim), (S.FIXED_MEMBERS[3], gate)]
+                      + tr_entries)
     path = os.path.abspath(path)
     tmp = path + _PART
     with open(tmp, "wb") as fh:
