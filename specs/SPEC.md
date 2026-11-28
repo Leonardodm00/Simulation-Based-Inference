@@ -1233,7 +1233,7 @@ route to the same numbers, not another estimator.
 | p(x), p_m(x), alpha_gate | the gate's p-value of window x and member m's own (R8); the gate's threshold (`gate.alpha`) | float in (0, 1]; float in (0, 1) | -- |
 | k_gate, q_gate | [2026-11-23, D-165] the rank among the null values that a flagged window's T must exceed (R9); the gate's size given its sets, random through the null set (R10) | int >= 1; float in (0, 1) | -- |
 
-### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184, D-186, D-187; added 2026-11-28)
+### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184, D-186, D-187, D-188; added 2026-11-28)
 
 A design section, no code: what the viewer (S6) shows and lets a user change, in which layer. It binds
 S6's SPEC entries. Status: the layers and the four choices below are the user's (D-184); the assignment
@@ -1325,13 +1325,40 @@ square), never by colour alone. [Corrected 2026-11-28, D-187: the first selectio
 pale green ground (Mint) and coloured dark grounds (#1B1931 Plum, #14213D Navy); the user asked for the
 sand ground on both bright palettes and plain black on both dark ones.]
 
+**Interaction and graphics (D-188).** The viewer leads with graphics, not text, and its graphics are the
+controls:
+
+- The probe (the device's electrodes at their positions) shows a statistic of each electrode by colour
+  intensity, with a legend; the user picks the statistic; the activity can be played back in time on the
+  probe (each electrode lit by its spikes around the time cursor). Picking an electrode on the probe
+  selects it everywhere.
+- The raster of all electrodes zooms in and out with an animated transition, and the user sets values by
+  acting on it: dragging on the raster chooses the span of time the draws are made from (the guided
+  layer's "part of the recording", D-184 (3)); a click moves the time cursor. The statistics on the probe
+  follow the chosen span.
+- A selected electrode has its own view: its spike train and its spikes counted per bin of the visible
+  span.
+- Menus and panels open and close with animation; a palette change is animated.
+- The layout is the user's: which panels are shown, and how they are arranged, is configurable and kept;
+  each layer of use is then a preset of that configuration, not a separate screen.
+
+Open, to settle before S6's entries (they are computations, so their definitions come first): which
+per-electrode statistics, each with its formula and unit. The prototype shows three as placeholders: the
+firing rate n / (t1 - t0) [Hz] over the chosen span [t0, t1), the coefficient of variation of the
+inter-spike intervals in that span, and the number of spikes in the 0.3 s before the cursor. What "kept"
+means for a layout (per user, per recording, exportable). A keyboard route for everything the pointer
+does on the raster.
+
 **Mockups (2026-11-28).** One recording at the four layers, as four screens on a design canvas the user
 can edit and comment: https://claude.ai/artifact/6a9n1zweCyM4suuAvu3HsU ("SBI tool viewer: the four
 layers (mockups)"; names and numbers are placeholders, drawn by a generator script kept outside the
 repository). They show this section's assignment; the user's corrections on them are written back here
 before S6's entries. Second version of the same day, after the user's "to start is ok": the minimal
 look, the guided screen in each of the four palettes, the standard, expert and author screens in one
-palette each.
+palette each. Third version (D-188): the guided screen as an interactive prototype in each palette
+(probe with a statistic per electrode and playback, raster with zoom and a span chosen by dragging, a
+selected electrode's train, a menu with layout switches, a live palette switch); its spikes are drawn
+from a seed, its results are placeholders; the other three screens are still the static sketches.
 
 **Not yet built, with or before S6.** The time-range selection of windows; the comparison of several
 recordings; the training curves and the trials' summary in the bundle; the reproducing command line;
