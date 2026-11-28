@@ -7690,6 +7690,15 @@ plan; Confirmed: yes 2026-11-17]
   buffer, so every array is made contiguous before it is saved (block 45
   does the same).
 - Confirmed: 2026-11-27 by D-176.
+- Fix round of 2026-11-28, built: smoke-tested 2026-11-28 (5 of 5 checks
+  on the merged tree; ten mutations, nine caught by T41c or T41d, the
+  tenth -- the except of block 33 widened back -- by no suite, checked by
+  the implementer by hand). Accepted at the gate (plumbing): the
+  comparisons are by JSON equality; a member whose own digest fails is
+  not compared again; a simulated bank's sidecar without `w_size` is a
+  refusal; `gaussian_window` and `electrodes_per_subset` are looked for
+  at the sidecar's top level (the fixture's sidecar holds neither, so
+  those two comparisons are tested on a hand-written sidecar only).
 
 ### Block 42: the card (added 2026-11-27; D-158 (4), D-173, D-175; roadmap tool, step S3)
 
@@ -7821,6 +7830,12 @@ plan; Confirmed: yes 2026-11-17]
   um or mm, 2-D, one segment; `as_grid`'s width is the larger extent in
   cells, so it equals the device's width only when the electrodes span it.
 - Confirmed: 2026-11-27 by D-176 (the detection: Q-T1).
+- Fix round of 2026-11-28, built: smoke-tested 2026-11-28 (4 of 4 checks
+  on the merged tree; seven mutations of the positions option each
+  caught). Accepted at the gate (plumbing): a key may carry a leading
+  minus (and then fails `Recording.check`); two keys naming one electrode
+  ("5" and "05") are refused; a `positions_um` that is not an object is
+  refused naming it.
 
 ### Block 44: from a recording to windows (added 2026-11-27; D-158 (1); roadmap tool, step S4)
 
@@ -8044,6 +8059,11 @@ plan; Confirmed: yes 2026-11-17]
   a well); T45b's comparison with block 36's `well_*` did not apply (the
   fixture's bank has several wells).
 - Confirmed: 2026-11-27 by D-176.
+- Fix round of 2026-11-28 (D-180): T45d's extraction takes its `w_size_s`
+  from the fixture's simulated sidecar (0.1 s), since the export now
+  refuses another; 29,800 raw samples at 1 kHz, K 298, W 128, 2
+  subregions, 4 windows; 5 of 5 checks on the merged tree. `infer.py`
+  unchanged.
 
 ### Block 46: the device and the window as figures (added 2026-11-27; D-158 (1); roadmap tool, step S4)
 
@@ -8141,6 +8161,11 @@ plan; Confirmed: yes 2026-11-17]
   to 0 at the window's ends, which read as the rate falling to 0);
   T46b checks it.
 - Confirmed: 2026-11-27 by D-176.
+- Fix round of 2026-11-28, built: smoke-tested 2026-11-28 (3 of 3 checks
+  on the merged tree; T46b checks the label at bins of 20, 10, 2.5, 30
+  and 1000 ms; four mutations of the label and of the drawn values each
+  caught). The figure looked at by the orchestrator: "x [spikes per
+  electrode per 20-ms bin]", the values unchanged.
 
 ## 6. Pipeline entry points
 
