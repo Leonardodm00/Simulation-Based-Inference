@@ -130,7 +130,8 @@ def _ifr_reference(spikes, members, fs, n, dt, sigma):
     """eq. (1)-(3) of EXTRACTOR_USAGE.md, independently: C[k] the spikes of
     the members counted in [k dt, (k + 1) dt) by numpy.histogram, k in
     0..K-1, K = floor(T_rec / dt), T_rec = n / fs; smoothed, clipped at 0,
-    divided by n_e = len(members). float64."""
+    divided by n_e = len(members). float64, in spikes per bin per electrode
+    (D-180): no division by dt, which would give Hz per electrode."""
     T = n / fs
     K = int(np.floor(T / dt))
     edges = np.arange(K + 1, dtype=np.float64) * dt
@@ -541,7 +542,10 @@ def _detection_cases(fx, ext, out_dir):
 
 def _real_bundle(folder, extraction, Wn):
     """A bundle written by block 41's bundle.write from the manifest block 40's
-    test writes from sec. 2.7, with `extraction` and W set."""
+    test writes from sec. 2.7, with `extraction` and W set. Its
+    evaluation/sim.json holds the manifest's `gate` (block 41, fix round of
+    2026-11-28: bundle.check compares the two on schema.GATE_KEYS) and no
+    `axes`, which bundle.check compares only where they are present."""
     import torch
     from sbitool import bundle
     sys.path.insert(0, _HERE)
@@ -559,7 +563,14 @@ def _real_bundle(folder, extraction, Wn):
                  "z_rank": np.zeros((M, g["n_rank"], d_z), np.float32),
                  "z_null": np.zeros((M, g["n_null"], d_z), np.float32)}
     path = os.path.join(folder, "toy_%s.sbibundle" % ("none" if extraction is None else "ext"))
-    bundle.write(path, man, "---\ntitle: TODO\n---\n", states, gate_sets, b"{}")
+    sim = json.dumps({"gate": {k: g[k] for k in S.GATE_KEYS}}, sort_keys=True).encode("ascii")
+    bundle.write(path, man, "---\ntitle: TODO\n---\n", states, gate_sets, sim)
+    # the helper's own check: the written sim.json's gate is the manifest's on every
+    # key of schema.GATE_KEYS (exact: the same JSON values written and read back)
+    got = bundle.read(path).sim_metrics().get("gate")
+    assert isinstance(got, dict) and all(got.get(k) == man["gate"][k] for k in S.GATE_KEYS), \
+        "the hand-made bundle's evaluation/sim.json gate %r is not the manifest's %r" % (
+            got, man["gate"])
     return path
 
 

@@ -10,7 +10,8 @@ unittest.SkipTest("<reason>"), so the summary shows why.
 
 Checks
     test_t43a_ptrain       the two spike-train formats read back exactly; the refusals
-    test_t43b_si_sorting   a SpikeInterface sorting read back exactly; the probe's positions
+    test_t43b_si_sorting   a SpikeInterface sorting read back exactly; the probe's positions;
+                           positions_um as a JSON object, also through the windows command
     test_t43c_si_raw       raw voltage: known spikes found by the declared detection
     test_t43d_layout       as_grid on a jittered grid, LayoutError otherwise; the round trip
 
@@ -236,6 +237,108 @@ def test_t43b_si_sorting():
     assert r3.positions_um == {5 + i: (float(xy[i, 0]), float(xy[i, 1])) for i in range(4)}, \
         r3.positions_um
     assert r3.n_samples == 4000 and r3.fs_raw_hz == fs
+    _t43b_positions_option(rng)
+
+
+def _t43b_positions_option(rng):
+    """Block 43, fix round of 2026-11-28 (the tester's F6): positions_um given
+    to the spikeinterface adapter as a JSON object (string keys, list pairs)
+    becomes {int: (x, y) floats}; a bad key or pair is refused naming it; and
+    the same through the `windows` command's --option positions_um=<JSON>."""
+    import contextlib
+    import io
+    import json
+    from unittest import mock
+    from spikeinterface.core import NpzSortingExtractor, NumpySorting
+    from sbitool import recordings
+    from sbitool.recordings import si
+    fs, n, pitch = 1000.0, 4000, 60.0
+    # 9 units on a 3 x 3 device; electrode e sits on cell 8 - e (ids unrelated to the
+    # cells' row-major order), every electrode firing
+    trains = {e: np.sort(rng.choice(np.arange(5, n - 5), size=int(rng.integers(20, 60)),
+                                    replace=False)).astype(np.int64) for e in range(9)}
+    cell = {e: 8 - e for e in range(9)}
+    xy = {e: (pitch * (cell[e] % 3), pitch * (cell[e] // 3)) for e in range(9)}
+    as_json = json.dumps({str(e): [xy[e][0], xy[e][1]] for e in range(9)})
+    sorting = NumpySorting.from_unit_dict([trains], sampling_frequency=fs)
+    path = os.path.join(_tmpdir("t43b"), "nine.npz")
+    NpzSortingExtractor.write_sorting(sorting, path)
+    # (1) the adapter: the JSON object, parsed as json gives it, read back exactly
+    rec = recordings.read(path, "spikeinterface", reader="npz", n_samples=n,
+                          positions_um=json.loads(as_json))
+    # exact: integers times 60.0 written as JSON numbers and read back as floats
+    assert rec.positions_um == {e: (float(xy[e][0]), float(xy[e][1])) for e in range(9)}, \
+        rec.positions_um
+    assert all(type(k) is int and type(v) is tuple and all(type(u) is float for u in v)
+               for k, v in rec.positions_um.items()), rec.positions_um
+    _same_trains(rec, trains, "npz sorting with JSON positions")
+    # the Python form (int keys, tuples) is unchanged by the conversion
+    rec_py = recordings.read(path, "spikeinterface", reader="npz", n_samples=n,
+                             positions_um=dict(xy))
+    assert rec_py.positions_um == rec.positions_um
+    # refusals, each naming the offending key
+    good = json.loads(as_json)
+    bad = [("a key that is not an integer's text", dict(good, e1=[0.0, 0.0]), "'e1'"),
+           ("a key with a decimal point", dict(good, **{"2.0": [0.0, 0.0]}), "'2.0'"),
+           ("one number", dict(good, **{"3": [60.0]}), "positions_um['3']"),
+           ("three numbers", dict(good, **{"3": [60.0, 0.0, 1.0]}), "positions_um['3']"),
+           ("a string", dict(good, **{"4": [60.0, "60"]}), "positions_um['4']"),
+           ("a bool", dict(good, **{"4": [True, 60.0]}), "positions_um['4']"),
+           ("NaN (json reads it)", dict(good, **{"5": json.loads("[NaN, 0]")}),
+            "positions_um['5']"),
+           ("an electrode twice", dict(good, **{"05": [0.0, 0.0]}), "electrode 5 twice")]
+    for tag, pos, word in bad:
+        msg = _refused(lambda: si.from_sorting(sorting, n, positions_um=pos), "positions_um",
+                       word)
+        assert "positions_um" in msg, (tag, msg)
+    _refused(lambda: si.from_sorting(sorting, n, positions_um=[[0, 0]] * 9), "positions_um",
+             "object")
+    # (2) the `windows` command, --option positions_um=<JSON> (the tester's F6 route),
+    # with a stand-in for bundle.read (block 44's test's): exit 0, and the windows of
+    # windows.extract on the adapter's Recording
+    try:
+        _need_extractor()
+    except unittest.SkipTest as exc:
+        raise unittest.SkipTest("every other part of T43b passes; the windows command needs "
+                                "the extractor: %s" % exc)
+    sys.path.insert(0, _HERE)
+    try:
+        import test_smoke_tool_windows as tw
+    finally:
+        sys.path.remove(_HERE)
+    from sbitool import bundle as bundle_mod
+    from sbitool import windows
+    ext = tw._extraction(electrodes_per_subset=9, n_subsets=1, mfr_threshold_hz=0.0,
+                         w_size_s=0.02, gaussian_window_s=0.04, grid_width=3, index_base=0,
+                         pitch_um=pitch, fs_raw_hz=fs, detection=None)
+    Wn = 5
+    out_dir = _tmpdir("t43bcmd")
+
+    def run(option_value, out):
+        argv = ["--bundle", "b.sbibundle", "--recording", path, "--adapter", "spikeinterface",
+                "--option", "reader=npz", "--option", "n_samples=%d" % n,
+                "--option", "positions_um=%s" % option_value, "--out", out]
+        so, se = io.StringIO(), io.StringIO()
+        with mock.patch.object(bundle_mod, "read",
+                               lambda p: tw._stand_in_bundle({"extraction": ext, "W": Wn})):
+            with contextlib.redirect_stdout(so), contextlib.redirect_stderr(se):
+                code = windows.main(argv)
+        return code, so.getvalue(), se.getvalue()
+
+    out = os.path.join(out_dir, "w.npz")
+    code, so, se = run(as_json, out)
+    # K = int(4 s / 0.02 s) = 200 bins, 200 // 5 = 40 windows of the one subregion
+    assert code == 0 and so.strip().splitlines()[-1] == \
+        "WINDOWS OK: 40 window(s) of 1 subregion(s)", (code, so, se)
+    win_ref = windows.extract(rec, ext, Wn)[0]
+    with np.load(out, allow_pickle=False) as z:
+        # bit for bit: the same Recording through the same extractor functions
+        assert np.array_equal(z["windows"], win_ref), "the command's windows differ"
+    code, so, se = run(json.dumps(dict(good, e1=[0.0, 0.0])), os.path.join(out_dir, "x.npz"))
+    assert code == 3 and "REFUSED:" in se and "'e1'" in se and \
+        not os.path.exists(os.path.join(out_dir, "x.npz")), (code, so, se)
+    print("T43b: positions_um as JSON: 9 electrodes read back, %d refusals named; the windows "
+          "command: exit 0, %d windows equal to extract()'s" % (len(bad) + 1, win_ref.shape[0]))
 
 
 # T43c's synthetic trace

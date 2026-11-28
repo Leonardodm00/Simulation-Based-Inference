@@ -177,6 +177,15 @@ def fig_device(recording, subregions=None, highlight=None):
     return fig
 
 
+def _window_label(fs_ifr_hz):
+    """The window axis's label (block 46, fix round of 2026-11-28, D-180):
+    "x [spikes per electrode per <b>-ms bin]", <b> = 1000 / fs_ifr_hz with
+    %g, block 23's wording for the same quantity. x is drawn unchanged: a
+    window holds spikes per bin per electrode (x / Delta t is Hz per
+    electrode), so the label names the bin, it does not rescale x."""
+    return "x [spikes per electrode per %g-ms bin]" % (1000.0 / float(fs_ifr_hz))
+
+
 def fig_window(recording, subregion, x, window_idx, W, fs_ifr_hz):
     """One window of one subregion: two axes sharing the time axis. The
     window's span is [t0, t0 + W / fs_ifr_hz), t0 = window_idx W /
@@ -184,8 +193,9 @@ def fig_window(recording, subregion, x, window_idx, W, fs_ifr_hz):
     subregion's member order (gid GID_RASTER % electrode id), with the
     electrode's spike times index / fs_raw_hz [s] inside the span. Below:
     one Axes.stairs (a StepPatch, gid GID_IFR; amendment 1 of wave C) with
-    values `x` ((W,), [Hz per electrode]) unchanged and the W + 1 edges
-    t0 + k / fs_ifr_hz, k = 0..W, each value over its whole bin. Labels "time [s]", "electrode", "IFR [Hz per electrode]".
+    values `x` ((W,), [spikes per bin per electrode]; D-180) unchanged and
+    the W + 1 edges t0 + k / fs_ifr_hz, k = 0..W, each value over its whole
+    bin. Labels "time [s]", "electrode", and _window_label(fs_ifr_hz) for x.
     Returns the Figure. FigureError for x of another length than W."""
     from matplotlib.figure import Figure
     ev = _evf()
@@ -226,11 +236,11 @@ def fig_window(recording, subregion, x, window_idx, W, fs_ifr_hz):
                    % (recording.name, int(subregion.center), int(window_idx)))
     edges = t0 + np.arange(W + 1) / fs_ifr_hz
     # baseline None: an open path, no vertical strokes down to 0 at t0 and t1 (which
-    # would read as the rate falling to 0 at the window's ends)
+    # would read as the trace falling to 0 at the window's ends)
     ax_x.stairs(x, edges, baseline=None, color=ev.INK, lw=1.0, gid=GID_IFR)
     ax_x.set_xlim(t0, t1)
     ax_x.set_xlabel("time [s]")
-    ax_x.set_ylabel("IFR [Hz per electrode]")
+    ax_x.set_ylabel(_window_label(fs_ifr_hz))
     fig.tight_layout()
     return fig
 

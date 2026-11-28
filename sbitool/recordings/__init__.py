@@ -27,7 +27,10 @@ def _checked(recording):
 def read(path, adapter, **options):
     """The Recording at `path` read by the named adapter (`ptrain.read` or
     `si.read` with `options`); RecordingError for an unknown adapter. The
-    result has passed Recording.check."""
+    result has passed Recording.check. An option arrives as the command
+    line's JSON gives it (`windows.parse_option`): the spikeinterface
+    adapter turns a `positions_um` object (string keys, list pairs) into
+    {int: (x, y)} [um] itself (block 43, fix round of 2026-11-28)."""
     if adapter == "ptrain":
         from . import ptrain
         rec = ptrain.read(path, **options)

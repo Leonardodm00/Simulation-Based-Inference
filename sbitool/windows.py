@@ -171,8 +171,12 @@ def subregions(recording, extraction):
 
 
 def traces(recording, subs, extraction):
-    """(x, fs_ifr_hz): x (n_subregions, K) float32 [Hz per electrode], the
-    extractor's subregion_ifrs."""
+    """(x, fs_ifr_hz): x (n_subregions, K) float32 [spikes per bin per
+    electrode; D-180], the extractor's subregion_ifrs: the spikes of the
+    subregion's n_e electrodes counted per bin of width w_size_s, smoothed
+    and divided by n_e (EXTRACTOR_USAGE.md eq. (3)), the unit of the training
+    banks' windows; x * fs_ifr_hz is the same quantity in Hz per electrode,
+    which this module never computes. fs_ifr_hz = 1 / w_size_s [Hz]."""
     _checked_extraction(extraction)
     _check_recording(recording)
     _check_rate(recording, extraction)
@@ -315,7 +319,8 @@ def from_file(manifest, path, adapter, options):
     Returns a dict: `recording` (interfaces.Recording), `detection_applied`
     (the bundle's detection when the file was raw voltage, None for spike
     trains), `subregions` (list, as subregions()), `x` ((n_sub, K) float32
-    traces, as traces()), `fs_ifr_hz` (float), `windows` ((n, W) float32),
+    traces [spikes per bin per electrode], as traces()), `fs_ifr_hz`
+    (float, [Hz]), `windows` ((n, W) float32, the same unit as x),
     `ids` (dict of (n,) arrays subregion, window_idx, t_start_s, as cut()),
     `meta` (JSON-able dict: recording, extraction, detection,
     detection_applied, subregions).
