@@ -108,11 +108,77 @@ def _state_problems(name, data):
     return []
 
 
+_ABSENT = object()
+
+
+def _card_header(data):
+    """CARD.md's header by block 42's card.parse, or None when the card does
+    not parse (a card that does not parse is not complete)."""
+    from sbitool import card as CARD     # block 42; imported only to read a card
+    try:
+        header, _body = CARD.parse(data.decode("utf-8"))
+    except (CARD.CardError, UnicodeDecodeError):
+        return None
+    return header
+
+
+def _agreement_problems(data, manifest):
+    """The manifest compared with the members it describes (block 41, fix
+    round of 2026-11-28, D-180): card_complete with the bundle's own card,
+    gate with evaluation/sim.json's gate on schema.GATE_KEYS,
+    parameters.names and .bounds with sim.json's axes where it holds axes.
+    One problem per disagreement; each member compared only when its digest
+    holds (a changed member is reported by its digest). M and d_z against
+    the gate's sets are _gate_problems'."""
+    man_name, card_name, sim_name = S.FIXED_MEMBERS[0], S.FIXED_MEMBERS[1], S.FIXED_MEMBERS[2]
+    files = manifest["files"]
+    probs = []
+    if card_name in data and _sha256(data[card_name]) == files.get(card_name):
+        header = _card_header(data[card_name])
+        complete = (header is not None
+                    and not S.validate_card_header(header, manifest, complete=True))
+        if bool(manifest["card_complete"]) != complete:
+            probs.append("%s: card_complete is %s but %s is %s" % (
+                man_name, "true" if manifest["card_complete"] else "false", card_name,
+                "a complete card" if complete else
+                ("a card that does not parse" if header is None else "not a complete card")))
+    if sim_name in data and _sha256(data[sim_name]) == files.get(sim_name):
+        try:
+            sim = _parse_json(data[sim_name])
+        except (ValueError, UnicodeDecodeError):
+            return probs                 # reported by check() as not valid JSON
+        gate = sim.get("gate", _ABSENT) if isinstance(sim, dict) else _ABSENT
+        if not isinstance(gate, dict):
+            probs.append("%s has no gate (an object) to compare the manifest's gate with"
+                         % sim_name)
+        else:
+            for k in S.GATE_KEYS:
+                a, b = manifest["gate"][k], gate.get(k, _ABSENT)
+                if b is _ABSENT or a != b:
+                    probs.append("%s: gate.%s is %s but %s's gate.%s is %s" % (
+                        man_name, k, json.dumps(a), sim_name, k,
+                        "absent" if b is _ABSENT else json.dumps(b)))
+        if isinstance(sim, dict) and "axes" in sim:
+            axes = sim["axes"]
+            for k in ("names", "bounds"):
+                a = manifest["parameters"][k]
+                b = axes.get(k, _ABSENT) if isinstance(axes, dict) else _ABSENT
+                if b is _ABSENT or a != b:
+                    probs.append("%s: parameters.%s is %s but %s's axes.%s is %s" % (
+                        man_name, k, json.dumps(a), sim_name, k,
+                        "absent" if b is _ABSENT else json.dumps(b)))
+    return probs
+
+
 def check(path):
     """Every problem of the file as a bundle, as a list of strings ([] when
     valid): not a zip, members other than exactly sec. 2.7's, a manifest
     that does not validate, a digest that does not hold, a member whose
-    name ends in .pt, .pkl, .npy or .npz."""
+    name ends in .pt, .pkl, .npy or .npz; a manifest that disagrees with the
+    members it describes (card_complete with CARD.md, gate and parameters
+    with evaluation/sim.json, M and d_z with the gate's sets). A manifest
+    edited into another valid one that agrees with every member passes:
+    the file cannot vouch for itself, its sha256 is its identity."""
     if not os.path.isfile(path):
         return ["%s: no such file" % path]
     try:
@@ -191,6 +257,7 @@ def check(path):
                     data[n].decode("utf-8")
                 except UnicodeDecodeError as exc:
                     probs.append("%s: not UTF-8 text (%s)" % (n, exc))
+    probs.extend(_agreement_problems(data, manifest))
     return probs
 
 
@@ -344,7 +411,7 @@ def write(path, manifest, card_text, states, gate_sets, sim_json_bytes):
 
 def main(argv=None):
     """`python3 -m sbitool bundle-check FILE [--rebuild]`: 0 with BUNDLE
-    CHECK OK: ..., EXIT_ARGS, EXIT_REFUSE with one line per problem;
+    CHECK OK: ..., sha256 <the file's, in full>, EXIT_ARGS, EXIT_REFUSE with one line per problem;
     --rebuild also builds and loads every member (model.load)."""
     ap = argparse.ArgumentParser(prog="python3 -m sbitool bundle-check",
                                  description="Checks a model bundle (specs/SPEC.md block 41).")
@@ -373,9 +440,12 @@ def main(argv=None):
             return EXIT_REFUSE
         rebuilt = ", every member rebuilt and its state's digest verified"
     man = b.manifest
-    print("BUNDLE CHECK OK: %s (%s, %d members, %d bytes, %s%s)"
+    # the line ends with the file's sha256 in full: the bundle's identity, which a
+    # publication or a hub holds outside the file (block 41, fix round of 2026-11-28)
+    print("BUNDLE CHECK OK: %s (%s, %d members, %d bytes, %s%s), sha256 %s"
           % (args.bundle, man["name"], man["M"], os.path.getsize(b.path),
-             "card complete" if man["card_complete"] else "draft", rebuilt), flush=True)
+             "card complete" if man["card_complete"] else "draft", rebuilt, b.sha256),
+          flush=True)
     return 0
 
 

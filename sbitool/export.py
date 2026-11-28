@@ -11,7 +11,9 @@ What is read: the project's view and the evaluation's configuration (block
 simulated bank's index (the one place a checkpoint, a .pt, is read); block
 35's <stem>_sample.json and <stem>_sim.npz (the gate's sets: the rows of `z`
 at the roles 1, 2, 3 of `gate_role`, in row order); block 36's
-<stem>_sim.json and METRICS.json. Every refusal (exit 3) comes before
+<stem>_sim.json and METRICS.json. An --extraction whose w_size_s (and, where
+the bank's sidecar holds them, gaussian_window_s, electrodes_per_subset) is
+not the simulated bank's is refused. Every refusal (exit 3) comes before
 anything is written; the bundle is written to a temporary name, re-read,
 checked and every member rebuilt from it (model.load), then renamed.
 
@@ -197,6 +199,43 @@ def _metrics_left_out(P, ecfg, e, sample_json):
     return None
 
 
+# the extraction's values compared with the simulated bank's sidecar (block 41,
+# fix round of 2026-11-28, D-180 (4)): --extraction key -> the sidecar's key;
+# w_size always, the other two where the sidecar holds them
+_EXTRACTION_VS_SIDECAR = (("w_size_s", "w_size", True),
+                          ("gaussian_window_s", "gaussian_window", False),
+                          ("electrodes_per_subset", "electrodes_per_subset", False))
+_EXTRACTION_REL_TOL = 1e-12
+
+
+def _extraction_vs_bank(ext, sidecar, where):
+    """ExportRefused when --extraction's w_size_s is not the simulated bank's
+    sidecar w_size (math.isclose, rel_tol 1e-12; the bin width the networks
+    were trained on), or, where the sidecar holds gaussian_window or
+    electrodes_per_subset, when gaussian_window_s or electrodes_per_subset
+    is not it. The other extraction values are the author's declaration."""
+    import math
+    side = sidecar or {}
+    bad = []
+    for ek, sk, required in _EXTRACTION_VS_SIDECAR:
+        if sk not in side:
+            if required:
+                bad.append("the simulated bank's sidecar has no %s to compare %s with"
+                           % (sk, ek))
+            continue
+        try:
+            same = math.isclose(float(ext[ek]), float(side[sk]), rel_tol=_EXTRACTION_REL_TOL,
+                                abs_tol=0.0)
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            bad.append("%s is %r but the simulated bank's sidecar %s is %r (the value the "
+                       "networks were trained on)" % (ek, ext[ek], sk, side[sk]))
+    if bad:
+        raise ExportRefused("--extraction %s does not match the simulated bank: %s"
+                            % (where, "; ".join(bad)))
+
+
 def _gate_sets(P, npz_path, sim_gate):
     """The rows of z at the roles 1, 2, 3 of gate_role, in row order;
     ExportRefused when the sample holds no such sets."""
@@ -301,6 +340,8 @@ def run(cfg_path, ecfg_path, name, out, extraction=None, card=None, bundle_name=
 
     # ---- the members, by the pipeline's rebuild (the one place a .pt is read)
     index, _paths = P.ev_rec_data.sim_index(view)
+    if ext is not None:
+        _extraction_vs_bank(ext, index.sidecar, extraction)
     states, members, records, arch = [], [], [], None
     p = W = None
     for k, rpath in enumerate(e.records):

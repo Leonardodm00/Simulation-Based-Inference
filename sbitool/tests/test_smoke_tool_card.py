@@ -513,7 +513,10 @@ def test_t42f_bundle_commands():
     bpath = os.path.join(d, "toy" + bundle.EXTENSION)
     man_w = copy.deepcopy(man)
     man_w["card_complete"] = True
-    bundle.write(bpath, man_w, C.dump(full, body), states, gate, b"{}")
+    # evaluation/sim.json holds the manifest's gate (bundle.check compares them, block 41's
+    # fix round of 2026-11-28)
+    sim_json = json.dumps({"gate": man_w["gate"]}, sort_keys=True).encode("ascii")
+    bundle.write(bpath, man_w, C.dump(full, body), states, gate, sim_json)
     # card-template --bundle: the manifest's fields, the training fields of
     # the bundle's own card, TODO elsewhere
     out_md = os.path.join(d, "CARD.md")
