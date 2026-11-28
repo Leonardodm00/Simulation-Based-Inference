@@ -1330,7 +1330,8 @@ controls:
 
 - The probe (the device's electrodes at their positions) shows a statistic of each electrode by colour
   intensity, with a legend; the user picks the statistic; the activity can be played back in time on the
-  probe (each electrode lit by its spikes around the time cursor). Picking an electrode on the probe
+  probe (each electrode lit by its spikes around the time cursor), at a speed the user slows down or
+  speeds up (the prototype: 0.25, 0.5, 1, 2 and 4 times real time). Picking an electrode on the probe
   selects it everywhere.
 - The raster of all electrodes zooms in and out with an animated transition, and the user sets values by
   acting on it: dragging on the raster chooses the span of time the draws are made from (the guided
@@ -1389,6 +1390,14 @@ server is reached through an SSH tunnel. A desktop application may wrap it later
 each testable without the next: the session engine (block 49: Python, no network, plain data in and
 out), the server (block 50: the engine over HTTP on 127.0.0.1), the front end (blocks 51-54: static
 files the server sends; no number is computed in the browser beyond what a figure needs to draw).
+
+**Libraries first (coding directive 1; the user's reminder of 2026-11-28).** Every piece of the viewer
+is made with an established, tested library where one does what is needed, and written by hand only
+where none exists or none complies, with the reason stated in the block's entry: on the Python side
+the statistics (scipy.stats for the CV; a published method's reference implementation for the
+bursts, where one exists), the server (an established web framework), the recordings (SpikeInterface,
+already used); in the browser the drawing, the panels' layout and the animation. Which libraries, and
+what each was compared with, is written at the contract of the wave that uses them.
 
 **Blocks.** Wave A: 48 (the model's training in the bundle), 49 (the session engine). Wave B: 50 (the
 server and the command `view`), 51 (the application's frame: palettes, menu, layouts with the layers as
@@ -8544,7 +8553,9 @@ plan; Confirmed: yes 2026-11-17]
     null).
 - Rule: nothing is estimated here that another block estimates: subregions, traces, windows are
   block 44's, the inference block 45's; the statistics are counts on the spike times with numpy.
-- Libraries: numpy. Custom code: none.
+- Libraries: numpy; `scipy.stats.variation` for the CV [contract amendment 1 of wave A, 2026-11-28:
+  the library's function, whose default (ddof 0) is the definition of sec. 2.8; the test's oracle
+  stays numpy's `std(isi) / mean(isi)`]. Custom code: none.
 - Test oracles (`sbitool/tests/test_smoke_tool_session.py`, T49a-e; a ptrain folder written by the
   test and a bundle exported with an extraction at the bank's bin width, as T45d's):
   - T49a `describe`, `spikes`: the electrodes and their spike times equal the folder's, read by the
