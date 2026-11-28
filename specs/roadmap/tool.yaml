@@ -199,3 +199,12 @@ implementation:
     needs_theory: []
     needs_hpc: false
     jobs: []
+  - id: I47
+    title: "A bundle verified against its evaluation"
+    summary: "The command verify: an inference from the bundle on the project's recording banks compared with the evaluation's own files; the tool's check on davinci"
+    block: 47
+    parent: S3
+    depends_on: [I41, I45]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []

@@ -8167,6 +8167,99 @@ plan; Confirmed: yes 2026-11-17]
   caught). The figure looked at by the orchestrator: "x [spikes per
   electrode per 20-ms bin]", the values unchanged.
 
+### Block 47: a bundle verified against the evaluation it was exported from
+
+- Purpose: the tool's central guarantee (sec. 2.7; T45a in the sandbox) as
+  a command that runs on a real evaluated project: an inference from the
+  bundle on the project's recording banks, compared with the files blocks
+  35 and 36 wrote. It is the check on davinci of D-172 for the tool
+  (D-181), where the ensemble has five members, n_post is 1,000 and the
+  null set has its real size.
+- Module: `sbitool/verify.py`; command `verify` of `sbitool/__main__.py`.
+- Public API: `verify.run(bundle, cfg_path, ecfg_path, name, banks=None,
+  max_rows=None, log=print) -> dict` (the record, `verify.RECORD_KEYS`);
+  `verify.write(record, out_dir) -> path` (`VERIFY.json`, sorted keys,
+  ASCII, through a temporary name); `verify.main(argv)`;
+  `verify.VerifyRefused`.
+- CLI: `python3 -m sbitool verify --bundle FILE --config <tag>.json
+  --eval-config <tag>_rec_eval.json --ensemble <name> [--bank NAME ...]
+  [--max-rows N] [--out DIR]`: exit 0 with `VERIFY OK: <b> bank(s),
+  <n> window(s): the bundle reproduces the evaluation (the sample's
+  arrays and the summaries bit for bit, the gate within 1e-12)`; exit 1
+  with `VERIFY FAILED: ...` naming each bank and array that differs and
+  its largest absolute difference; exit 3 with one `REFUSED:` line; exit 2
+  for the arguments. With `--out`, `VERIFY.json` is written on exit 0 and
+  on exit 1.
+- Inputs: a bundle (block 41); the project's configuration and its
+  evaluation's (blocks 33, 34); of the evaluation's `out_root`, the
+  sample's JSON of the ensemble (block 35: `seeds`, `n_post`,
+  `torch_threads`), `samples/<stem>_<r>.npz` (block 35) and
+  `metrics/<stem>_<r>.npz` (block 36) for each recording bank r; the
+  bank's windows by `ev_rec_data.recording`.
+- Rule. For each recording bank r (every bank of the sample's `seeds`
+  other than `sim` and `gate`, in sorted order, or those named with
+  `--bank`): x = the bank's windows, (n, W) float32, in bank order;
+  `infer.run(bundle, x, seed=seeds[r])` with `n_post` and `batch` left to
+  the bundle, after `torch.set_num_threads(torch_threads)` of the
+  sample's JSON (a result of floating-point arithmetic may depend on the
+  number of threads; the previous number is restored at the end). Each
+  array of the result is compared with the evaluation's of the same name:
+  `draws`, `draw_member`, `logq_draws`, `logq_draws_own`, `z` with block
+  35's file and `mhat`, `sigma`, `q05`, `q50`, `q95`, `contraction` with
+  block 36's, equal when shape and dtype agree and every element is
+  bitwise equal (NaN equal to NaN); `gate_t`, `gate_r`, `gate_p_member`,
+  `gate_T`, `gate_p` with block 36's, equal when shape agrees and the
+  largest absolute difference is at most 1e-12 (T45a's tolerance);
+  `gate_flag` equal elementwise. The verdict `identical` is true when
+  every array of every bank is equal in this sense.
+  `--max-rows N`: only the first N' = floor(N / batch_rows) batch_rows
+  windows of each bank are passed and compared with the first N' rows of
+  the evaluation's arrays (the window axis is axis 0, axis 1 for `z`,
+  `gate_t`, `gate_r`, `gate_p_member`). This is exact, not an
+  approximation: a member's random numbers are drawn batch after batch
+  from one seed, so the first batches do not depend on the later ones
+  (T47b tests it). N' = 0 is a refusal.
+- Refusals (`VerifyRefused`, exit 3, nothing written): a bundle that
+  fails its check; an ensemble the project does not have; a sample or
+  metrics file absent or not current (block 36's rule, as the export's);
+  a bundle whose `provenance.sample_json_sha256` is not the sha256 of the
+  ensemble's sample JSON (the bundle was not exported from this
+  evaluation); a bundle whose `sample.n_post` or `sample.batch_rows` is
+  not the evaluation's; a `--bank` the sample does not have; a bank whose
+  number of windows is not the evaluation's.
+- Outputs: the record, exactly `verify.RECORD_KEYS`: `schema`
+  ("sbitool_verify/1"), `bundle` (`name`, `sha256`), `project`,
+  `ensemble`, `stem`, `n_post`, `batch_rows`, `torch_threads`,
+  `max_rows` (null or N), `banks` (per bank: `n` the evaluation's
+  windows, `n_compared`, `seed`, `identical`, `arrays`: per array
+  `equal`, `max_abs_diff` (0.0 for equal arrays; the largest absolute
+  difference of the float64 values otherwise, NaN positions that differ
+  counted as inf), `shape`, `dtype`), `identical`, `tolerance_gate`
+  (1e-12), `software` (`schema.SOFTWARE_KEYS`, of this run), `seconds`.
+- Libraries: numpy, torch (through block 45). Custom code: none (the
+  inference is block 45's, the comparison numpy's).
+- Test oracles (`sbitool/tests/test_smoke_tool_verify.py`, T47a-d; the
+  evaluated project and its bundles are block 41's test's, `_ctx()`):
+  - T47a both ensembles of the fixture verify: `identical` true, exit 0,
+    the pass line, `VERIFY.json` with exactly RECORD_KEYS and every
+    array's `max_abs_diff` 0.0 (the gate's at most 1e-12).
+  - T47b `--max-rows`: with N = batch_rows and N = batch_rows + 4 the
+    first batch_rows windows are compared and are identical
+    (`n_compared` = batch_rows < n); N < batch_rows is refused.
+  - T47c a difference is found and named: in a copy of the evaluation's
+    tree, one draw of block 35's file changed by one float32 step (the
+    sample's JSON's digest of the file updated, so that the tree is
+    current) gives exit 1, `draws` of that bank not equal with a
+    `max_abs_diff` of that step, every other array equal; one gate
+    p-value of block 36's file changed by 1e-9 gives exit 1 naming
+    `gate_p`; changed by 1e-13, exit 0.
+  - T47d refusals: the bundle of the other ensemble (another sample
+    JSON); a bundle whose manifest says another `n_post`; an unknown
+    `--bank`; an absent sample file: exit 3, one `REFUSED:` line, no
+    `VERIFY.json`.
+- Status: drafted 2026-11-28.
+- Confirmed: 2026-11-28 by D-181.
+
 ## 6. Pipeline entry points
 
 | Command | Purpose | Minimal configuration for testing | Expected runtime |
