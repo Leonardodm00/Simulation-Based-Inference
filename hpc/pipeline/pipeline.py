@@ -7,6 +7,8 @@
     python3 pipeline.py stop   --config projects/<tag>/<tag>.json [--wait S]
     python3 pipeline.py retire --config projects/<tag>/<tag>.json [--wait S]
     python3 pipeline.py paths  --config projects/<tag>/<tag>.json
+    python3 pipeline.py stop-search   --config ... [--search Q] [--kill-running] [--cancel]
+    python3 pipeline.py stop-best-fit --config ... [--search Q]     (block 30, amendment 6)
     python3 pipeline.py drive  --config ...      (the sequencer's own PBS job)
     python3 pipeline.py run    --config ...      (the loop in this shell: tests)
 
@@ -461,9 +463,12 @@ def search_lines(cfg, state):
     (`cores of search <q>: at most <c> (searches[].max_cores); in flight <x>
     in <k> job(s)`), and per search its stop request's line (block 30's
     `search_stop.status_line`, which raises NotImplementedError until block
-    30 lands: then nothing is printed). Nothing for any other configuration."""
+    30 lands: then nothing is printed), and [block 30 (6)] its best fit's stop
+    request's line (`best fit <q>: ...`, best_fit_stop.status_line). Nothing
+    for any other configuration."""
     if not C.has_search_list(cfg.data):
         return []
+    from stages import best_fit_stop as BFS
     from stages import runs as R
     from stages import search_stop as SS
     out = []
@@ -481,6 +486,9 @@ def search_lines(cfg, state):
             stop = None
         if stop:
             out.append("search %s: %s" % (name, stop))
+        bstop = BFS.status_line(view)
+        if bstop:
+            out.append("best fit %s: %s" % (name, bstop))
     return out
 
 
@@ -1766,6 +1774,16 @@ def cmd_stop_search(args, graph=None, entry=None):
     return search_stop.cli(cfg, args.search, bool(args.kill_running), bool(args.cancel))
 
 
+def cmd_stop_best_fit(args, graph=None, entry=None):
+    """[block 30 (6)] `stop-best-fit`: stages/best_fit_stop.py's command; it writes
+    one file and submits nothing (D-098)."""
+    cfg = _load(args.config)
+    if cfg is None:
+        return EXIT_CONFIG
+    from stages import best_fit_stop
+    return best_fit_stop.cli(cfg, args.search)
+
+
 def build_parser():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1809,6 +1827,12 @@ def build_parser():
     q.add_argument("--kill-running", action="store_true",
                    help="delete the running trials' jobs too (default: they finish)")
     q.add_argument("--cancel", action="store_true", help="withdraw a stop request")
+    # [block 30, amendment 6, D-185] stop a best fit by hand: one file, read by the sequencer
+    q = common(sub.add_parser("stop-best-fit", help="abandon a best fit: its running member "
+                                                    "jobs deleted, none submitted, no ensemble; "
+                                                    "the stage ends done (block 30, amendment 6)"))
+    q.add_argument("--search", default=None,
+                   help="the search's name (a configuration with a searches list)")
     return ap
 
 
@@ -1818,7 +1842,7 @@ def main(argv=None, graph=None, entry=None):
     args = build_parser().parse_args(argv)
     return {"run": cmd_run, "submit": cmd_submit, "drive": cmd_drive, "status": cmd_status,
             "stop": cmd_stop, "retire": cmd_retire, "paths": cmd_paths,
-            "stop-search": cmd_stop_search}[args.command](
+            "stop-search": cmd_stop_search, "stop-best-fit": cmd_stop_best_fit}[args.command](
                 args, graph=graph, entry=entry)
 
 

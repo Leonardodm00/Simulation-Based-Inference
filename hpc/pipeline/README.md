@@ -1212,6 +1212,67 @@ close. Do not change `replicate.*` while A5's search runs: the pair rule is not 
 identity (SPEC block 29's note S2), so the search would continue under another rule. A stopped search
 that is reset (`tools/search_reset.py --search <q>`) has its stop request set aside with its rounds.
 
+### LindDUP: A2's and A5's best fits stopped, A1 on 440 cores (2026-11-28, D-185)
+
+The recordings' control wells are bad wells (D-171), and A2 and A5 train on the recordings, so their
+best fits (started on 2026-11-27 by `stop-search --kill-running`) are abandoned; A1 trains on the
+simulations alone and gets the stages' whole share: `searches[A1].max_cores` 440, was 148, so 9 jobs
+of 48 at once (D-185). A best fit is stopped with `pipeline.py stop-best-fit` (SPEC block 30,
+amendment 6): at its next tick the sequencer deletes its running member jobs, submits none, cancels
+the waiting members and, once no member job runs, writes `BEST_FIT_STOPPED.json` in the best fit's
+root and ends the stage `done` -- no ensemble, no `BEST_FIT_COMPLETE.json`; its cores then count no
+more. Nothing is deleted on disk: the members' checkpoints and logs stay in
+`/davinci-1/home/ldellamea/runs/linddup/<A2|A5>/linddup_best`. The cap is a configuration change, so
+the chain is stopped first and submitted again with `--accept-config-change`. Run one line at a time;
+the pass condition of each line is a line that must APPEAR.
+
+```
+# M1. stop the chain (the stage jobs keep running: A1's trials, A2's and A5's members); pass line: stop: the sequencer has stopped
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --stop --wait 900
+
+# M2. this code and its cluster-side check; pass lines: the commit named in the chat of 2026-11-28 or later from git log, PIPELINE CODE OK
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git fetch origin && git checkout sci/pipeline && git pull --ff-only origin sci/pipeline && git log --oneline -1 && bash -c 'set -e; cd hpc/pipeline; for f in $(find . -name "*.py" -o -name "*.sh" -o -name "*.pbs" -o -name "*.json" -o -name "*.csv" | grep -v __pycache__); do if LC_ALL=C grep -q $'"'"'\r'"'"' "$f"; then echo "CR in $f"; exit 1; fi; if LC_ALL=C grep -qP "[^\x00-\x7F]" "$f"; then echo "non-ASCII in $f"; exit 1; fi; done; python3 -m py_compile pipeline.py config.py state.py pbs.py envs.py stages/*.py tools/*.py tests/*.py; python3 -c "import sys; sys.path.insert(0, \".\"); import pipeline, stages; print(sorted(stages.BUILT))"; echo PIPELINE CODE OK'
+
+# M3. the change's suites under the fake PBS, in sbi_env (about 5 min); pass lines, one per suite:
+#     ...test_smoke_best_fit_stop.py: -- 5 pass, 0 fail, 0 error, 0 todo, 2 skip   (stop-best-fit; A1 gets the cores)
+#     ...test_smoke_stop.py: -- 6 pass, 0 fail, 0 error, 0 todo, 2 skip            (stop-search, as before)
+#     ...test_smoke_runs.py: -- 5 pass, 0 fail, 0 error, 0 todo, 1 skip            (the caps; A1's 440 in the committed file)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && for t in hpc/pipeline/tests/test_smoke_best_fit_stop.py hpc/pipeline/tests/test_smoke_stop.py hpc/pipeline/tests/test_smoke_runs.py; do echo "$t: $(python3 $t 2>&1 | tail -1)"; done
+
+# M4. the two stop requests (one file each; nothing submitted); pass lines, one per arm:
+#     STOP REQUESTED: best fit of search A2 (finalist <trial>); at its next tick (every driver.poll_seconds) the sequencer deletes the running member jobs, submits none and ends the stage without an ensemble
+#     the same line for A5
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && python3 hpc/pipeline/pipeline.py stop-best-fit --config hpc/pipeline/projects/linddup/linddup.json --search A2 && python3 hpc/pipeline/pipeline.py stop-best-fit --config hpc/pipeline/projects/linddup/linddup.json --search A5
+
+# M5. the dry run under the new configuration (submits nothing); pass: exit 0, no REFUSE, STOP: or FAILED line, and the lines
+#     "cores of search A1: at most 440 (searches[].max_cores); in flight <x> in <k> job(s)",
+#     "best fit A2: stop requested <utc> (finalist <trial>)" and the same for A5,
+#     two "stop (block 30, amendment 6): a stop request stands (<utc>, finalist <trial>): ..." (best_fit_A2, best_fit_A5),
+#     two "cores (block 29, D-141): the jobs of search_A1, best_fit_A1 share at most 440 cores ...: at most 9 job(s) of 48 cores at once"
+cd ~/SBI && bash hpc/pipeline/run_pipeline.sh --project linddup --dry-run --accept-config-change 2>&1 | tee ~/pipeline_linddup_dry_d185.log | grep -E "REFUSE|STOP:|FAILED|cores of search|best fit A|a stop request stands|share at most 440" ; echo "exit ${PIPESTATUS[0]}"
+
+# M6. the submission, only on that dry run; pass lines: environment sbi_export: <prefix>, the same for sbi_env, then
+#     SUBMITTED the sequencer: job <id> (pl_linddup)
+cd ~/SBI && grep -q "cores of search A1: at most 440" ~/pipeline_linddup_dry_d185.log && [ "$(grep -c 'a stop request stands' ~/pipeline_linddup_dry_d185.log)" -eq 2 ] && ! grep -qE "REFUSE|STOP:|FAILED" ~/pipeline_linddup_dry_d185.log && bash hpc/pipeline/run_pipeline.sh --project linddup --accept-config-change || echo "NOT SUBMITTED: the dry run was not clean"
+
+# M7. a few minutes later (the new chain's first ticks); pass lines in the log, per arm (A2, A5):
+#     best_fit_A2: stop requested <utc> (stop-best-fit): the best fit of trial <trial> is abandoned: 3 running member job(s) to delete, nothing submitted, no ensemble
+#     best_fit_A2: member seed <k>: its job <id> deleted (stop-best-fit)                    (one per running member)
+#     best_fit_A2: member seed <k> stopped by the user (stop-best-fit) (job <id> exit <code>): killed, not resubmitted   (a tick or two later; 271 on PBS Pro)
+#     best_fit_A2: BEST FIT STOPPED (stop-best-fit): members ok 0, killed 3, cancelled 7; no ensemble; .../A2/linddup_best/BEST_FIT_STOPPED.json
+#     best_fit_A2: done: stopped by hand (stop-best-fit, requested <utc>): no ensemble; ...
+#   and in --status the rows best_fit_A2 and best_fit_A5 "done", and "cores of search A1: at most 440 ...; in flight"
+#   rising above 144 as soon as A1's round has more than 3 trials to run (up to 432 in 9 jobs)
+bash ~/SBI/hpc/pipeline/run_pipeline.sh --project linddup --status; grep -E "best_fit_A[25]: (stop requested|member seed|BEST FIT STOPPED|done)" /davinci-1/home/ldellamea/pipeline/linddup/pipeline.log | tail -n 20
+```
+
+`stop-best-fit` refuses (exit 2, nothing written) a synthetic configuration, a search that has not
+ended, and a best fit that has completed or was stopped already; run again, it leaves the standing
+request unchanged. A request the sequencer has not yet seen is withdrawn by removing
+`<runs_root>/<q>/linddup_best/STOP_REQUEST.json` by hand; once seen, the stop goes to its end. To fit
+a stopped best fit again: move its root aside, then submit with `--retry best_fit_<q>`. A1's best fit,
+after its search, also runs up to 9 members at once under the new cap.
+
 ## Tests
 
 ```
@@ -1231,6 +1292,7 @@ python3 hpc/pipeline/tests/test_smoke_block8.py        # block 8, about 1 min, e
 python3 hpc/pipeline/tests/test_smoke_inputs_check.py  # blocks 9 and 32, tools/inputs_check.py, a few seconds, numpy and the Sbi-extractor checkout (SBIX_CLONE)
 python3 hpc/pipeline/tests/test_smoke_runs.py          # block 29, several searches with their core caps, about 3 min, torch, sbi, skopt for its end to end
 python3 hpc/pipeline/tests/test_smoke_stop.py          # block 30, stop-search, about 1 min, the same
+python3 hpc/pipeline/tests/test_smoke_best_fit_stop.py # block 30's amendment 6, stop-best-fit, under a minute, stdlib and the fake PBS
 python3 hpc/joint/stage3/smoke_test_rep_pairs.py       # block 31, the replicate pair rule, about 1-2 min, the same
 python3 hpc/pipeline/tests/test_smoke_synthetic.py     # blocks 15-18, the synthetic kind: about 30 s with numpy and scipy, 2 min more with torch, sbi, zuko, skopt (T17 and T18 end to end)
 python3 hpc/pipeline/tests/test_smoke_evaluation.py    # blocks 19-23 and 28, the evaluation, the data overview and the comparisons' figures: builds a reduced project once (about 1 min, torch, sbi, zuko, skopt), then about 5 min; EVAL_FIXTURE=<dir> reuses one, EVAL_KEEP=1 keeps it

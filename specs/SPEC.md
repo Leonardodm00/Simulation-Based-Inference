@@ -5453,7 +5453,13 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   `hpc/pipeline/tests/test_smoke_stop.py` (new). The parser of
   `stop-search` and `cmd_stop_search` in `pipeline.py` are the contract's
   (they call `search_stop.cli`); the lines of `stages/search.py` that call
-  `replicate.runner_extra` are the contract's and stay.
+  `replicate.runner_extra` are the contract's and stay. [amendment 6,
+  2026-11-28, D-185: `hpc/pipeline/stages/best_fit_stop.py` (new),
+  `hpc/pipeline/stages/best_fit.py` (the start and the poll honour a best
+  fit's stop request; done(s) reads the stopped record; the root followed;
+  the dry run), `pipeline.py` (`stop-best-fit`, `cmd_stop_best_fit`, the
+  best fit's line in `search_lines`), `hpc/pipeline/tests/
+  test_smoke_best_fit_stop.py` (new).]
 - Command: `python3 hpc/pipeline/pipeline.py stop-search --config <cfg>
   [--search <name>] [--kill-running] [--cancel]`; on any login node; it
   writes or removes one file and submits nothing (D-098).
@@ -5531,6 +5537,112 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   and of the best fit that describe a trial's, a probe's and a member's
   argv show the `--runner-extra` text with the replicate flags (block 31)
   that the submitted argv carries.
+- [amendment 6, 2026-11-28, D-185] **A best fit stopped by hand.** The
+  user ends a best fit whose result will not be used and gives its cores to
+  the stages still running: on 2026-11-28 the best fits of A2 and A5, whose
+  real bank's control wells turned out to be bad wells (D-171, D-185), so
+  that A1's search gets the stages' whole share (its `max_cores` 440).
+  [the user's call of 2026-11-28, D-185; the command, the files and the
+  rules Claude's, on this block's pattern; Confirmed: the call yes
+  2026-11-28, the rules inferred -- to be gone through with the user. A
+  separate block was not opened: blocks 33-47 are `sci/tool`'s.]
+  - Command: `python3 hpc/pipeline/pipeline.py stop-best-fit --config
+    <cfg> [--search <name>]`; on any login node; it writes one file
+    (creating the best fit's root when it does not exist yet) and submits
+    nothing (D-098). No `--kill-running`: the running members' jobs are
+    always deleted (an abandoned fit has no use for them). No `--cancel`: a
+    request the sequencer has not yet seen is withdrawn by removing the file
+    by hand; once seen it is acted on to its end.
+  - The request file: `<root>/STOP_REQUEST.json`, the root being
+    `<paths.runs_root>/<dataset>_best` of the search's view (the folder of
+    finalist_config.json, the members and BEST_FIT_COMPLETE.json):
+    {"schema": "best_fit_stop/1", "requested_utc": ISO 8601 UTC,
+    "finalist": the trial id SEARCH_COMPLETE.json names as its finalist,
+    "user": str, "host": str}; ASCII JSON, sorted keys, written to a
+    temporary file in the same folder then `os.replace`d (`common.
+    write_json`).
+  - The command's rules (exit 0 with its last line; exit 2 with `REFUSED:
+    <reason>; nothing was written`): a synthetic configuration is refused
+    (its runs carry a second best fit, block 18, which the command does not
+    reach); `--search` as for `stop-search`; the search has not ended (no
+    SEARCH_COMPLETE.json): refused -- its best fit has not started;
+    SEARCH_COMPLETE.json unreadable or naming no finalist: refused;
+    BEST_FIT_COMPLETE.json naming the search's finalist: refused (one naming
+    another trial does not refuse: the start sets that root aside, block 7
+    (i)); BEST_FIT_STOPPED.json naming the search's finalist: refused; a
+    request naming the search's finalist already there: exit 0, the file
+    unchanged, the line ending `(already requested <utc>; unchanged)`; a
+    request naming another trial, or one that cannot be read, is replaced
+    and the line says so. Last line: `STOP REQUESTED: best fit of search
+    <name, or the campaign> (finalist <trial id>); at its next tick (every
+    driver.poll_seconds) the sequencer deletes the running member jobs,
+    submits none and ends the stage without an ensemble`.
+  - The stage (stages/best_fit.py; S8 and F_q; G_q of block 18 unchanged):
+    a request is acted on when it names the trial the stage fits (the
+    state's finalist) or cannot be read (then taken as one for that trial);
+    a request naming another trial is not acted on and is logged once
+    (`best_fit: the stop request <path> names trial <t>, not the finalist
+    <f> this best fit fits: not acted on`). The first request acted on is
+    kept in the stage's state (`stop_request`, its content) and the stop
+    goes on to its end whatever then happens to the file.
+    In the start, after the root is followed (block 7 (i)), the finalist
+    written and the members' existing records read: nothing is submitted;
+    every member without a record becomes `cancelled`; BEST_FIT_STOPPED.json
+    is written and the phase is `stopped`; the poll that follows returns
+    finished.
+    At every poll in the phase `members`, the jobs' states read as before:
+    nothing is submitted and nothing resubmitted, of any kind (a waiting
+    member, a kill, a node fault, a hold on an avoided node, an environment
+    fault); the last job of each running member whose job has not ended is
+    deleted (`pbs.delete` as above: the recorder's own when it has one, else
+    the adapter's qdel; the member records `stop_deleted` {"job", "utc",
+    "accepted", "attempts"}); a deletion the scheduler did not accept is
+    asked again at each poll while the job has not ended, so a job is
+    deleted once, when accepted; a running member whose last job has ended
+    becomes `ok` when its record exists and can be read (a member that ended
+    before the deletion took effect keeps its record), else `killed`, its
+    `why` `stopped by the user (stop-best-fit)` when the stop deleted its
+    job, `ended without a record after a stop request` otherwise; while a
+    member is running the poll returns running; then every waiting member
+    becomes `cancelled`, BEST_FIT_STOPPED.json is written, the phase is
+    `stopped`, and the poll returns finished. No ensemble is computed and no
+    BEST_FIT_COMPLETE.json is written. Log lines: when the request is first
+    acted on, `best_fit: stop requested <utc> (stop-best-fit): the best fit
+    of trial <tid> is abandoned: <n> running member job(s) to delete,
+    nothing submitted, no ensemble`; when the stage ends, `best_fit: BEST
+    FIT STOPPED (stop-best-fit): members ok <a>, killed <b>, cancelled
+    <c>[, failed <d>]; no ensemble; <path>` (failed: a member that had
+    failed before the request stays failed). Without a request the stage is
+    unchanged (regression).
+  - The stopped record `<root>/BEST_FIT_STOPPED.json`: {"schema":
+    "best_fit_stopped/1", "dataset", "finalist" (the state's, as in
+    BEST_FIT_COMPLETE.json), "stop_request" (the request acted on),
+    "members": [{"seed", "status", "jobs", "resubmits", "record", "L",
+    "stop_deleted"}] in `best_fit.member_seeds` order, "stopped_utc",
+    "config_sha256"}; written as the request.
+  - done(s) of S8 and F_q: BEST_FIT_COMPLETE.json as in block 7 (i);
+    without it, BEST_FIT_STOPPED.json exists, SEARCH_COMPLETE.json exists,
+    and the trial the stopped record names as its finalist is the search's:
+    done, reason `stopped by hand (stop-best-fit, requested <utc>): no
+    ensemble; <path>`. So verify ends the stage `done`, its jobs leave the
+    count of cores in flight (cores_in_flight counts the stages not done),
+    and a pending stage with such a record is `skipped`. A stopped record
+    naming another trial, or one that cannot be read: not done, the reason
+    naming what fails.
+  - The root followed (block 7 (i)): a BEST_FIT_STOPPED.json naming another
+    trial, or one that cannot be read, makes the root another finalist's,
+    as BEST_FIT_COMPLETE.json does (moved aside whole, D-095); a
+    STOP_REQUEST.json alone never does. To fit it again: move the root aside
+    by hand (or remove its BEST_FIT_STOPPED.json and STOP_REQUEST.json),
+    then submit with `--retry best_fit_<q>`.
+  - `best_fit_stop.status_line(view)`: None without a request; else `stop
+    requested <utc> (finalist <tid>)`, with `; stopped
+    (BEST_FIT_STOPPED.json)` once a stopped record names that finalist, and
+    the file's problem when it cannot be read; `status` and the dry run
+    print it after the search's lines as `best fit <name>: <line>`
+    (`search_lines`, a configuration with a searches list). The best fit's
+    dry run, while a request stands and the stage has not stopped, adds one
+    line on what the next tick does (`stop (block 30, amendment 6): ...`).
 - Test oracles (`tests/test_smoke_stop.py`, the fake PBS and the stand-in
   runner): T30a the command -- each refusal (ended search, no completed
   trial, `--search` missing or unknown on a list configuration, given on a
@@ -5545,11 +5657,51 @@ the rules Claude's, approved with the plan; Confirmed: yes 2026-11-17]
   trial failing of a node fault after a request is not resubmitted. T30e a
   configuration with a searches list: the request stops that search only;
   the other searches go on.
+  [amendment 6, D-185; `tests/test_smoke_best_fit_stop.py`; T30f-T30k
+  stdlib, the stage driven in this process with a recorder as above; T30l
+  under the fake PBS; nothing trains] T30f the command: each refusal with
+  nothing written (every file's bytes and mtime) -- synthetic, `--search`
+  missing or unknown on a list configuration, given on a null one, the
+  search not ended, SEARCH_COMPLETE.json unreadable or naming no finalist,
+  complete, stopped; the request's file and content (keys, schema,
+  finalist, ISO 8601 UTC, ASCII, sorted keys, no temporary file left); the
+  root created when absent; the repeat (exit 0, the file unchanged); a
+  request naming another trial, and one that cannot be read, replaced;
+  status_line; the command through `pipeline.py`. T30g the poll: members
+  ok, running (three) and waiting: after a request the three running
+  members' jobs deleted once, nothing submitted, the poll running while
+  they have not ended; once ended, killed with the reason and none
+  resubmitted (resubmissions left); a member whose record was written
+  before the deletion stays ok; the waiting ones cancelled; the poll
+  finished; BEST_FIT_STOPPED.json's content; no ensemble (the tool never
+  called), no BEST_FIT_COMPLETE.json; verify ok with the reason. T30h under
+  a request a hold (exit 94), an environment fault (exit 96), a node fault
+  (SIGBUS) and a walltime kill are each killed, never resubmitted (the same
+  members without a request are all submitted again). T30i the start under
+  a request: nothing submitted, the members without a record cancelled,
+  one with a record ok, the stopped record, the poll finished. T30j a
+  request naming another trial: not acted on (one line); a request that
+  cannot be read: acted on; the file removed after the stop was seen: the
+  stop goes on. T30k done(s) and the root: the stopped record of the
+  search's finalist done, of another trial not done and the root set aside
+  at the start (D-095), an unreadable one the same; G_q's done(s)
+  unchanged. T30l on a copy of the committed linddup.json (A1's cap 440)
+  at the sequencer's level (the fake PBS; a stand-in for A1's search
+  submitting 48-core jobs as long as `fits` allows; the real best-fit
+  stages of A2 and A5 on a state holding three running members each): A1
+  runs 3 jobs; after `stop-best-fit` for A2 and A5 the sequencer deletes
+  the six member jobs (Exit_status 271), ends both best fits `done`,
+  submits nothing for them, and A1 runs 9 jobs of 48 (432 cores, inside the
+  stages' 440).
 - Regression: `test_smoke_block7.py`, `test_smoke_identity.py`,
   `test_smoke_finalist.py`, `test_smoke_report.py` pass as at the contract
-  commit.
+  commit. [amendment 6: and `test_smoke_stop.py`, `test_smoke_runs.py`,
+  `test_smoke_block7b.py`, `test_smoke_block7c.py`, `test_smoke_synthetic.py`
+  as at its parent commit; the two suites that read the committed
+  linddup.json's caps, `test_smoke_runs.py` (t29a (3)) and
+  `test_smoke_inputs_check.py` (T32a's searches row), expect A1's 440.]
 - Custom code: none.
-- Status: [Reopened 2026-11-17 by contract amendment 5 (F1: the reset tool sets the request aside);
+- Status: [Reopened 2026-11-28 by amendment 6 (D-185): drafted.] Before: [Reopened 2026-11-17 by contract amendment 5 (F1: the reset tool sets the request aside);
   smoke-tested again 2026-11-17 (block 30c, merged 79f882d): `test_smoke_reset.py`
   6 pass, 1 skip, its new `test_stop_request` (the CODE changes when a request
   appears; a search ended user_stop reset with --confirm: the request listed, moved
@@ -5816,6 +5968,8 @@ plan; Confirmed: yes 2026-11-17]
 | `python3 hpc/joint/stage4/smoke_test_joint_tune.py -k J37` | block 18's tuner check: `finalists --arm/--out` | numpy, scikit-optimize | seconds |
 | `python3 hpc/pipeline/pipeline.py stop-search --config <cfg> [--search <name>] [--kill-running] [--cancel]` | block 30: stop a search by hand (one file; the sequencer acts at its next tick) | a project's configuration | seconds |
 | `python3 hpc/pipeline/tests/test_smoke_runs.py`, `test_smoke_stop.py` | blocks 29 and 30 under the fake PBS | none for the config, graph and cap checks; the training environment for the end to end | minutes |
+| `python3 hpc/pipeline/pipeline.py stop-best-fit --config <cfg> [--search <name>]` | block 30, amendment 6: stop a best fit by hand (one file; at its next tick the sequencer deletes the running member jobs and ends the stage without an ensemble) | a project's configuration | seconds |
+| `python3 hpc/pipeline/tests/test_smoke_best_fit_stop.py` | block 30's amendment 6 in this process and under the fake PBS (T30l: A1 gets the cores the stopped best fits held) | none (stdlib and the fake PBS) | under a minute |
 | `python3 hpc/joint/stage3/smoke_test_rep_pairs.py` | block 31: the replicate pair rule and the runner's flags | the training environment (torch, sbi, zuko) | about a minute |
 | `bash hpc/pipeline/evaluation/submit_eval.sh --project synth --what data [--dry-run]` | block 23: the data overview's job (`ev_dataview.py`): the windows, the eight statistics, theta and the PCA of the synthetic data set, nine figures | davinci (the tests: the reduced project under the fake PBS) | about a minute on 4,000 + 648 windows |
 

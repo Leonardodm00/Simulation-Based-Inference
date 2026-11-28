@@ -28,8 +28,9 @@ Checks (specs/SPEC.md blocks 9 and 32, "Test oracles")
                         OK with 35 wells, 5 excluded, 2 donors, 4 pairing
                         groups, control 17 and pathological 13 included
                         (D-144..D-146); topology metadata OK; partial
-                        topologies NOTE with 0; the searches NOTE (A1, A2,
-                        A5 at 148 cores, 444 against 444); the plan's
+                        topologies NOTE with 0; the searches NOTE (A1 at
+                        440 cores since D-185, A2 and A5 at 148, 736
+                        against 444); the plan's
                         --quiet-hours 1 leaves nothing out (D-112, D-155); the job
                         protocol's files on both sides (D-113); exit 0 and
                         the last line
@@ -586,9 +587,9 @@ def test_known_answer():
             rows["partial topologies"]
         sq = rows["searches"]
         assert sq["status"] == "NOTE" and sq["text"] == (
-            "3 search(es): A1: S-A1, max_cores 148; A2: S-A2-only, max_cores 148; A5: S-A5-only, "
-            "max_cores 148; the caps add up to 444 cores against resources.max_cores 444 (the "
-            "sequencer's job takes 4 of them)"), sq
+            "3 search(es): A1: S-A1, max_cores 440; A2: S-A2-only, max_cores 148; A5: S-A5-only, "
+            "max_cores 148; the caps add up to 736 cores against resources.max_cores 444 (the "
+            "sequencer's job takes 4 of them)"), sq    # D-185, 2026-11-28: A1's cap 440
     finally:
         cleanup(root)
 

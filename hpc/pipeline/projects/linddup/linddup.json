@@ -1,5 +1,5 @@
 {
-  "_comment": "The LindDUP data set's pipeline configuration, v11 (2026-11-17; decisions D-104..D-109, D-112..D-114, D-138..D-151 and D-155 of docs/project/SBI_decisions_and_ideas_log.md on SBI main; 2026-11-18, D-155: S2's quiet window 1 h, was 6 h). LindDUP (D-104): the joint DSN+NPE stack trained on the LindaColloDUP15 campaign lcdup15_rho1300_neur_n01 (D-138: it replaces MEAMA completely; neurons only, 159 CAdEx cells, 180 s; trained as it is, D-139) and the DUP15HD recordings (DATA_C control and DATA_P DUP, the cohort of record extracted_v2). Three arms, each searched and fitted on the same banks (D-140, D-148 (1)): A1, A2 and A5, each with 148 cores (D-141). Every key is required; a key starting with '_' documents the key after it and is ignored. Values not yet read on the data are marked [to verify]: tools/inputs_check.py reads them on davinci before the first submission.",
+  "_comment": "The LindDUP data set's pipeline configuration, v11 (2026-11-17; decisions D-104..D-109, D-112..D-114, D-138..D-151 and D-155 of docs/project/SBI_decisions_and_ideas_log.md on SBI main; 2026-11-18, D-155: S2's quiet window 1 h, was 6 h; 2026-11-28, D-185: A1's max_cores 440, was 148, once the best fits of A2 and A5 are stopped by hand, block 30, amendment 6). LindDUP (D-104): the joint DSN+NPE stack trained on the LindaColloDUP15 campaign lcdup15_rho1300_neur_n01 (D-138: it replaces MEAMA completely; neurons only, 159 CAdEx cells, 180 s; trained as it is, D-139) and the DUP15HD recordings (DATA_C control and DATA_P DUP, the cohort of record extracted_v2). Three arms, each searched and fitted on the same banks (D-140, D-148 (1)): A1, A2 and A5, each with 148 cores (D-141). Every key is required; a key starting with '_' documents the key after it and is ignored. Values not yet read on the data are marked [to verify]: tools/inputs_check.py reads them on davinci before the first submission.",
   "config_version": 11,
   "dataset": "linddup",
   "_paths": "Where everything lives on davinci (absolute; no '~'). The two repositories are the checkouts Giulia uses; every LindDUP folder carries linddup (D-104).",
@@ -84,12 +84,12 @@
       0.05
     ]
   },
-  "_searches": "The three arms (D-140, D-148 (1); block 29), each its own search and best fit on the same banks, in this order, each capped at 148 cores (D-141: 3 jobs of 48 at once): A1 (S-A1: encoder and flow on the simulations alone), A2 (S-A2-only: the DSN term on the recordings' condition labels always on) and A5 (S-A5-only: the replicate term always on). Their term weights are searched as now, log10 lambda in [-3, 1], ranked on the simulated report NLL (D-149). Folders: <tune_root>/<name>/<campaign>, <runs_root>/<name>/linddup_best. Stop a search by hand with `pipeline.py stop-search --search <name>` (block 30): its best fit then starts on the best trial so far.",
+  "_searches": "The three arms (D-140, D-148 (1); block 29), each its own search and best fit on the same banks, in this order, each capped at 148 cores (D-141: 3 jobs of 48 at once): A1 (S-A1: encoder and flow on the simulations alone), A2 (S-A2-only: the DSN term on the recordings' condition labels always on) and A5 (S-A5-only: the replicate term always on). Their term weights are searched as now, log10 lambda in [-3, 1], ranked on the simulated report NLL (D-149). Folders: <tune_root>/<name>/<campaign>, <runs_root>/<name>/linddup_best. Stop a search by hand with `pipeline.py stop-search --search <name>` (block 30): its best fit then starts on the best trial so far. 2026-11-28 (D-171, D-185): the real bank's control wells are bad wells, so the best fits of A2 and A5 are abandoned (`pipeline.py stop-best-fit --search <name>`, block 30, amendment 6) and A1's cap is 440, the stages' whole share (resources.max_cores 444 less the sequencer's 4): 9 jobs of 48 at once.",
   "searches": [
     {
       "name": "A1",
       "campaign": "S-A1",
-      "max_cores": 148
+      "max_cores": 440
     },
     {
       "name": "A2",
@@ -138,7 +138,7 @@
     "n_initial_points": 50,
     "gp_rounds": 20,
     "trials_per_round": 10,
-    "_max_concurrent_trials": "Giulia's 25; each arm's 148 cores hold 3 trials of 48 at once (block 29's per-search cap).",
+    "_max_concurrent_trials": "Giulia's 25; each arm's 148 cores hold 3 trials of 48 at once (block 29's per-search cap); from 2026-11-28 (D-185) A1's 440 hold 9.",
     "max_concurrent_trials": 25,
     "_seeds": "Giulia's (D-114): gp_seed 1, train_seed 0 (one donor split for every trial of every arm).",
     "gp_seed": 1,
@@ -203,7 +203,7 @@
     "walltime": "24:00:00",
     "poll_seconds": 60
   },
-  "_resources": "D-141: 148 cores per arm, 444 for the project; the stages' jobs share 440 beside the sequencer's 4 (S2 runs 9 tasks of 48 at once, each arm 3 jobs of 48).",
+  "_resources": "D-141: 148 cores per arm, 444 for the project; the stages' jobs share 440 beside the sequencer's 4 (S2 runs 9 tasks of 48 at once, each arm 3 jobs of 48). 2026-11-28 (D-185): A1's cap 440, so with A2's and A5's best fits stopped A1 holds up to 9 jobs of 48 (432 cores).",
   "resources": {
     "max_cores": 444
   }

@@ -113,6 +113,9 @@ PYTHON = sys.executable
 THREE = [{"name": "A1", "campaign": "S-A1", "max_cores": 148},
          {"name": "A2", "campaign": "S-A2-only", "max_cores": 148},
          {"name": "A5", "campaign": "S-A5-only", "max_cores": 148}]
+# the committed linddup.json's caps (v11; D-141, and D-185 of 2026-11-28: A1's 440 once the
+# best fits of A2 and A5 are stopped by hand, block 30, amendment 6)
+COMMITTED_CAPS = {"A1": 440, "A2": 148, "A5": 148}
 WANT12 = ["real_extraction", "sim_redetection", "label_freeze", "bank_plan", "sim_bank",
           "real_bank", "search_A1", "best_fit_A1", "search_A2", "best_fit_A2", "search_A5",
           "best_fit_A5"]
@@ -272,7 +275,8 @@ def _capture(fn, *args):
 
 def _check_graph12(graph, cap):
     """The 12 stages of a recorded configuration with the three searches,
-    their deps (sec. 2.1) and core groups (`cap` for each search)."""
+    their deps (sec. 2.1) and core groups (`cap` for each search: one
+    number, or {search: cap})."""
     names = [s.name for s in graph]
     assert names == WANT12, names
     assert "search" not in names and "best_fit" not in names, names
@@ -288,7 +292,7 @@ def _check_graph12(graph, cap):
         assert type(s7) is search_cls and type(s8) is best_fit_cls, (type(s7), type(s8))
         assert tuple(s7.deps) == ("sim_bank", "real_bank"), s7.deps
         assert tuple(s8.deps) == ("search_" + q,), s8.deps
-        want = (cap, ("search_" + q, "best_fit_" + q))
+        want = (cap[q] if isinstance(cap, dict) else cap, ("search_" + q, "best_fit_" + q))
         assert s7.core_group == s8.core_group == want, (q, s7.core_group, s8.core_group)
         assert R.core_group_of(s7) == R.core_group_of(s8) == want
 
@@ -358,7 +362,7 @@ def test_t29a_graph():
         assert all(getattr(s, "core_group", None) is None for s in S.default_graph(syn))
         # (3) the committed linddup.json: the 12 stages, and its dry run
         lind = C.load_config(LINDDUP)
-        _check_graph12(S.default_graph(lind), 148)
+        _check_graph12(S.default_graph(lind), COMMITTED_CAPS)
         dry_cfg = LINDDUP
         if os.path.isdir(lind.data["paths"]["work_root"]):
             # davinci after the first run: the dry run would read that run's state (a
@@ -379,9 +383,9 @@ def test_t29a_graph():
         assert [ln.split("|")[1].strip() for ln in table[1:]] == WANT12, table
         k = lines.index("cores: at most 444 at once (resources.max_cores, D-099): the sequencer's "
                         "job 4, the stages' jobs 440; in flight per the state file: 0 in 0 job(s)")
-        assert lines[k + 1:k + 4] == ["cores of search %s: at most 148 (searches[].max_cores); in "
-                                      "flight 0 in 0 job(s)" % q for q in ("A1", "A2", "A5")], \
-            lines[k:k + 5]
+        assert lines[k + 1:k + 4] == ["cores of search %s: at most %d (searches[].max_cores); in "
+                                      "flight 0 in 0 job(s)" % (q, COMMITTED_CAPS[q])
+                                      for q in ("A1", "A2", "A5")], lines[k:k + 5]
         tune = lind.data["paths"]["tune_root"]
         banks = lind.data["paths"]["banks_root"]
         assert ("    run A1: campaign S-A1, folder %s/A1/S-A1; the runner gets the simulated bank "
@@ -392,18 +396,21 @@ def test_t29a_graph():
                     "%s/linddup_sim/shard_*.npz and the real bank %s/linddup_real/shard_*.npz"
                     % (q, camp, tune, q, camp, banks, banks)) in lines, (q, out[-4000:])
         group_line = ("    cores (block 29, D-141): the jobs of search_%s, best_fit_%s share at most "
-                      "148 cores (searches[].max_cores), inside resources.max_cores: at most 3 "
+                      "%d cores (searches[].max_cores), inside resources.max_cores: at most %d "
                       "job(s) of 48 cores at once")
         for q in ("A1", "A2", "A5"):
-            assert lines.count(group_line % (q, q)) == 2, (q, out[-4000:])   # the search, the best fit
+            c = COMMITTED_CAPS[q]
+            assert lines.count(group_line % (q, q, c, c // 48)) == 2, (q, out[-4000:])  # S7, S8
         # [the orchestrator's fix after the wave] D-099's own lines state the run's room too:
-        # min(440 // 48 = 9, 148 // 48 = 3) = 3, as the Submitter counts (9 before the fix)
-        assert lines.count("    cores (D-099): at most 3 trial(s) at once -- max_concurrent_trials 25, "
-                           "and the cap leaves room for 3 of 48 cores each; the gate's probes "
-                           "likewise") == 3, out[-4000:]
-        assert lines.count("    cores (D-099): at most 3 member(s) at once -- the cap leaves room "
-                           "for 3 of 48 cores each") == 3, out[-4000:]
-        assert "leaves room for 9 of 48" not in out, out[-4000:]
+        # min(440 // 48 = 9, 148 // 48 = 3) = 3, as the Submitter counts (9 before the fix);
+        # [D-185, 2026-11-28] A1's cap 440: min(9, 440 // 48 = 9) = 9 for its two lines
+        for n, k_lines in ((3, 2), (9, 1)):
+            assert lines.count("    cores (D-099): at most %d trial(s) at once -- max_concurrent_trials "
+                               "25, and the cap leaves room for %d of 48 cores each; the gate's "
+                               "probes likewise" % (n, n)) == k_lines, (n, out[-4000:])
+            assert lines.count("    cores (D-099): at most %d member(s) at once -- the cap leaves "
+                               "room for %d of 48 cores each" % (n, n)) == k_lines, (n, out[-4000:])
+        assert out.count("leaves room for 9 of 48") == 2, out[-4000:]     # A1's two lines only
         assert out.count("qsub -N t_<trial>") == 3 and out.count("qsub -N bf_linddu_s<k>") == 3, \
             out[-4000:]
         if dry_cfg == LINDDUP:

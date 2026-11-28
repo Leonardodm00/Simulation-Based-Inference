@@ -43,6 +43,16 @@ finalist_config.json naming the current one) is moved aside whole
 (`<root>.set_aside<k>`, D-095) and the finalist is fitted again; a root of
 the current finalist is kept and its member records are reused.
 
+[block 30, amendment 6, 2026-11-28, D-185] A best fit stopped by hand (`pipeline.py
+stop-best-fit`, stages/best_fit_stop.py): a STOP_REQUEST.json in the root
+naming the trial the stage fits (or that cannot be read) is acted on at the
+start or at the next poll of the phase members, and kept in the state
+(`stop_request`) to its end: nothing is submitted or resubmitted, the last
+job of each running member is deleted, a member whose job ended is ok with a
+readable record and killed without one, the waiting members are cancelled,
+no ensemble is computed; when no member runs, BEST_FIT_STOPPED.json is
+written and the stage ends done (done(s) reads it, S8 and F_q only).
+
 Pure ASCII, LF only; stdlib only; Python 3.6 syntax.
 """
 
@@ -53,6 +63,7 @@ import shutil
 import tempfile
 
 from . import DEPS, Stage
+from . import best_fit_stop as BFS    # [block 30 (6)] a best fit stopped by hand
 from . import common as CM
 from . import replicate as RP    # [block 31] the replicate flags
 
@@ -84,6 +95,9 @@ class BestFitStage(Stage):
                 "finalist_config": os.path.join(root, "finalist_config.json"),
                 "ensemble": os.path.join(root, "ensemble_nll.json"),
                 "complete": os.path.join(root, COMPLETE_FILE),
+                # [block 30 (6)] the stop by hand: the request and the stopped record
+                "stop_request": os.path.join(root, BFS.STOP_FILE),
+                "stopped": os.path.join(root, BFS.STOPPED_FILE),
                 "search_complete": os.path.join(d["paths"]["tune_root"], d["search"]["campaign"],
                                                 "SEARCH_COMPLETE.json")}
 
@@ -134,10 +148,14 @@ class BestFitStage(Stage):
         """(done, reason): BEST_FIT_COMPLETE.json exists, SEARCH_COMPLETE.json
         exists, and the trial the artefact names as its finalist is the
         search's finalist (G_q: the search finalist the artefact recorded is
-        the search's). The reason names the condition that fails."""
+        the search's). The reason names the condition that fails. [block 30 (6)]
+        Without the artefact, S8 and F_q are also done when BEST_FIT_STOPPED.json
+        names the search's finalist (a best fit stopped by hand)."""
         dirs = self._dirs(cfg)
         art, sc_path = dirs["complete"], dirs["search_complete"]
         if not os.path.isfile(art):
+            if self._fits_search_finalist() and os.path.lexists(dirs["stopped"]):
+                return self._stopped_done(cfg)
             return False, "%s absent" % art
         if not os.path.isfile(sc_path):
             return False, ("%s exists, but %s is absent: the search's finalist cannot be checked"
@@ -163,6 +181,33 @@ class BestFitStage(Stage):
                 return False, ("%s was fitted for the search's finalist %s, but the search's "
                                "finalist is %s (%s)" % (art, got or "(none)", want, sc_path))
         return True, art
+
+    def _stopped_done(self, cfg):
+        """[block 30 (6)] (done, reason) of a root holding BEST_FIT_STOPPED.json:
+        done when SEARCH_COMPLETE.json exists and both name the same
+        finalist; the reason names the condition that fails."""
+        dirs = self._dirs(cfg)
+        sp, sc_path = dirs["stopped"], dirs["search_complete"]
+        if not os.path.isfile(sc_path):
+            return False, ("%s exists, but %s is absent: the search's finalist cannot be checked"
+                           % (sp, sc_path))
+        obj, problem = CM.try_read_json(sp)
+        if obj is None:
+            return False, "%s unreadable (%s)" % (sp, problem)
+        sc, problem = CM.try_read_json(sc_path)
+        if sc is None:
+            return False, "%s exists, but %s is unreadable (%s)" % (sp, sc_path, problem)
+        want = _trial_of(sc.get("finalist"))
+        if want is None:
+            return False, "%s exists, but %s names no finalist" % (sp, sc_path)
+        got = _trial_of(obj.get("finalist"))
+        if got != want:
+            return False, ("%s names the finalist %s, but the search's finalist is %s (%s)"
+                           % (sp, got or "(none)", want, sc_path))
+        req = obj.get("stop_request")
+        utc = req.get("requested_utc") if isinstance(req, dict) else None
+        return True, ("stopped by hand (stop-best-fit, requested %s): no ensemble; %s"
+                      % (utc or "?", sp))
 
     def _current_finalist_id(self, cfg):
         """The trial this stage fits now, read without writing in its root:
@@ -216,6 +261,14 @@ class BestFitStage(Stage):
             tid = _trial_of(obj.get("finalist"))
             if tid != current:
                 return "its %s names trial %s" % (COMPLETE_FILE, tid or "(none)")
+        if os.path.lexists(dirs["stopped"]):
+            # [block 30 (6)] a stopped record of another trial: as the artefact's
+            obj, problem = CM.try_read_json(dirs["stopped"])
+            if obj is None:
+                return "its %s is unreadable (%s)" % (BFS.STOPPED_FILE, problem)
+            tid = _trial_of(obj.get("finalist"))
+            if tid != current:
+                return "its %s names trial %s" % (BFS.STOPPED_FILE, tid or "(none)")
         if not names_current:
             recs = self._member_records_any(cfg)
             if recs:
@@ -493,6 +546,163 @@ class BestFitStage(Stage):
         return any(k in tail for k in ("Traceback (most recent call last)", "REFUSE", "FATAL",
                                         "usage: run_joint_arms"))
 
+    # ------------------------- a stop by hand (block 30, amendment 6) ---
+
+    def _stop_request(self, cfg, st, log):
+        """The stop request this stage acts on, or None: the one kept in the
+        state once acted on (`stop_request`), else the root's STOP_REQUEST.json
+        when it names the trial the stage fits or cannot be read (then taken
+        as one for that trial). A request naming another trial is not acted
+        on, logged once. S8 and F_q only: G_q fits a finalist of its own and
+        no command writes its request."""
+        if not self._fits_search_finalist():
+            return None
+        sub = st["sub"]
+        current = _trial_of(sub.get("finalist"))
+        held = sub.get("stop_request")
+        if held is not None:
+            if held.get("finalist") in (None, current):
+                return held
+            sub.pop("stop_request", None)        # another finalist's: the root was followed
+        path = self._dirs(cfg)["stop_request"]
+        req = BFS.read_request_at(path)
+        if req is None:
+            return None
+        if not req.get("problem") and req.get("finalist") != current:
+            key = [req.get("requested_utc"), req.get("finalist")]
+            if sub.get("stop_ignored") != key:
+                sub["stop_ignored"] = key
+                log("best_fit: the stop request %s names trial %s, not the finalist %s this best "
+                    "fit fits: not acted on" % (path, req.get("finalist") or "(none)", current))
+            return None
+        if req.get("problem"):
+            log("best_fit: the stop request %s cannot be read (%s): taken as a request for trial %s"
+                % (path, req["problem"], current))
+        sub["stop_request"] = dict(req)
+        n = sum(1 for m in sub.get("members", {}).values() if m.get("status") == "running")
+        log("best_fit: stop requested %s (stop-best-fit): the best fit of trial %s is abandoned: "
+            "%d running member job(s) to delete, nothing submitted, no ensemble"
+            % (req.get("requested_utc") or "?", current, n))
+        return sub["stop_request"]
+
+    def _poll_stop(self, cfg, st, pbs, req, by_id, log):
+        """A poll (or the start) under a stop request: nothing is submitted or
+        resubmitted; the last job of each running member whose job has not
+        ended is deleted (`stop_deleted`; asked again at each poll until the
+        scheduler accepts it); a running member whose job has ended is ok
+        with a readable record, else killed; when no member runs, the waiting
+        ones are cancelled, BEST_FIT_STOPPED.json is written, the phase is
+        `stopped` and the stage finishes."""
+        b = cfg.data["best_fit"]
+        members = st["sub"]["members"]
+        for seed in b["member_seeds"]:
+            m = members[str(seed)]
+            if m["status"] != "running":
+                continue
+            if not m["jobs"]:
+                m["status"] = "cancelled"              # never submitted: nothing to delete
+                continue
+            jid = m["jobs"][-1]
+            job = by_id.get(jid)
+            if job is not None and job.get("finished"):
+                self._stop_member_ended(cfg, st, seed, job, log)
+                continue
+            sd = m.get("stop_deleted")
+            if sd is not None and sd.get("accepted"):
+                continue                               # deleted: it ends when the scheduler says
+            accepted = BFS.delete_job(pbs, jid)
+            if sd is None:
+                m["stop_deleted"] = {"job": jid, "utc": CM.utc_now(), "accepted": accepted,
+                                     "attempts": 1}
+                log("best_fit: member seed %d: its job %s %s (stop-best-fit)"
+                    % (int(seed), jid, "deleted" if accepted
+                       else "not deleted (the scheduler refused or had it ended already): asked "
+                            "again at each tick until it ends"))
+            else:
+                sd["attempts"] = int(sd.get("attempts", 1)) + 1
+                if accepted:
+                    sd["accepted"] = True
+                    sd["accepted_utc"] = CM.utc_now()
+                    log("best_fit: member seed %d: its job %s deleted (stop-best-fit, attempt %d)"
+                        % (int(seed), jid, sd["attempts"]))
+        if any(members[str(s)]["status"] == "running" for s in b["member_seeds"]):
+            return "running"
+        for seed in b["member_seeds"]:
+            m = members[str(seed)]
+            if m["status"] == "waiting":
+                m["status"] = "cancelled"
+                m.pop("resume_next", None)
+        self._write_stopped(cfg, st, req, log)
+        st["sub"]["phase"] = "stopped"
+        return "finished"
+
+    def _stop_member_ended(self, cfg, st, seed, job, log):
+        """A running member whose last job ended under a stop request: ok when
+        its record exists and can be read (it ended before the deletion took
+        effect), else killed with the stop's reason; never resubmitted."""
+        m = st["sub"]["members"][str(seed)]
+        rec = self._member_record(cfg, seed)
+        if rec is not None:
+            obj, _ = CM.try_read_json(rec)
+            if obj is not None:
+                m["status"] = "ok"
+                m["record"] = rec
+                m["L"] = obj.get("L")
+                log("best_fit: member seed %d ended with its record before the stop took effect: "
+                    "kept, L %s (%s)" % (int(seed), m["L"], rec))
+                return
+        why = BFS.STOP_KILLED if m.get("stop_deleted") else BFS.STOP_ENDED
+        m["status"] = "killed"
+        m["why"] = "member seed %d: %s (last job %s exit %s)" % (int(seed), why, job["id"],
+                                                                 job.get("exit_status"))
+        log("best_fit: member seed %d %s (job %s exit %s): killed, not resubmitted"
+            % (int(seed), why, job["id"], job.get("exit_status")))
+
+    def _write_stopped(self, cfg, st, req, log):
+        """BEST_FIT_STOPPED.json: the finalist, the request acted on, every
+        member as it ended (block 30, amendment 6)."""
+        d = cfg.data
+        sub = st["sub"]
+        dirs = self._dirs(cfg)
+        members, counts = [], {}
+        for seed in d["best_fit"]["member_seeds"]:
+            m = sub["members"][str(seed)]
+            members.append({"seed": int(seed), "status": m["status"], "jobs": list(m["jobs"]),
+                            "resubmits": m.get("resubmits", 0), "record": m.get("record"),
+                            "L": m.get("L"), "stop_deleted": m.get("stop_deleted")})
+            counts[m["status"]] = counts.get(m["status"], 0) + 1
+        rec = {"schema": BFS.STOPPED_SCHEMA, "dataset": d["dataset"], "finalist": sub["finalist"],
+               "stop_request": dict(req), "members": members, "stopped_utc": CM.utc_now(),
+               "config_sha256": cfg.sha256}
+        CM.write_json(dirs["stopped"], rec)
+        log("best_fit: BEST FIT STOPPED (stop-best-fit): members ok %d, killed %d, cancelled %d%s; "
+            "no ensemble; %s" % (counts.get("ok", 0), counts.get("killed", 0),
+                                 counts.get("cancelled", 0),
+                                 (", failed %d" % counts["failed"]) if counts.get("failed") else "",
+                                 dirs["stopped"]))
+
+    def _dry_run_stop_lines(self, cfg, st):
+        """The dry run's word on a stop request (block 30, amendment 6); reads
+        only."""
+        if not self._fits_search_finalist():
+            return []
+        dirs = self._dirs(cfg)
+        sub = st.get("sub") or {}
+        req = sub.get("stop_request") or BFS.read_request_at(dirs["stop_request"])
+        if req is None:
+            return []
+        sc, _ = (CM.try_read_json(dirs["search_complete"])
+                 if os.path.isfile(dirs["search_complete"]) else (None, None))
+        current = _trial_of(sc.get("finalist")) if sc else None
+        fin = req.get("finalist")
+        if not req.get("problem") and fin is not None and current is not None and fin != current:
+            return ["stop (block 30, amendment 6): the stop request %s names trial %s, not the "
+                    "search's finalist %s: not acted on" % (dirs["stop_request"], fin, current)]
+        return ["stop (block 30, amendment 6): a stop request stands (%s, finalist %s): at its "
+                "next tick the sequencer deletes the running member jobs, submits none, cancels "
+                "the waiting members and ends the stage once no member job runs (%s; no ensemble)"
+                % (req.get("requested_utc") or "?", fin or current or "?", dirs["stopped"])]
+
     # --------------------------------------------------------- ensemble ---
 
     def _ensemble(self, cfg, st, log_path, log):
@@ -570,6 +780,11 @@ class BestFitStage(Stage):
             elif m["status"] == "failed":
                 m["status"] = "waiting"                # a --retry: the member again
         sub["phase"] = "members"
+        # [block 30 (6)] a stop request: nothing is submitted, the stage stops
+        req = self._stop_request(cfg, st, pbs.log)
+        if req is not None:
+            self._poll_stop(cfg, st, pbs, req, {}, pbs.log)
+            return
         self._submit_waiting(cfg, st, pbs)
 
     def _submit_waiting(self, cfg, st, pbs):
@@ -600,7 +815,13 @@ class BestFitStage(Stage):
                 job["state"] = js.state
                 job["host"] = getattr(js, "exec_host", None)       # D-111
         by_id = dict((j["id"], j) for j in st["jobs"])
+        if sub.get("phase") == "stopped":
+            return "finished"                          # [block 30 (6)] stopped at the start
         if sub.get("phase") == "members":
+            # [block 30 (6)] a stop request: the members' jobs deleted, nothing submitted
+            req = self._stop_request(cfg, st, log)
+            if req is not None:
+                return self._poll_stop(cfg, st, pbs, req, by_id, log)
             for seed in b["member_seeds"]:
                 m = sub["members"][str(seed)]
                 if m["status"] != "running" or not m["jobs"]:
@@ -656,7 +877,8 @@ class BestFitStage(Stage):
                          os.path.join(dirs["jobs"], "member_seed<k>.<n>.argv"), p["stage4"],
                          avoid_file=CM.avoid_file(cfg))
         q[2] = "%s_%s_s<k>" % (self.job_prefix, d["dataset"][:6])
-        return self._dry_run_root_lines(cfg) + ["cores (D-099): at most %s member(s) at once -- the cap leaves room for %s of %d "
+        return self._dry_run_root_lines(cfg) + self._dry_run_stop_lines(cfg, st) + [
+                "cores (D-099): at most %s member(s) at once -- the cap leaves room for %s of %d "
                 "cores each" % (CM.cap_room(cfg, b["ncpus"], len(b["member_seeds"])),
                                 CM.cap_room(cfg, b["ncpus"]), int(b["ncpus"])),
                 "finalist: the lowest report-split nll of %s" % dirs["search_complete"],
