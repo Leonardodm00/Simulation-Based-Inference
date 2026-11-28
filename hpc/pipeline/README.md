@@ -1328,6 +1328,59 @@ of unchanged files fails again). To repeat it, delete that file and run D4 and D
 again (a sampling resampled, a report value changed) writes new metrics, so the same run submits the
 validation again, after that report.
 
+### synth: the tool's check -- a bundle against its evaluation (D-172, D-181) (2026-11-28, blocks 40-47)
+
+The tool (`sbitool/`, `specs/SPEC.md` sec. 2.7 and blocks 40-47) checked on the synthetic project at its real
+size: one ensemble of "synth: the validation of the recorded path" above is exported as a model bundle, the
+bundle is checked and its networks rebuilt, and an inference from the bundle on the project's recording
+windows is compared with the files that evaluation wrote (`sbitool verify`, block 47): the draws, the
+log-densities, the embeddings and the per-window summaries bit for bit, the gate's values within 1e-12. It
+needs that evaluation finished (its D7: "REC METRICS OK"). Everything is written under
+`/davinci-1/home/ldellamea/runs/synth/tool_check`; nothing of the evaluation or of the pipeline is written.
+`verify` samples again, so it runs inside an interactive job with the samplings' cores (8, the evaluation's
+`torch_threads`), not on the login node; `--max-rows 256` compares the first four batches of 64 windows of
+each bank, which is exact (block 47).
+
+```
+# T1. the code (the branch sci/tool); pass: the last line names the block-47 commit or a later one
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_export && { module load proxy 2>/dev/null || true; } && git pull --ff-only origin sci/tool && git log --oneline -1
+
+# T2. the tool's two extra packages in the training environment; pass: "packages ok" and two versions. If it
+#     prints an ImportError instead, stop and paste it (nothing is installed by this line)
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && python3 -c "import sys, safetensors, yaml; print('packages ok', sys.version.split()[0], safetensors.__version__, yaml.__version__)"
+
+# T3. the cluster-side check of the tool (no training; a few seconds); pass line: "4 of 4 checks pass". Paste
+#     the table if it differs (a SKIP names what is missing)
+cd ~/SBI && python3 sbitool/tests/test_smoke_tool_schema.py 2>&1 | tail -8
+
+# T4. an interactive job with the samplings' resources (queue intel, 8 cores, 64gb, 2 h); then, inside it,
+#     the environment again
+qsub -I -q intel -l select=1:ncpus=8:mem=64gb -l walltime=02:00:00
+cd ~/SBI && eval "$(conda shell.bash hook)" && conda activate sbi_env && mkdir -p /davinci-1/home/ldellamea/runs/synth/tool_check
+
+# T5. the export of one ensemble (the bundle with a draft card); pass line: "BUNDLE EXPORT OK: ... (5 members,
+#     ...)". A REFUSE line names what is absent or not current: paste it
+python3 -m sbitool export --config hpc/pipeline/projects/synth/synth.json --eval-config hpc/pipeline/projects/synth/synth_rec_eval.json --ensemble S-A1:A1 --out /davinci-1/home/ldellamea/runs/synth/tool_check/S-A1_A1.sbibundle 2>&1 | tail -4
+
+# T6. the bundle checked and its five networks rebuilt from it; pass line: "BUNDLE CHECK OK: ... (..., 5
+#     members, ... bytes, draft, rebuilt), sha256 <64 hex>". Paste the line
+python3 -m sbitool bundle-check /davinci-1/home/ldellamea/runs/synth/tool_check/S-A1_A1.sbibundle --rebuild 2>&1 | tail -3
+
+# T7. the verification on the first 256 windows of each recording bank; pass line: "VERIFY OK: <b> bank(s),
+#     <n> window(s): the bundle reproduces the evaluation (...)". On "VERIFY FAILED" the lines above it name
+#     each bank and array and the largest difference. Paste the output whole, either way
+python3 -m sbitool verify --bundle /davinci-1/home/ldellamea/runs/synth/tool_check/S-A1_A1.sbibundle --config hpc/pipeline/projects/synth/synth.json --eval-config hpc/pipeline/projects/synth/synth_rec_eval.json --ensemble S-A1:A1 --max-rows 256 --out /davinci-1/home/ldellamea/runs/synth/tool_check/verify_S-A1_A1 2>&1 | tail -12
+
+# T8. the record; paste it
+python3 -c "import json; d = json.load(open('/davinci-1/home/ldellamea/runs/synth/tool_check/verify_S-A1_A1/VERIFY.json')); print(d['identical'], d['n_post'], d['batch_rows'], d['torch_threads'], d['seconds'], {r: (b['n'], b['n_compared'], b['identical']) for r, b in d['banks'].items()}, d['software'])"
+```
+
+A difference of the size of the last digits (about 1e-7 on the draws) with everything else equal means
+another number of threads or another kind of node than the samplings', not another model: T4's job must have
+the samplings' 8 cores. The same three commands with another `--ensemble` (S-A2-R0:A2, S-A5-R0:A5,
+S-A2-R3:A2, S-A5-R3:A5) and another file name check the other ensembles; without `--max-rows` the whole of
+each bank is compared, in about the time the sampling of those banks took.
+
 ## Tests
 
 ```

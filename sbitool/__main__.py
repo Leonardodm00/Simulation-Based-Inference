@@ -20,6 +20,7 @@ COMMANDS = {
     "windows": "sbitool.windows:main",               # block 44
     "infer": "sbitool.infer:main",                   # block 45
     "device-figure": "sbitool.plotting.device:main",  # block 46
+    "verify": "sbitool.verify:main",                 # block 47
 }
 
 

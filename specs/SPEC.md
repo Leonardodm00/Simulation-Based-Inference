@@ -8180,7 +8180,10 @@ plan; Confirmed: yes 2026-11-17]
   max_rows=None, log=print) -> dict` (the record, `verify.RECORD_KEYS`);
   `verify.write(record, out_dir) -> path` (`VERIFY.json`, sorted keys,
   ASCII, through a temporary name); `verify.main(argv)`;
-  `verify.VerifyRefused`.
+  `verify.VerifyRefused`; and, as built, the comparison as functions of
+  arrays: `verify.compare(arrays, evaluation, n=None) -> {name: {equal,
+  max_abs_diff, shape, dtype}}` over `verify.COMPARED`,
+  `verify.first_rows(name, a, n)`, `verify.differences(record) -> lines`.
 - CLI: `python3 -m sbitool verify --bundle FILE --config <tag>.json
   --eval-config <tag>_rec_eval.json --ensemble <name> [--bank NAME ...]
   [--max-rows N] [--out DIR]`: exit 0 with `VERIFY OK: <b> bank(s),
@@ -8246,18 +8249,41 @@ plan; Confirmed: yes 2026-11-17]
   - T47b `--max-rows`: with N = batch_rows and N = batch_rows + 4 the
     first batch_rows windows are compared and are identical
     (`n_compared` = batch_rows < n); N < batch_rows is refused.
-  - T47c a difference is found and named: in a copy of the evaluation's
-    tree, one draw of block 35's file changed by one float32 step (the
-    sample's JSON's digest of the file updated, so that the tree is
-    current) gives exit 1, `draws` of that bank not equal with a
-    `max_abs_diff` of that step, every other array equal; one gate
-    p-value of block 36's file changed by 1e-9 gives exit 1 naming
-    `gate_p`; changed by 1e-13, exit 0.
+  - T47c a difference is found and named [as built, 2026-11-28: on the
+    evaluation's arrays in memory, through `verify.compare`, rather than
+    in a copy of the tree, whose digests would all have to be rewritten]:
+    one draw changed by one float32 step gives `draws` not equal with a
+    `max_abs_diff` of that step and every other array equal; one gate
+    p-value changed by 1e-9 gives `gate_p` not equal, by 1e-13 equal; a
+    flag flipped, a NaN against a number, another dtype, another shape
+    and a `draw_member` in another order are each not equal; the command,
+    with the evaluation's `draws` read changed by that one step, exits 1,
+    names the bank and `draws`, and writes `VERIFY.json` with
+    `identical` false.
   - T47d refusals: the bundle of the other ensemble (another sample
     JSON); a bundle whose manifest says another `n_post`; an unknown
     `--bank`; an absent sample file: exit 3, one `REFUSED:` line, no
     `VERIFY.json`.
-- Status: drafted 2026-11-28.
+- Status: smoke-tested 2026-11-28 (4 of 4 checks,
+  `test_smoke_tool_verify.py`, written and run by the orchestrator, a
+  single block built inline). Measured: both ensembles of the fixture
+  identical (24 windows x 40 draws, 17 arrays each); with `--max-rows` 16
+  and 20 the first 16 of the 24 windows identical, so the first batches
+  do not depend on the later ones; one float32 step (2.98e-08) on one
+  draw found. Mutations: the member's seed + 1; the gate's tolerance
+  1e-6; bitwise replaced by numpy.allclose; `--max-rows` not rounded to
+  whole batches; the sample's digest not compared; `z` cut on axis 0;
+  the threads not restored; the threads not set to the evaluation's; a
+  failed verification exiting 0 -- each caught. One more, the dtype not
+  compared, changes nothing (arrays of another dtype have other bytes).
+- Build notes (2026-11-28, plumbing): the recording banks are the
+  sample's `banks`; a flag that differs has `max_abs_diff` 1.0; a
+  `max_abs_diff` that is not finite is written to `VERIFY.json` as the
+  string "inf"; the module calls `export._pipeline`,
+  `export._metrics_left_out`, `export._sha256_file` and
+  `infer._software` (private names of blocks 41 and 45, to be made
+  public when the package is cut at the release); the refusal for a bank
+  whose number of windows changed is not covered by a check.
 - Confirmed: 2026-11-28 by D-181.
 
 ## 6. Pipeline entry points
@@ -8292,6 +8318,7 @@ plan; Confirmed: yes 2026-11-17]
 | `bash hpc/pipeline/evaluation/submit_rec_eval.sh --project <tag> [--dry-run] [--what sample,report,validate] [--resample <name>,...]` | block 38: the launcher of a recorded project's evaluation on PBS; `--project synth` is D-162's validation on davinci (`synth_rec_eval.json`) | davinci (the tests: the fixture under the fake PBS, `SKIP_CONDA=1`) | seconds; the jobs hours |
 | `python3 -m sbitool export --config <tag>.json --eval-config <tag>_rec_eval.json --ensemble <name> --out <file>.sbibundle [--extraction FILE.json] [--units FILE.json] [--card CARD.md]`; `bundle-check <file>`; `card-template`, `card-check` | blocks 41 and 42 (2026-11-27): a trained and evaluated ensemble as a model bundle with its card; run from the repository's root | the training environment, safetensors, PyYAML; blocks 35 and 36's outputs of the project | seconds to a minute |
 | `python3 -m sbitool windows --bundle FILE --recording PATH --adapter ptrain\|spikeinterface [--option KEY=VALUE] --out windows.npz`; `infer --bundle FILE (--windows windows.npz \| --recording PATH --adapter NAME) --out DIR [--n-post N] [--seed S]`; `device-figure --bundle FILE --recording PATH --adapter NAME --out DIR [--subregion j --window i]` | blocks 43 to 46 (2026-11-27/28): a recording cut into a bundle's windows, the inference, the device and one window as figures | the Sbi-extractor's checkout (`SBIX_DIR` or `SBIX_CLONE`); spikeinterface for its adapter; the training environment for `infer` | seconds |
+| `python3 -m sbitool verify --bundle FILE --config <tag>.json --eval-config <tag>_rec_eval.json --ensemble <name> [--bank NAME] [--max-rows N] [--out DIR]`; `python3 sbitool/tests/test_smoke_tool_verify.py` | block 47 (2026-11-28, D-181): a bundle's inference on the project's recording banks compared with the evaluation's files; the tool's check on davinci | the training environment, safetensors; blocks 35 and 36's outputs of the project; torch's threads set to the evaluation's | the recording banks' sampling again (seconds on the fixture; with `--max-rows`, a few batches) |
 | `python3 sbitool/tests/test_smoke_tool_schema.py`, `test_smoke_tool_recordings.py`, `test_smoke_tool_card.py`, `test_smoke_tool_windows.py`, `test_smoke_tool_bundle.py`, `test_smoke_tool_infer.py`, `test_smoke_tool_figures.py` | blocks 40 to 46: the tool's smoke tests (4, 4, 6, 4, 5, 5, 3 checks) | `SBIX_CLONE=<the Sbi-extractor's checkout>`; the training environment; the fixture of blocks 33-38 (`REC_FIXTURE` to reuse a kept one) | about a minute in all |
 
 ## 7. Not executable in the sandbox
