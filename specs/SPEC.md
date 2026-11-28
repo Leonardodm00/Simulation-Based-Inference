@@ -106,7 +106,9 @@ for the tester.
 - [2026-11-27] The tool (`sbitool/`, roadmap `tool`, steps S1, S3 and S4): sec. 2.7 and
   blocks 40-46 -- the package, its schemas and interfaces, the model bundle, the card,
   the recording adapters and the layout, the windows, the inference from a bundle, the
-  device's figures. Drafted, not built.
+  device's figures. [2026-11-28] Built and smoke-tested in the sandbox (blocks 40-46,
+  31 checks); tested by the integration tester at 39e6f66 (report 2026-11-28_0013);
+  nothing run on davinci.
 
 ## 1. Scientific goal
 
@@ -1079,7 +1081,10 @@ the rest is JSON and Markdown; reading a bundle never calls `torch.load`,
   of each source file the rebuild imports;
 - `software`: the versions of python, torch, sbi, zuko, numpy,
   safetensors at the export;
-- `files`: a dict from every other member's name to its sha256.
+- `files`: a dict from the name of each fixed member other than the manifest
+  (`CARD.md`, `evaluation/sim.json`, `evaluation/gate.safetensors`) to its sha256;
+  the networks' files are digested in `members[k].sha256` [2026-11-28, the tester's
+  S2: as built].
 
 **Rebuilding a member from a bundle.** With theta in the unit box and x a
 window in R^W, member m's density q_m(theta | x) is the pipeline's (sec.
@@ -1141,9 +1146,25 @@ n_e electrodes (`partition_subregions`, its mean-firing-rate threshold);
 for a subregion S with electrodes e in S and for each bin index k in
 {0, ..., K-1}, K = the number of bins of width Delta t in T_rec, the
 pooled instantaneous firing rate is the extractor's (EXTRACTOR_USAGE.md,
-eq. (3)): the spikes of the n_e electrodes counted in bin k, divided by
-n_e Delta t [Hz per electrode], then smoothed over k by the Gaussian of
-width sigma_sm (`compute_ifr_trace`); the trace x_S in R_{>=0}^K is cut
+eq. (3)): the spikes of the n_e electrodes counted in bin k, smoothed
+over k by the Gaussian of width sigma_sm (`compute_ifr_trace`) and
+divided by n_e. Its unit [corrected 2026-11-28, D-180, after the
+tester's F1; this section first said "divided by n_e Delta t [Hz per
+electrode]", which neither eq. (3) nor the code does]: x_S[k] is in
+spikes per bin of width Delta t per electrode, the unit of the training
+banks' windows (`scale_convention` "per_unit_mean"); x_S[k] / Delta t is
+the same quantity in Hz per electrode. No number of the tool changes
+with this correction: the windows were and are the extractor's. K and
+the bins are the imported function's, and where its arithmetic differs
+from this section's wording the imported function governs, because a
+recording must be cut exactly as the training banks were (D-180):
+K = int(T_rec / Delta t) in float64, which is floor(T_rec / Delta t)
+except where the quotient falls just below an integer (2900 samples at
+10 kHz with Delta t = 0.01 s: K = 28, not 29; the tester's F3), and the
+bins' edges are k Delta t in float64, so that a spike exactly on an edge
+can be counted in the bin before it (the tester's F4: about 0.13 % of
+the spikes of a recording sampled at a multiple of 1 / Delta t). The
+trace x_S in R_{>=0}^K is cut
 into floor(K / W) consecutive windows of W bins from its start
 (`windows_of`), each a row x in R^W of the bundle's networks. The tool
 adds nothing to this rule and changes nothing in it; a bundle whose
@@ -6513,6 +6534,11 @@ plan; Confirmed: yes 2026-11-17]
   calls `rec_fixture.cleanup()`.
 - Confirmed: yes 2026-11-23 (D-159, D-162, D-163; the configuration's
   values that were Claude's, D-164).
+- Fix round of 2026-11-28 (the tester's F7, plumbing): `ev_rec_data`'s
+  search for the first non-finite theta of a refused bank skips a shard it
+  cannot read on the reader's errors only (OSError, ValueError, KeyError,
+  EOFError, zipfile.BadZipFile), not on every exception; the refusal's
+  message is otherwise unchanged.
 - Status: smoke-tested 2026-11-23 (`test_smoke_rec_plan.py` R33a-f: 6 of 6
   pass `[SANDBOX]`, 86 s with the fixture built from scratch -- the reduced
   project to PIPELINE DONE in 76 s, 8 networks and 16 rows in its report
@@ -7588,7 +7614,12 @@ plan; Confirmed: yes 2026-11-17]
     `evaluation/sim.json` is the metrics' file byte for byte;
   - T41c safety and integrity: one byte changed in a member's weights, in
     the manifest or in the gate's file makes `bundle-check` exit 3 naming
-    the member; a zip with an extra member is refused; the package's
+    the member [fix round of 2026-11-28, D-180, after the tester's F2:
+    for the manifest this holds where the change breaks its JSON, its
+    schema, a digest, or its agreement with the members it describes
+    (below); a manifest edited into another one that is valid and agrees
+    with every member passes: the file cannot vouch for itself, its
+    sha256 is its identity]; a zip with an extra member is refused; the package's
     reading path contains no call of `torch.load`, `pickle` or
     `numpy.load` (static, over `bundle.py` and `model.py`), and `export.py`
     reads a checkpoint only through `ev_models.rebuild`;
@@ -7612,6 +7643,30 @@ plan; Confirmed: yes 2026-11-17]
   Mutations, each of which must fail a check: the members written in
   another order; a state tensor dropped; the digest not verified at
   reading; the gate's sets taken from the wrong roles.
+- Fix round of 2026-11-28 (D-180; the tester's F2, S4, S6; these clauses
+  complete the entry above):
+  - `bundle.check` also compares the manifest with the members it
+    describes, one problem per disagreement: `card_complete` with what
+    `schema.validate_card_header(header, manifest, complete=True)` gives
+    for the bundle's own CARD.md; `gate` with the `gate` of
+    `evaluation/sim.json` on the keys the export copied from it;
+    `parameters.names` and `parameters.bounds` with `evaluation/sim.json`'s
+    `axes`; `M`, `p`, `d_z` with the shapes of the gate's sets.
+  - `bundle-check`'s pass line ends with the file's sha256 in full: the
+    bundle's identity, which a publication or a hub holds outside the
+    file. A bundle cannot vouch for itself; authenticity against a
+    deliberate edit is the sharing step's (sec. 8, Q-T5).
+  - The export refuses (exit 3, nothing written) an `--extraction` whose
+    `w_size_s` is not the simulated bank's sidecar `w_size` (compared
+    with math.isclose, rel_tol 1e-12): the bin width the networks were
+    trained on. Where the sidecar holds `gaussian_window` or
+    `electrodes_per_subset`, the same for `gaussian_window_s` and
+    `electrodes_per_subset`. The other extraction values are the
+    author's declaration and are checked against nothing.
+  - Tests: T41c gains the three edits of the tester's F2 (the gate's
+    alpha, a parameter's name, `card_complete` on a draft), each exit 3
+    naming what disagrees, and the sha256 on the pass line; T41d gains
+    the `--extraction` of another `w_size_s`.
 - Status: smoke-tested 2026-11-27 (5 of 5 checks,
   `test_smoke_tool_bundle.py`, on the merged tree with blocks 40, 42, 43,
   44; the four mutations each caught, implementer's report). Measured in
@@ -7646,7 +7701,9 @@ plan; Confirmed: yes 2026-11-17]
   headed sections that say what to write); `card.parse(text) -> (header,
   body)`; `card.check(text, manifest) -> [str]` (through
   `schema.validate_card_header`); `python3 -m sbitool card-template
-  <bundle or export arguments> --out CARD.md`; `python3 -m sbitool
+  --bundle FILE --out CARD.md` [2026-11-28, the tester's F5: the entry
+  first said "<bundle or export arguments>"; the export's own route to
+  the template is `export` without `--card`]; `python3 -m sbitool
   card-check CARD.md [--bundle FILE]`: pass line `CARD OK: complete` or
   `CARD OK: draft, <k> field(s) to fill: <names>`; exit 3 on a malformed
   card (no header, YAML that does not parse, an unknown or missing key).
@@ -7715,6 +7772,13 @@ plan; Confirmed: yes 2026-11-17]
   re-detected in the `ptrain` adapter. An adapter never guesses a format,
   a rate or a geometry: what the file does not hold is an argument, and a
   missing one is a refusal naming it.
+  [Fix round of 2026-11-28, the tester's F6] `positions_um` given to the
+  `spikeinterface` adapter as an option may be a JSON object, whose keys
+  are strings and whose pairs are lists: the adapter turns the keys into
+  integers and the pairs into (x, y) floats before `Recording.check`; a
+  key that is not an integer's text, or a value that is not two finite
+  numbers, is a refusal naming it. T43b gains this route through the
+  `windows` command's `--option positions_um=<JSON>`.
 - Libraries: scipy.io (through the extractor), spikeinterface,
   probeinterface. Custom code: `layout.as_grid` (no library function
   turns positions into the extractor's grid index; checked:
@@ -7762,7 +7826,8 @@ plan; Confirmed: yes 2026-11-17]
 - Public API: `windows.subregions(recording, extraction) -> [Subregion]`
   (the extractor's objects: the electrodes of each, its centre);
   `windows.traces(recording, subregions, extraction) -> (x, fs_ifr_hz)`,
-  x (n_subregions, K) [Hz per electrode], float32 as the extractor's
+  x (n_subregions, K) [spikes per bin per electrode; D-180], float32 as
+  the extractor's
   `subregion_ifrs` returns it [2026-11-27, wave B's contract; the first
   draft said float64]; `windows.cut(x, W) ->
   (windows, ids)`: windows (n, W) float32, ids a dict of (n,) arrays
@@ -7816,9 +7881,10 @@ plan; Confirmed: yes 2026-11-17]
 - Test oracles (`test_smoke_tool_windows.py`, T44*):
   - T44a the IFR by its definition: on a recording of 9 electrodes with
     a few spikes at chosen times, the trace equals an independent
-    computation by the test (the counts per bin by `numpy.histogram`
-    divided by n_e Delta t, smoothed as eq. (3) of EXTRACTOR_USAGE.md
-    states) within 1e-5 relative to the trace's largest value (the
+    computation by the test (the counts per bin by `numpy.histogram`,
+    smoothed as eq. (3) of EXTRACTOR_USAGE.md states and divided by n_e
+    [D-180; the entry first said "divided by n_e Delta t", the test was
+    written to eq. (3)]) within 1e-5 relative to the trace's largest value (the
     extractor returns float32) [2026-11-27; the first draft said 1e-12];
   - T44b the partition: on a 6 x 6 grid with chosen rates, the subregions
     are disjoint, each of n_e electrodes above the threshold, and equal
@@ -8038,7 +8104,11 @@ plan; Confirmed: yes 2026-11-17]
     fs_ifr_hz) (read back with `get_data()`); as first specified, a line
     with `drawstyle="steps-post"` on W points, the last bin had no
     width and showed as a vertical stroke only. Labels: "time
-    [s]", "electrode", "IFR [Hz per electrode]".
+    [s]", "electrode", and for the window [fix round of 2026-11-28,
+    D-180] "x [spikes per electrode per <b>-ms bin]" with <b> =
+    1000 / fs_ifr_hz written with %g (block 23's wording for the same
+    quantity); the entry first said "IFR [Hz per electrode]", which was
+    100 times off at a 10 ms bin.
   - The command reads the bundle and the recording through
     `windows.from_file` and writes `<out>/device.png` and, when
     `--subregion j --window i` are given, `<out>/window_s<j>_w<i>.png`
@@ -8346,3 +8416,9 @@ repository).
     export pre-fills [sec. 2.7 and block 42 as written];
   - Q-T4 the sources imported and not copied until the release (this repository's
     `hpc/` and the Sbi-extractor's checkout) [as sec. 2.7 states].
+  - Q-T5 [open, raised 2026-11-28 by the tester's F2; for the sharing step of the
+    roadmap] the authenticity of a shared bundle: the file's digests protect against
+    damage and against a manifest that disagrees with its members, not against a
+    deliberate, consistent edit. Options: the hub or the publication holds the
+    bundle's sha256 (the tool then checks a bundle against a digest it is given); a
+    signature of the author. Not decided.
