@@ -1233,7 +1233,7 @@ route to the same numbers, not another estimator.
 | p(x), p_m(x), alpha_gate | the gate's p-value of window x and member m's own (R8); the gate's threshold (`gate.alpha`) | float in (0, 1]; float in (0, 1) | -- |
 | k_gate, q_gate | [2026-11-23, D-165] the rank among the null values that a flagged window's T must exceed (R9); the gate's size given its sets, random through the null set (R10) | int >= 1; float in (0, 1) | -- |
 
-### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184, D-186, D-187, D-188; added 2026-11-28)
+### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184, D-186..D-191; added 2026-11-28)
 
 A design section, no code: what the viewer (S6) shows and lets a user change, in which layer. It binds
 S6's SPEC entries. Status: the layers and the four choices below are the user's (D-184); the assignment
@@ -1350,6 +1350,18 @@ inter-spike intervals in that span, and the number of spikes in the 0.3 s before
 means for a layout (per user, per recording, exportable). A keyboard route for everything the pointer
 does on the raster.
 
+**The workflow and the summary (D-191).** The viewer is organised as the path from the data to the
+posterior, in sections that follow one another: the recording (probe, raster, activity); the regions
+(electrodes used and left out); the preprocessing (how the trace is computed: the model's, read-only,
+or the author's when a model is prepared); the model (what it is, how well it is calibrated); the
+inference (span, draws, run); the posterior (parameters and their checks); a summary. The sections are
+drawn as a flowchart: open, it shows every step with its name and what it holds; once a step is chosen
+it condenses, with an animation, into a row of connected dots that stays at the top, marks the current
+step and moves to any other. The summary is a page of its own, to be consulted and exported: the data
+(recording, span, windows, electrodes excluded, regions), the model and the settings, the pooled
+posterior with the share of flagged windows. A layer of use (D-184) decides how much each section
+shows, not which sections exist. The look of the flowchart is to be worked on later (the user).
+
 **Mockups (2026-11-28).** One recording at the four layers, as four screens on a design canvas the user
 can edit and comment: https://claude.ai/artifact/6a9n1zweCyM4suuAvu3HsU ("SBI tool viewer: the four
 layers (mockups)"; names and numbers are placeholders, drawn by a generator script kept outside the
@@ -1363,7 +1375,9 @@ from a seed, its results are placeholders. Fourth version: a playback speed cont
 switch made live: guided, standard, expert and author are presets of the same screen's panels (the
 standard adds the windows and each window's posterior, the expert the per-network values, sampling,
 model file, training and command, the author the preprocessing layout, the project, the card and the
-check), any of which the menu's switches turn on or off; the three static sketches are removed.
+check), any of which the menu's switches turn on or off; the three static sketches are removed. Fifth version
+(D-191): the seven sections as a flowchart that condenses into connected dots, a page per section, and
+the summary page.
 
 **Not yet built, with or before S6.** The time-range selection of windows; the comparison of several
 recordings; the training curves and the trials' summary in the bundle; the reproducing command line;
