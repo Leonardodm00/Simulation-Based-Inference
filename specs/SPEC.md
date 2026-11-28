@@ -1233,7 +1233,7 @@ route to the same numbers, not another estimator.
 | p(x), p_m(x), alpha_gate | the gate's p-value of window x and member m's own (R8); the gate's threshold (`gate.alpha`) | float in (0, 1]; float in (0, 1) | -- |
 | k_gate, q_gate | [2026-11-23, D-165] the rank among the null values that a flagged window's T must exceed (R9); the gate's size given its sets, random through the null set (R10) | int >= 1; float in (0, 1) | -- |
 
-### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184, D-186; added 2026-11-28)
+### 2.8 The layers of use (roadmap `tool`, step S7a; D-158 (5), D-183, D-184, D-186, D-187; added 2026-11-28)
 
 A design section, no code: what the viewer (S6) shows and lets a user change, in which layer. It binds
 S6's SPEC entries. Status: the layers and the four choices below are the user's (D-184); the assignment
@@ -1300,24 +1300,30 @@ box: u_j in [0, 1] for each inferred parameter j in {1, ..., p}. Where the bundl
 banks' map, with the bundle's unit for axis j; where it declares none they show u_j. The expert layer
 can show either.
 
-**The look (D-186).** The viewer is minimalistic: one typeface, flat surfaces separated by space and
-hairlines rather than boxes, few words on screen, one accent colour and one attention colour. The user
-chooses among four palettes, two bright and two dark. The palettes are Claude's selection from the five
-reference images the user gave (the user's delegation); each is nine tokens, every text pair at a
-contrast of at least 4.5 to 1 (computed, WCAG relative luminance):
+**The look (D-186, D-187).** The viewer is minimalistic: one typeface, flat surfaces separated by space
+and hairlines rather than boxes, few words on screen, one accent colour and one attention colour. The
+user chooses among four palettes, two bright and two dark. Both bright palettes stand on one light sand
+ground and both dark ones on plain black (D-187); a palette is its accent and its attention colour on
+that ground, taken from the reference images the user gave (Claude's selection, by the user's
+delegation). Nine tokens each; every text pair has a contrast of at least 4.5 to 1 (computed, WCAG
+relative luminance; the smallest is 5.2 to 1):
 
-| palette | ground | surface | line | ink | muted | accent | on accent | attention | from |
-|---|---|---|---|---|---|---|---|---|---|
-| Sand (bright) | #F5EFEA | #FBF8F5 | #DCCFC5 | #0F4454 | #47656E | #0F4454 | #F5EFEA | #A6461C | sand #CAB5A7 lightened, forest #0F4454; the attention colour added |
-| Mint (bright) | #F6FBEE | #FFFFFF | #D3E4CC | #4A4141 | #4B6C73 | #1E7470 | #FFFFFF | #B4432F | #E5FCC2, #45ADA8, #547980, #594F4F adjusted for contrast; the attention colour added |
-| Plum (dark) | #1B1931 | #25203F | #3D3458 | #F4ECEC | #BBAAC0 | #E9BCB9 | #1B1931 | #ED9E59 | #1B1931, #E9BCB9, #ED9E59 as given |
-| Navy (dark) | #14213D | #1B2B4B | #2F4F4F | #ECE9E2 | #BDB7AB | #8A9A5B | #14213D | #E27D60 | #14213D, #2F4F4F, #8A9A5B, #BDB7AB, #E27D60 as given |
+| palette | ground | surface | line | ink | muted | accent | on accent | attention |
+|---|---|---|---|---|---|---|---|---|
+| Forest (bright) | #F5EFEA | #FBF8F5 | #DCCFC5 | #0F4454 | #47656E | #0F4454 | #F5EFEA | #A6461C |
+| Teal (bright) | #F5EFEA | #FBF8F5 | #DCCFC5 | #3F3838 | #5F5A57 | #1A6B67 | #FFFFFF | #AE3F2C |
+| Rose (dark) | #000000 | #121212 | #2C2C2C | #F4ECEC | #BBAAC0 | #E9BCB9 | #000000 | #ED9E59 |
+| Olive (dark) | #000000 | #121212 | #2C2C2C | #ECE9E2 | #BDB7AB | #8A9A5B | #000000 | #E27D60 |
 
-The attention colour marks only what the gate flags and what is left to do, always with a shape as well
-(a triangle, a dashed border, a hollow square), never by colour alone. Not used: the reference with
-#99B898, #FECEA8, #FF847C, #E84A5F on #2A363B (a dark blue-grey with a green and a coral, which Navy
-already is), and the strong reds and purples of the plum reference (#44174E, #662249, #A34054), which
-have no role in an interface with one accent.
+Where the colours come from: the sand ground is the reference sand #CAB5A7 lightened, Forest's ink and
+accent the reference #0F4454; Teal's accent is the reference #45ADA8 darkened for text and its ink the
+reference #594F4F darkened; Rose's accent and attention are #E9BCB9 and #ED9E59 as given; Olive's
+accent, muted and attention are #8A9A5B, #BDB7AB and #E27D60 as given. The two bright references had no
+warm colour, so an attention colour was added to each. The attention colour marks only what the gate
+flags and what is left to do, always with a shape as well (a triangle, a dashed border, a hollow
+square), never by colour alone. [Corrected 2026-11-28, D-187: the first selection of the same day had a
+pale green ground (Mint) and coloured dark grounds (#1B1931 Plum, #14213D Navy); the user asked for the
+sand ground on both bright palettes and plain black on both dark ones.]
 
 **Mockups (2026-11-28).** One recording at the four layers, as four screens on a design canvas the user
 can edit and comment: https://claude.ai/artifact/6a9n1zweCyM4suuAvu3HsU ("SBI tool viewer: the four
