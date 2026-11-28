@@ -222,3 +222,21 @@ implementation:
     depends_on: [S6]
     needs_theory: []
     needs_hpc: false
+  - id: I48
+    title: "The model's training in the bundle"
+    summary: "Each network's training curve and a summary of the search's trials packed into the bundle (format 2)"
+    block: 48
+    parent: S3
+    depends_on: [I41]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I49
+    title: "The session engine"
+    summary: "Everything the viewer computes, without a server: electrodes, statistics, excluded electrodes, windows of a span, inference, results as plain data"
+    block: 49
+    parent: S6
+    depends_on: [I44, I45]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []

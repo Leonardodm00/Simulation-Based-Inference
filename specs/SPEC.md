@@ -1366,6 +1366,36 @@ the third check of the roadmap's S6 summary, the predictive check, which is wave
 exist: until it does the viewer shows two checks (the model's held-out calibration and the per-window
 gate).
 
+**Excluded electrodes, statistics, preprocessing (D-189, D-190).** The user may exclude electrodes of
+their choice. An excluded electrode is treated exactly as the extractor treats an electrode whose mean
+firing rate is under the bundle's threshold: it is the centre of no subregion and a member of none, and
+the subregions are formed from the remaining electrodes by the same partition. The statistics shown per
+electrode e over a span [t0, t1) of the recording, 0 <= t0 < t1 <= T_rec, with n_e the number of spikes
+of e at times in [t0, t1): the spike count n_e; the firing rate n_e / (t1 - t0) [Hz]; the coefficient of
+variation of the n_e - 1 inter-spike intervals, their standard deviation (ddof 0) over their mean, for
+n_e >= 4 and undefined otherwise; and a burst statistic whose definition is not yet agreed (to be
+proposed from the literature, then added). The specifics of the IFR (bin width, smoothing width,
+electrodes per region, threshold) are set when a model is prepared, in the author layer, with a live
+preview, and nowhere else: one configuration defines the extraction of the simulated data and of the
+recordings alike, and everything must match (D-190 (4)); with an existing model they are shown and not
+editable (D-176).
+
+### 2.9 The viewer (roadmap `tool`, step S6; D-158 (1) and (3), D-183..D-190; added 2026-11-28)
+
+**Framework (D-190 (1)).** A browser application with a local Python server: the screens are written in
+web technology, as the prototype of sec. 2.8; the Python side does every computation. `python3 -m
+sbitool view` starts the server on the user's machine and opens the browser; on a cluster the same
+server is reached through an SSH tunnel. A desktop application may wrap it later. Three layers of code,
+each testable without the next: the session engine (block 49: Python, no network, plain data in and
+out), the server (block 50: the engine over HTTP on 127.0.0.1), the front end (blocks 51-54: static
+files the server sends; no number is computed in the browser beyond what a figure needs to draw).
+
+**Blocks.** Wave A: 48 (the model's training in the bundle), 49 (the session engine). Wave B: 50 (the
+server and the command `view`), 51 (the application's frame: palettes, menu, layouts with the layers as
+presets), 52 (the probe, the raster and the single-electrode view). Wave C: 53 (the result, the windows
+and the model's views), 54 (the expert's and the author's panels, the preprocessing layout among them).
+The entries of blocks 50-54 are completed, interface by interface, before their wave starts.
+
 ## 3. Data contracts
 
 ### 3.1 The project configuration `hpc/pipeline/projects/<tag>/<tag>.json`
@@ -8428,6 +8458,134 @@ plan; Confirmed: yes 2026-11-17]
   public when the package is cut at the release); the refusal for a bank
   whose number of windows changed is not covered by a check.
 - Confirmed: 2026-11-28 by D-181.
+
+### Block 48: the model's training in the bundle
+
+- Purpose: D-184 (2): a bundle also carries what the expert layer shows of the training -- each
+  network's training curve and a summary of the hyper-parameter search's trials.
+- Modules: `sbitool/training_info.py` (new); `sbitool/schema.py`, `sbitool/bundle.py`,
+  `sbitool/export.py` (changed).
+- Format: `BUNDLE_SCHEMA` becomes "sbitool_bundle/2" (a "sbitool_bundle/1" file is refused, naming
+  both; no bundle of the first format exists outside the sandbox). The manifest gains the key
+  `training`: null (no training information), or `{"members": M, "search": true|false}`. With
+  `training` not null the zip holds, digested in `files`: `training/member_<k>.json` for k = 0..M-1,
+  `{"seed": int, "epoch": [...], "npe": [...], "val_npe": [...], "dsn": [...], "rep": [...]}`, five
+  lists of one length E_k >= 1 taken from the member's record `history` (its keys `epoch`, `npe`
+  the training loss of the NPE term, `val_npe` the validation loss, `dsn` and `rep` the two
+  auxiliary terms; nats; a NaN is written null); and, when `search` is true,
+  `training/search.json`, `{"campaign": str, "n_trials": int, "objective": "nll", "trials":
+  [{"trial_id": str, "status": str, "nll": float|null, "config": {...}}], "chosen": str|null}`: one
+  entry per file of the search's `trials` folder, sorted by `trial_id`, `config` restricted to its
+  JSON scalars whose key does not start with "_", `chosen` the `trial_id` of the one trial whose
+  `config` equals the first finalist's of the search's `finalists.json` (null when none or several
+  do).
+- Public API: `training_info.collect(P, view, e, records) -> (members, search)` (`members` a list
+  of M dicts as above, `search` a dict or None when the search's folder or its trials are absent:
+  never a refusal, one log line); `bundle.write(path, manifest, card_text, states, gate_sets,
+  sim_json_bytes, training=None)` with `training` = None or `(members, search)`;
+  `Bundle.training() -> None | {"members": [...], "search": dict|None}`; `bundle.check` validates
+  the members above when `training` is not null (M files, the five lists of one length, `seed`
+  the manifest's member's) and refuses a `training/` member the manifest does not announce;
+  `export` packs the training by default, `--no-training` leaves it out (`training` null).
+- Libraries: json. Custom code: none.
+- Test oracles (`sbitool/tests/test_smoke_tool_training.py`, T48a-d; the evaluated project of
+  block 41's test, `_ctx()`):
+  - T48a an export packs M member files whose five lists equal the records' `history`, read by the
+    test; `search.json`'s `n_trials` is the number of files in the search's `trials` folder, each
+    `nll` and `status` the file's, `chosen` one of the ids.
+  - T48b round trip: `Bundle.training()` returns what was written; `bundle-check` passes; one byte
+    changed in `training/member_0.json` exits 3 naming it; lists of two lengths are refused at
+    writing; a `training/` member not announced is refused.
+  - T48c `--no-training`: `training` null, no `training/` member, the check passes,
+    `Bundle.training()` is None.
+  - T48d a manifest of schema "sbitool_bundle/1" is refused naming both schemas; every earlier
+    suite of the tool passes with the new format.
+- Status: drafted 2026-11-28.
+- Confirmed: 2026-11-28 by D-184 (2), D-190 (2).
+
+### Block 49: the session engine
+
+- Purpose: everything the viewer computes, as one Python object with plain data in and out, usable
+  and testable without a server or a browser (sec. 2.9): a bundle and a recording opened together;
+  the electrodes, their spikes and their statistics; the electrodes excluded; the subregions and the
+  windows of a chosen span; the inference and its result.
+- Modules: `sbitool/session.py` (new); `sbitool/windows.py` (changed: the exclusion only).
+- Public API. `windows.subregions(recording, extraction, exclude=())`: `exclude` an iterable of
+  electrode ids; an excluded electrode is in no subregion and the partition is otherwise the
+  extractor's (sec. 2.8, D-189); an id the recording does not have is a `WindowsError`.
+  `session.Session(bundle_path, recording_path, adapter, options=None)` (the recording read as the
+  `windows` command reads it, the bundle's detection applied to raw voltage; `SessionError` wraps
+  every refusal of blocks 41, 43, 44, 45 with its message), with:
+  - `describe() -> dict`: `bundle` (`name`, `sha256`, `card_complete`, the card's header,
+    `parameters`, `extraction`, `sample`, `gate`), `recording` (`name`, `duration_s`, `fs_raw_hz`,
+    `n_electrodes`, `position_unit` "um" or null, `electrodes`: a list of `{id, x, y, n_spikes}`
+    in sorted id order, x and y as block 46's `positions`), `W`, `window_s` = W / fs_ifr_hz.
+  - `spikes(t0=None, t1=None, electrodes=None) -> {id: [t, ...]}`: spike times [s], sorted, with
+    t0 <= t < t1 (defaults 0 and `duration_s`).
+  - `statistics(t0=None, t1=None) -> {id: {"n": int, "rate_hz": float, "isi_cv": float|None}}`
+    as sec. 2.8 defines them, over [t0, t1); a span outside [0, duration_s] or with t1 <= t0 is a
+    `SessionError`.
+  - `set_excluded(ids)`, `excluded -> sorted list`.
+  - `subregions() -> [{"index", "center", "members", "mean_mfr", "center_mfr"}]` under the current
+    exclusion; `traces() -> {"fs_ifr_hz", "x": (n_sub, K) float32}`.
+  - `windows(t0=None, t1=None) -> {"n", "per_subregion", "subregion", "window_idx", "t_start_s"}`:
+    the windows of block 44's `cut` on the whole recording's traces whose span lies inside the
+    chosen one, t0 <= t_start_s and t_start_s + window_s <= t1 (the windows' grid is the
+    recording's: window i of a subregion starts at i window_s whatever the span).
+  - `infer(t0=None, t1=None, n_post=None, seed=None, out_dir=None, log=None) -> dict`: block 45's
+    `infer.run` on those windows with their ids (no window: `SessionError`), written by
+    `infer.write` when `out_dir` is given; returns the result's summary, exactly
+    `session.RESULT_KEYS`: `n`, `n_post`, `seed`, `batch_rows`, `span` [t0, t1], `excluded`,
+    `parameters` (per axis: `name`, `unit`, `bounds`, `pooled` {`q05`, `q50`, `q95`},
+    `windows_q50` (n values)), `coordinate` "physical" where the bundle declares bounds for the
+    axis (theta_j = lo_j + u_j (hi_j - lo_j) applied to those five numbers) and "unit_box"
+    otherwise, `gate` (`alpha`, `n_flagged`, `share_flagged`, `flag` (n booleans), `p` (n
+    values)), `windows` (`subregion`, `window_idx`, `t_start_s`), `files` (the paths written or
+    null).
+- Rule: nothing is estimated here that another block estimates: subregions, traces, windows are
+  block 44's, the inference block 45's; the statistics are counts on the spike times with numpy.
+- Libraries: numpy. Custom code: none.
+- Test oracles (`sbitool/tests/test_smoke_tool_session.py`, T49a-e; a ptrain folder written by the
+  test and a bundle exported with an extraction at the bank's bin width, as T45d's):
+  - T49a `describe`, `spikes`: the electrodes and their spike times equal the folder's, read by the
+    test; a span returns exactly the spikes with t0 <= t < t1.
+  - T49b statistics against numpy on the planted trains: counts and rates exact; the CV within
+    1e-12 of numpy's `std(isi) / mean(isi)`; fewer than 4 spikes gives None; a train of equal
+    intervals gives 0 within 1e-9; a bad span is refused.
+  - T49c exclusion: with electrodes excluded, `subregions()` equals the subregions of a copy of the
+    recording in which those electrodes have no spike (the oracle: the extractor's own treatment
+    of a silent electrode), and no excluded id is a member; excluding nothing changes nothing; an
+    unknown id is refused; so many excluded that fewer subregions exist than the bundle needs is a
+    `SessionError` with the extractor's message.
+  - T49d windows of a span: equal to block 44's windows filtered by the rule above, computed by
+    the test; a span holding no whole window gives n = 0; `infer` on a span equals block 45's
+    `infer.run` on the same windows (bit for bit), the pooled values equal the result's `mix_*`
+    after the map to physical coordinates where bounds are declared, `flag` equals `gate_flag`.
+  - T49e refusals and the record: a device that does not fit the bundle, an unreadable recording,
+    `infer` with no window: `SessionError`; the result has exactly `RESULT_KEYS`, is
+    JSON-serialisable, and names the excluded electrodes and the span.
+- Status: drafted 2026-11-28.
+- Confirmed: 2026-11-28 by D-189, D-190 (2) and (3).
+
+### Blocks 50-54: the viewer's server and front end (outlines)
+
+Planned 2026-11-28 (D-190 (2)); each entry is completed before its wave starts.
+
+- Block 50, the server and the command `view`: `sbitool/server.py`; the session engine over HTTP on
+  127.0.0.1 with a random token, one session per process; `python3 -m sbitool view [--bundle FILE]
+  [--recording PATH --adapter NAME] [--port N] [--no-browser]`. Wave B.
+- Block 51, the application's frame: `sbitool/web/`; the four palettes of sec. 2.8 as tokens, the
+  menu, the panels with a layout the user changes and that is kept, the four layers as presets of
+  it, animated transitions. Wave B.
+- Block 52, the probe, the raster and the single-electrode view: the statistic per electrode on the
+  probe with its legend, playback of the activity, the raster with animated zoom, the span chosen
+  by dragging, electrodes excluded by the user. Wave B.
+- Block 53, the result, the windows and the model: the pooled result with the windows' spread and
+  the flagged share, each window's posterior and gate, the card, the held-out calibration. Wave C.
+- Block 54, the expert's and the author's panels: per network values, sampling settings, the
+  model's file and training, the reproducing command; export, card, check, verify; the
+  preprocessing layout (one configuration for the simulated data and the recordings, D-190 (4)).
+  Wave C.
 
 ## 6. Pipeline entry points
 
